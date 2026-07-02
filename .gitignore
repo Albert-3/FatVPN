@@ -1,0 +1,37 @@
+# .NET
+backend/**/bin/
+backend/**/obj/
+*.user
+
+# Flutter / Dart
+mobile/**/.dart_tool/
+mobile/**/.flutter-plugins
+mobile/**/.flutter-plugins-dependencies
+mobile/**/.packages
+mobile/**/build/
+mobile/**/pubspec.lock
+
+# Android
+mobile/**/android/.gradle/
+mobile/**/android/local.properties
+
+# iOS
+mobile/**/ios/Pods/
+mobile/**/ios/.symlinks/
+mobile/**/ios/Flutter/Flutter.podspec
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.env
+appsettings.*.local.json
+
+# Claude Code local state
+.claude/

@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: fatvpn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fatvpn
+      POSTGRES_PASSWORD: fatvpn_dev
+      POSTGRES_DB: fatvpn
+    ports:
+      - "5433:5432"
+    volumes:
+      - fatvpn-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  fatvpn-postgres-data:
