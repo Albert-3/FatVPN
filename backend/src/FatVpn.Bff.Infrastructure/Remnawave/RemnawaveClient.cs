@@ -41,7 +41,14 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
         response.EnsureSuccessStatusCode();
 
         var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        try
+        {
+            return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        }
+        catch (JsonException ex)
+        {
+            throw new HttpRequestException("Remnawave returned non-JSON response for subscription config.", ex);
+        }
     }
 }
 
