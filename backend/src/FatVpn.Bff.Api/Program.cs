@@ -49,13 +49,17 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<FatVpnDbContext>();
+    db.Database.Migrate();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();

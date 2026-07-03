@@ -12,5 +12,23 @@ services:
     volumes:
       - fatvpn-postgres-data:/var/lib/postgresql/data
 
+  bff:
+    build: .
+    container_name: fatvpn-bff
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5030:5030"
+    environment:
+      ConnectionStrings__FatVpn: "Host=fatvpn-postgres;Port=5432;Database=fatvpn;Username=fatvpn;Password=fatvpn_dev"
+      Jwt__Secret: "${JWT_SECRET}"
+      Jwt__Issuer: "FatVpn.Bff"
+      Jwt__Audience: "FatVpn.App"
+      Remnawave__BaseUrl: "https://z.fatvdsnvv.space"
+      Remnawave__ApiToken: "${REMNAWAVE_API_TOKEN}"
+      Bot__Secret: "${BOT_SECRET}"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    depends_on:
+      - postgres
+
 volumes:
   fatvpn-postgres-data:

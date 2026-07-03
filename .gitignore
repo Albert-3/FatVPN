@@ -3,6 +3,9 @@ backend/**/bin/
 backend/**/obj/
 *.user
 
+# Secrets
+backend/.env
+
 # Flutter / Dart
 mobile/**/.dart_tool/
 mobile/**/.flutter-plugins
