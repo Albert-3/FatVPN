@@ -63,7 +63,15 @@ expires_at_ms = int(time_result) if time_result and time_result != False \
 from api.fatvpn_bff_api import register_short_token
 short_token = await register_short_token(short_uuid, expires_at_ms)
 ```
-Сообщение пользователю показывает `{short_token}` вместо `{subscription_url}`.
+Сообщение пользователю показывает оба варианта (Фаза 2 — до выхода Flutter-приложения):
+```
+✅ · Ключ обновлен!
+📱 Код для FatVPN App:
+<short_token>
+🔗 Ссылка на подписку (до выхода приложения):
+<subscription_url>
+```
+После релиза Flutter-приложения строку с `subscription_url` убрать.
 
 **`handle_key_details`** — просмотр ключа отображает `{subscription_url}` (без изменений).
 
@@ -73,9 +81,34 @@ short_token = await register_short_token(short_uuid, expires_at_ms)
 |---|---|
 | Бот | Docker-контейнер `fatvpn-bot`, `/opt/FatVPN/` |
 | BFF | Docker-контейнер `fatvpn-bff`, `/opt/fatvpn-bff/backend/` |
-| Сеть | `fatvpn_default` — общая для бота и BFF (`docker network connect fatvpn_default fatvpn-bff`) |
+| Сеть | `fatvpn_default` — объявлена в обоих compose-файлах, пересоздаётся автоматически |
 | BFF URL из бота | `http://fatvpn-bff:5030` |
-| BOT_SECRET | из `docker inspect fatvpn-bff` → `Bot__Secret` |
+| BOT_SECRET | из `docker inspect fatvpn-bff` → переменная `Bot__Secret` |
+
+### Конфигурация сети (уже применена на сервере)
+
+`/opt/FatVPN/docker-compose.yml` — бот объявляет сеть:
+```yaml
+networks:
+  default:
+    name: fatvpn_default
+```
+
+`/opt/fatvpn-bff/backend/docker-compose.yml` — BFF подключается к ней:
+```yaml
+services:
+  bff:
+    ...
+    networks:
+      - default
+      - fatvpn_default
+
+networks:
+  fatvpn_default:
+    external: true
+```
+
+После этого `docker network connect` вручную не нужен — сеть восстанавливается при любом `docker compose up`.
 
 ## Деплой бота
 
