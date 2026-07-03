@@ -1,0 +1,59 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
+
+namespace FatVpn.Bff.Infrastructure.Remnawave;
+
+public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOptions> options) : IRemnawaveClient
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+
+    public async Task<IReadOnlyList<ServerCountry>> GetNodesAsync(CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/nodes");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.Value.ApiToken);
+
+        using var response = await httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<RemnawaveNodesResponse>(JsonOptions, ct);
+        var nodes = body?.Response ?? [];
+
+        return nodes
+            .Where(n => n.IsConnected && !n.IsDisabled)
+            .GroupBy(n => n.CountryCode)
+            .Select(g => new ServerCountry(
+                Country: g.Key,
+                Flag: g.Key,
+                NodeCount: g.Count(),
+                PingHost: g.First().Address))
+            .ToList();
+    }
+
+    // Remnawave exposes the ready-made client config on the subscription link itself
+    // (`/sub/{shortUuid}`), no admin token needed. `format=singbox` still needs to be
+    // confirmed by the Day 1 xHTTP spike (VPN-App-Project.md §14).
+    public async Task<JsonDocument> GetSubscriptionConfigAsync(string subscriptionId, CancellationToken ct = default)
+    {
+        using var response = await httpClient.GetAsync($"/sub/{subscriptionId}?format=singbox", ct);
+        response.EnsureSuccessStatusCode();
+
+        var stream = await response.Content.ReadAsStreamAsync(ct);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+    }
+}
+
+internal sealed class RemnawaveNodesResponse
+{
+    public List<RemnawaveNodeDto> Response { get; set; } = [];
+}
+
+internal sealed class RemnawaveNodeDto
+{
+    public string CountryCode { get; set; } = string.Empty;
+    public string Address { get; set; } = string.Empty;
+    public bool IsConnected { get; set; }
+    public bool IsDisabled { get; set; }
+}

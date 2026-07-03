@@ -1,6 +1,44 @@
 @FatVpn.Bff.Api_HostAddress = http://localhost:5030
 
-GET {{FatVpn.Bff.Api_HostAddress}}/weatherforecast/
+GET {{FatVpn.Bff.Api_HostAddress}}/health
 Accept: application/json
 
 ###
+
+# Bot registers/refreshes a short token (dev bot secret from appsettings.Development.json)
+POST {{FatVpn.Bff.Api_HostAddress}}/internal/tokens
+Content-Type: application/json
+X-Bot-Secret: dev-only-bot-secret
+
+{
+  "shortToken": "AB12CD34",
+  "remnawaveSubscriptionId": "test-subscription-id",
+  "expiresAt": "2026-08-01T00:00:00Z"
+}
+
+###
+
+# App exchanges the short token for a JWT
+POST {{FatVpn.Bff.Api_HostAddress}}/auth/token
+Content-Type: application/json
+
+{
+  "shortToken": "AB12CD34"
+}
+
+###
+
+GET {{FatVpn.Bff.Api_HostAddress}}/servers
+Accept: application/json
+
+###
+
+@accessToken = REPLACE_WITH_TOKEN_FROM_AUTH_RESPONSE
+
+GET {{FatVpn.Bff.Api_HostAddress}}/me
+Authorization: Bearer {{accessToken}}
+
+###
+
+GET {{FatVpn.Bff.Api_HostAddress}}/config
+Authorization: Bearer {{accessToken}}

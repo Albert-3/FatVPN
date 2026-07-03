@@ -2,6 +2,24 @@
 
 > Источник: раздел 8 `VPN-App-Project.md`. Уточняется по ходу Дня 2 и Дня 6.
 
+## Статус: День 2 реализован и проверен на реальной панели
+
+Все эндпоинты ниже реализованы в `backend/src/FatVpn.Bff.Api/Controllers`.
+Проверено вживую: `POST /internal/tokens` → `POST /auth/token` → `GET /me` →
+`GET /config`/`GET /servers` (последние два — на реальном API-токене Remnawave,
+`/servers` вернул настоящий список из 10 стран / 36 нод).
+
+**Секреты не хранятся в git.** На новой машине перед запуском выполнить:
+
+```
+cd backend/src/FatVpn.Bff.Api
+dotnet user-secrets init
+dotnet user-secrets set "Remnawave:ApiToken" "<токен из панели, раздел Настройки Remnawave → API токены>"
+```
+
+`Jwt:Secret` и `Bot:Secret` для локальной разработки уже лежат в
+`appsettings.Development.json` (dev-заглушки, не для прод).
+
 ## Публичные эндпоинты (мобильное приложение)
 
 ### `POST /auth/token`
