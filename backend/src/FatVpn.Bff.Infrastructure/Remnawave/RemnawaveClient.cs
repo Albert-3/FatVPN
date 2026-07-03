@@ -32,23 +32,14 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
             .ToList();
     }
 
-    // Remnawave exposes the ready-made client config on the subscription link itself
-    // (`/sub/{shortUuid}`), no admin token needed. `format=singbox` still needs to be
-    // confirmed by the Day 1 xHTTP spike (VPN-App-Project.md §14).
-    public async Task<JsonDocument> GetSubscriptionConfigAsync(string subscriptionId, CancellationToken ct = default)
+    public async Task<(string Content, string ContentType)> GetSubscriptionConfigAsync(string subscriptionId, CancellationToken ct = default)
     {
-        using var response = await httpClient.GetAsync($"/sub/{subscriptionId}?format=singbox", ct);
+        using var response = await httpClient.GetAsync($"/sub/{subscriptionId}", ct);
         response.EnsureSuccessStatusCode();
 
-        var stream = await response.Content.ReadAsStreamAsync(ct);
-        try
-        {
-            return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        }
-        catch (JsonException ex)
-        {
-            throw new HttpRequestException("Remnawave returned non-JSON response for subscription config.", ex);
-        }
+        var content = await response.Content.ReadAsStringAsync(ct);
+        var contentType = response.Content.Headers.ContentType?.ToString() ?? "text/plain";
+        return (content, contentType);
     }
 }
 

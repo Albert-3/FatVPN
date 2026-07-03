@@ -22,8 +22,8 @@ public class ConfigController(FatVpnDbContext db, IRemnawaveClient remnawaveClie
 
         try
         {
-            using var config = await remnawaveClient.GetSubscriptionConfigAsync(token.RemnawaveSubscriptionId, ct);
-            return Content(config.RootElement.GetRawText(), "application/json");
+            var (content, contentType) = await remnawaveClient.GetSubscriptionConfigAsync(token.RemnawaveSubscriptionId, ct);
+            return Content(content, contentType);
         }
         catch (HttpRequestException)
         {
