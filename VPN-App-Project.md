@@ -282,7 +282,7 @@ Split tunneling = `route.rules`, Network stack = `system/gvisor/mixed`.
 - [x] Зайти в панель: проверить ноды, протоколы, найти/выдать API-токен
 - [ ] Зайти на сервер бота по SSH: посмотреть код, что выдаётся сейчас
 - [ ] Решить вопрос Mac для iOS (Codemagic + TestFlight)
-- [ ] Настроить окружение Flutter на Windows
+- [x] Настроить окружение Flutter на Windows (Android SDK, эмулятор Pixel 7 API 35, `flutter create` в `app/`)
 - [ ] День 1: спайк xHTTP на sing-box + скелет BFF
 - [ ] Подготовить ТЗ для доработки Telegram-бота (кнопка «сменить ключ» → токен)
 - [x] Брендинг: FatVPN, логотип и цвета получены

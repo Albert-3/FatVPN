@@ -7,21 +7,21 @@ backend/**/obj/
 backend/.env
 
 # Flutter / Dart
-mobile/**/.dart_tool/
-mobile/**/.flutter-plugins
-mobile/**/.flutter-plugins-dependencies
-mobile/**/.packages
-mobile/**/build/
-mobile/**/pubspec.lock
+app/**/.dart_tool/
+app/**/.flutter-plugins
+app/**/.flutter-plugins-dependencies
+app/**/.packages
+app/**/build/
+app/**/pubspec.lock
 
 # Android
-mobile/**/android/.gradle/
-mobile/**/android/local.properties
+app/**/android/.gradle/
+app/**/android/local.properties
 
 # iOS
-mobile/**/ios/Pods/
-mobile/**/ios/.symlinks/
-mobile/**/ios/Flutter/Flutter.podspec
+app/**/ios/Pods/
+app/**/ios/.symlinks/
+app/**/ios/Flutter/Flutter.podspec
 
 # IDE
 .vs/

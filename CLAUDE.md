@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. Day 3 complete — BFF is deployed and integrated with the Telegram bot; Flutter app is next.
+FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. Day 3 complete — BFF is deployed and integrated with the Telegram bot. Flutter dev environment is set up and the app scaffold exists in `app/`; screens are next.
 
 ## Commands
 
@@ -34,6 +34,28 @@ dotnet user-secrets set "Remnawave:ApiToken" "<token>"
 Manual API testing: `src/FatVpn.Bff.Api/FatVpn.Bff.Api.http` has VS Code REST Client requests for every endpoint.
 
 No test projects exist yet.
+
+### Flutter app (`app/`)
+
+```bash
+# Get dependencies
+cd app
+flutter pub get
+
+# List devices / emulators
+flutter devices
+flutter emulators
+
+# Launch the Pixel 7 API 35 emulator
+flutter emulators --launch pixel_7_-_api_35_0
+
+# Run on a specific device
+flutter run -d emulator-5554
+```
+
+- Android SDK lives at `C:\Android\Sdk` (moved off the default `%LOCALAPPDATA%` path because it contained a space, which breaks NDK tooling). `flutter config --android-sdk` points at it.
+- Org/package id: `com.fatvpn.fatvpn_app`.
+- If a `flutter run` is killed mid-build on Windows, the next Gradle run can fail with a file-lock `IOException` on `app\build\...`. Fix: `cd app/android && ./gradlew.bat --stop`, then delete `app/build`, then retry.
 
 ## Architecture
 
