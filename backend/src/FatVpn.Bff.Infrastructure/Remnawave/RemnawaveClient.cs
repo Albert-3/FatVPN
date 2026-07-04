@@ -28,7 +28,13 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
                 Country: g.Key,
                 Flag: g.Key,
                 NodeCount: g.Count(),
-                PingHost: g.First().Address))
+                Nodes: g.Select(n => new ServerNode(
+                        Id: n.Uuid,
+                        Name: n.Name,
+                        Address: n.Address,
+                        Port: n.Port,
+                        UsersOnline: n.UsersOnline))
+                    .ToList()))
             .ToList();
     }
 
@@ -50,8 +56,12 @@ internal sealed class RemnawaveNodesResponse
 
 internal sealed class RemnawaveNodeDto
 {
+    public string Uuid { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
     public string CountryCode { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
+    public int Port { get; set; }
     public bool IsConnected { get; set; }
     public bool IsDisabled { get; set; }
+    public int UsersOnline { get; set; }
 }

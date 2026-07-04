@@ -1,29 +1,74 @@
 import 'package:flutter/material.dart';
 
+import 'l10n/app_localizations.dart';
+import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
+import 'services/auth_controller.dart';
+import 'services/locale_controller.dart';
 import 'theme/app_colors.dart';
 
 void main() {
   runApp(const FatVpnApp());
 }
 
-class FatVpnApp extends StatelessWidget {
+class FatVpnApp extends StatefulWidget {
   const FatVpnApp({super.key});
 
   @override
+  State<FatVpnApp> createState() => _FatVpnAppState();
+}
+
+class _FatVpnAppState extends State<FatVpnApp> {
+  final _auth = AuthController();
+  final _locale = LocaleController();
+
+  @override
+  void initState() {
+    super.initState();
+    _auth.start();
+    _locale.load();
+  }
+
+  @override
+  void dispose() {
+    _auth.dispose();
+    _locale.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FatVPN',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: AppColors.background,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.accent,
-          brightness: Brightness.dark,
+    return AppLocalizationsScope(
+      controller: _locale,
+      child: MaterialApp(
+        title: 'FatVPN',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          scaffoldBackgroundColor: AppColors.background,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: AppColors.accent,
+            brightness: Brightness.dark,
+          ),
+        ),
+        home: ListenableBuilder(
+          listenable: _auth,
+          builder: (context, _) {
+            if (_auth.initializing) {
+              return const Scaffold(
+                backgroundColor: AppColors.background,
+                body: Center(
+                  child: CircularProgressIndicator(color: AppColors.accent),
+                ),
+              );
+            }
+            if (!_auth.isAuthenticated) {
+              return AwaitingAuthScreen(auth: _auth);
+            }
+            return HomeScreen(auth: _auth);
+          },
         ),
       ),
-      home: const HomeScreen(),
     );
   }
 }

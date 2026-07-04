@@ -2,36 +2,68 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
+import '../l10n/strings.dart';
+import '../models/server_country.dart';
+import '../services/api_client.dart';
+import '../services/auth_controller.dart';
 import '../theme/app_colors.dart';
+import '../utils/country_flag.dart';
 import 'choose_location_screen.dart';
 import 'settings_screen.dart';
 
-class _Server {
-  const _Server(this.flag, this.country, this.city);
-
-  final String flag;
-  final String country;
-  final String city;
-}
-
-const _bestServers = [
-  _Server('🇩🇪', 'Germany', 'Frankfurt'),
-  _Server('🇳🇱', 'Netherlands', 'Amsterdam'),
-  _Server('🇯🇵', 'Japan', 'Tokyo'),
-];
-
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.auth});
+
+  final AuthController auth;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _apiClient = ApiClient();
+
   bool _connected = false;
-  _Server _selectedServer = _bestServers.first;
   Timer? _timer;
   Duration _sessionTime = Duration.zero;
+
+  List<ServerCountry> _servers = [];
+  ServerCountry? _selectedServer;
+  bool _loadingServers = true;
+  String? _serversError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadServers();
+  }
+
+  Future<void> _loadServers() async {
+    setState(() {
+      _loadingServers = true;
+      _serversError = null;
+    });
+    try {
+      final servers = await _apiClient.getServers();
+      setState(() {
+        _servers = servers;
+        _selectedServer = servers.isNotEmpty ? servers.first : null;
+        _loadingServers = false;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _serversError = e.message;
+        _loadingServers = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _serversError = S.of(context).couldNotReachServer;
+        _loadingServers = false;
+      });
+    }
+  }
 
   void _toggleConnection() {
     setState(() {
@@ -62,6 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = S.of(context);
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -72,13 +105,13 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               _buildHeader(),
               const SizedBox(height: 20),
-              _buildLocationSelector(),
+              _buildLocationSelector(s),
               const Spacer(),
               _buildPowerButton(),
               const SizedBox(height: 20),
-              _buildStatus(),
+              _buildStatus(s),
               const Spacer(),
-              _buildBestServers(),
+              _buildBestServers(s),
               const SizedBox(height: 20),
             ],
           ),
@@ -113,7 +146,9 @@ class _HomeScreenState extends State<HomeScreen> {
             alignment: Alignment.centerRight,
             child: IconButton(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(auth: widget.auth),
+                ),
               ),
               icon: const Icon(
                 Icons.settings,
@@ -126,16 +161,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLocationSelector() {
+  Widget _buildLocationSelector(Strings s) {
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const ChooseLocationScreen()),
-      ),
-      child: _locationCard(),
+      onTap: () async {
+        final selected = await Navigator.of(context).push<ServerCountry>(
+          MaterialPageRoute(
+            builder: (_) => ChooseLocationScreen(initialServers: _servers),
+          ),
+        );
+        if (selected != null) {
+          setState(() => _selectedServer = selected);
+        }
+      },
+      child: _locationCard(s),
     );
   }
 
-  Widget _locationCard() {
+  Widget _locationCard(Strings s) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -154,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _connected ? 'Connected to' : 'LOCATION',
+                  _connected ? s.connectedTo : s.location,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12,
@@ -162,9 +204,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _connected
-                      ? '${_selectedServer.country} · ${_selectedServer.city}'
-                      : 'Best server',
+                  _connected && _selectedServer != null
+                      ? _selectedServer!.country
+                      : s.bestServer,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 15,
@@ -214,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildStatus() {
+  Widget _buildStatus(Strings s) {
     return Column(
       children: [
         Row(
@@ -227,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              _connected ? 'Connected' : 'Disconnected',
+              _connected ? s.connected : s.disconnected,
               style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 16,
@@ -246,81 +288,116 @@ class _HomeScreenState extends State<HomeScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
-          const Text(
-            'SESSION TIME',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+          Text(
+            s.sessionTime,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
           ),
         ] else
-          const Text(
-            'Your connection is not protected',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          Text(
+            s.connectionNotProtected,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
           ),
       ],
     );
   }
 
-  Widget _buildBestServers() {
+  Widget _buildBestServers(Strings s) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Best servers',
-              style: TextStyle(
+            Text(
+              s.bestServers,
+              style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               ),
             ),
             TextButton(
-              onPressed: () {},
-              child: const Text(
-                'See all',
-                style: TextStyle(color: AppColors.accent),
+              onPressed: () async {
+                final selected = await Navigator.of(context).push<ServerCountry>(
+                  MaterialPageRoute(
+                    builder: (_) => ChooseLocationScreen(initialServers: _servers),
+                  ),
+                );
+                if (selected != null) {
+                  setState(() => _selectedServer = selected);
+                }
+              },
+              child: Text(
+                s.seeAll,
+                style: const TextStyle(color: AppColors.accent),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Row(
-          children: _bestServers.map((server) {
-            final isSelected = _connected && server == _selectedServer;
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => setState(() => _selectedServer = server),
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  decoration: BoxDecoration(
-                    color: AppColors.card,
-                    borderRadius: BorderRadius.circular(14),
-                    border: isSelected
-                        ? Border.all(color: AppColors.accent, width: 1.5)
-                        : null,
-                  ),
-                  child: Column(
-                    children: [
-                      Text(server.flag, style: const TextStyle(fontSize: 24)),
-                      const SizedBox(height: 6),
-                      Text(
-                        server.country,
-                        style: TextStyle(
-                          color: isSelected
-                              ? AppColors.accent
-                              : AppColors.textPrimary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+        if (_loadingServers)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: CircularProgressIndicator(color: AppColors.accent),
+            ),
+          )
+        else if (_serversError != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _serversError!,
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                   ),
                 ),
-              ),
-            );
-          }).toList(),
-        ),
+                TextButton(onPressed: _loadServers, child: Text(s.retry)),
+              ],
+            ),
+          )
+        else
+          Row(
+            children: _servers.take(3).map((server) {
+              final isSelected = _connected && server.country == _selectedServer?.country;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _selectedServer = server),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(14),
+                      border: isSelected
+                          ? Border.all(color: AppColors.accent, width: 1.5)
+                          : null,
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          countryCodeToFlagEmoji(server.flag),
+                          style: const TextStyle(fontSize: 24),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          server.country,
+                          style: TextStyle(
+                            color: isSelected
+                                ? AppColors.accent
+                                : AppColors.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
       ],
     );
   }

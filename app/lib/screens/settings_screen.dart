@@ -1,67 +1,105 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
+import '../l10n/strings.dart';
+import '../models/account_status.dart';
+import '../services/api_client.dart';
+import '../services/auth_controller.dart';
+import '../services/locale_controller.dart';
 import '../theme/app_colors.dart';
 import 'split_tunneling_screen.dart';
 
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key, required this.auth});
+
+  final AuthController auth;
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  final _apiClient = ApiClient();
+
+  AccountStatus? _accountStatus;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccountStatus();
+  }
+
+  Future<void> _loadAccountStatus() async {
+    final session = widget.auth.session;
+    if (session == null) {
+      setState(() {
+        _loading = false;
+        _error = S.of(context).notSignedIn;
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final status = await _apiClient.getMe(session.accessToken);
+      setState(() {
+        _accountStatus = status;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = S.of(context).couldNotReachServer;
+        _loading = false;
+      });
+    }
+  }
+
+  String _expiryLabel(Strings s, DateTime expiresAt) {
+    final remaining = expiresAt.difference(DateTime.now());
+    if (remaining.isNegative) {
+      return s.expired;
+    }
+    if (remaining.inDays >= 1) {
+      return s.expiresInDays(remaining.inDays);
+    }
+    return s.expiresInHours(remaining.inHours);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final s = S.of(context);
+    final locale = AppLocalizationsScope.of(context);
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(context),
+            _buildHeader(context, s),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
-                  _sectionTitle('MANAGE ACCOUNT'),
+                  _sectionTitle(s.manageAccount),
+                  _card(children: [_buildAccountStatus(s)]),
+                  _sectionTitle(s.connectionSettings),
                   _card(
                     children: [
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              '20e4f21d-54B7-4425-9112-...',
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 14,
-                                fontFamily: 'monospace',
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () {},
-                            icon: const Icon(
-                              Icons.copy,
-                              size: 18,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      const Text(
-                        'Expires in 5 days',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                  _sectionTitle('CONNECTION SETTINGS'),
-                  _card(
-                    children: [
-                      _settingRow('DNS Server', 'Cloudflare (1.1.1.1)'),
+                      _settingRow(s.dnsServer, 'Cloudflare (1.1.1.1)'),
                       const Divider(color: AppColors.disabled, height: 24),
-                      _settingRow('Network stack', 'Mixed'),
+                      _settingRow(s.networkStack, 'Mixed'),
                     ],
                   ),
-                  _sectionTitle('ROUTING'),
+                  _sectionTitle(s.routing),
                   _card(
                     children: [
                       InkWell(
@@ -72,22 +110,22 @@ class SettingsScreen extends StatelessWidget {
                         ),
                         child: Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Split tunneling settings',
-                                    style: TextStyle(
+                                    s.splitTunnelingSettings,
+                                    style: const TextStyle(
                                       color: AppColors.textPrimary,
                                       fontSize: 15,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
-                                  SizedBox(height: 2),
+                                  const SizedBox(height: 2),
                                   Text(
-                                    'Choose apps that bypass the VPN',
-                                    style: TextStyle(
+                                    s.splitTunnelingSubtitle,
+                                    style: const TextStyle(
                                       color: AppColors.textSecondary,
                                       fontSize: 12,
                                     ),
@@ -104,23 +142,48 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ],
                   ),
-                  _sectionTitle('SYSTEM'),
-                  _card(children: [_settingRow('Language', 'English')]),
-                  _sectionTitle('LOGS MANAGEMENT'),
+                  _sectionTitle(s.system),
+                  _card(children: [_buildLanguageRow(s, locale)]),
+                  _sectionTitle(s.account),
                   _card(
                     children: [
-                      const Text(
-                        'Application logs',
-                        style: TextStyle(
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            await widget.auth.signOut();
+                            if (context.mounted) {
+                              Navigator.of(context).popUntil((r) => r.isFirst);
+                            }
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.redAccent,
+                            side: const BorderSide(color: Colors.redAccent),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(s.signOut),
+                        ),
+                      ),
+                    ],
+                  ),
+                  _sectionTitle(s.logsManagement),
+                  _card(
+                    children: [
+                      Text(
+                        s.applicationLogs,
+                        style: const TextStyle(
                           color: AppColors.textPrimary,
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 2),
-                      const Text(
-                        'Share diagnostics with support',
-                        style: TextStyle(
+                      Text(
+                        s.shareDiagnostics,
+                        style: const TextStyle(
                           color: AppColors.textSecondary,
                           fontSize: 12,
                         ),
@@ -143,7 +206,7 @@ class SettingsScreen extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              child: const Text('Clear'),
+                              child: Text(s.clear),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -160,9 +223,9 @@ class SettingsScreen extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              child: const Text(
-                                'Send',
-                                style: TextStyle(fontWeight: FontWeight.w600),
+                              child: Text(
+                                s.send,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
                               ),
                             ),
                           ),
@@ -180,7 +243,81 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildAccountStatus(Strings s) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 4),
+        child: SizedBox(
+          height: 20,
+          width: 20,
+          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+        ),
+      );
+    }
+    if (_error != null) {
+      return Row(
+        children: [
+          Expanded(
+            child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          ),
+          TextButton(onPressed: _loadAccountStatus, child: Text(s.retry)),
+        ],
+      );
+    }
+    final status = _accountStatus!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              status.isActive ? Icons.check_circle : Icons.error,
+              size: 16,
+              color: status.isActive ? AppColors.accent : Colors.redAccent,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              status.isActive ? s.active : s.expired,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _expiryLabel(s, status.expiresAt),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLanguageRow(Strings s, LocaleController locale) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          s.language,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+        ),
+        SegmentedButton<AppLanguage>(
+          segments: const [
+            ButtonSegment(value: AppLanguage.en, label: Text('EN')),
+            ButtonSegment(value: AppLanguage.ru, label: Text('RU')),
+          ],
+          selected: {locale.language},
+          onSelectionChanged: (selection) {
+            locale.setLanguage(selection.first);
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, Strings s) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
@@ -189,11 +326,11 @@ class SettingsScreen extends StatelessWidget {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           ),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Settings',
+              s.settingsTitle,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,

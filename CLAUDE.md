@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. Day 3 complete — BFF is deployed and integrated with the Telegram bot. Flutter dev environment is set up and the app scaffold exists in `app/`; screens are next.
+FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. Day 3 complete — BFF is deployed and integrated with the Telegram bot. The 4 core Flutter screens are wired to the real BFF (`/auth/token` via deep link, `/servers`, `/me`); see `docs/app-bff-integration.md` for status and what's left (full e2e test pending local Postgres/Docker, or a careful SSH-based test against the production server).
 
 ## Commands
 
@@ -121,6 +121,7 @@ Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose
 
 ### Docs
 
+- `docs/app-bff-integration.md` — status of wiring the Flutter screens to the real BFF (done/pending, deep-link auth flow)
 - `docs/api-contract.md` — BFF API reference
 - `docs/ui-design-spec.md` — Flutter UI spec
 - `docs/bot-integration-spec.md` — Telegram bot integration spec

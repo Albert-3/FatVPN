@@ -39,9 +39,9 @@ dotnet user-secrets set "Remnawave:ApiToken" "<токен из панели>"
 - **Зависимость:** требует подтверждённого от заказчика срока триала (2 или 3 дня)
 
 ### `GET /servers`
-Список стран/нод + адреса для пинга на клиенте.
+Список стран с вложенным списком реальных нод (адрес/порт для клиентского TCP-пинга).
 
-- **Ответ:** `[{ "country": string, "flag": string, "nodeCount": int, "pingHost": string }]`
+- **Ответ:** `[{ "country": string, "flag": string, "nodeCount": int, "nodes": [{ "id": string, "name": string, "address": string, "port": int, "usersOnline": int }] }]`
 
 ### `GET /config`
 Конфиг подписки для текущего пользователя (по JWT). Проксирует ответ Remnawave as-is.

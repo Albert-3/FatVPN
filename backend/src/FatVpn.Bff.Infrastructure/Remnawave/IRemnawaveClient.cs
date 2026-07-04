@@ -7,4 +7,6 @@ public interface IRemnawaveClient
     Task<(string Content, string ContentType)> GetSubscriptionConfigAsync(string subscriptionId, CancellationToken ct = default);
 }
 
-public sealed record ServerCountry(string Country, string Flag, int NodeCount, string PingHost);
+public sealed record ServerCountry(string Country, string Flag, int NodeCount, IReadOnlyList<ServerNode> Nodes);
+
+public sealed record ServerNode(string Id, string Name, string Address, int Port, int UsersOnline);

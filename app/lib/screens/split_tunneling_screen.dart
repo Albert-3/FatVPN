@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
+import '../l10n/strings.dart';
 import '../theme/app_colors.dart';
 
 class SplitTunnelingScreen extends StatefulWidget {
@@ -19,20 +21,21 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final s = S.of(context);
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(context),
+            _buildHeader(context, s),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Apps that bypass the VPN',
-                  style: TextStyle(
+                  s.appsBypassVpn,
+                  style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,
                   ),
@@ -44,9 +47,9 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
-                  const Text(
-                    'SELECTED IN LIST',
-                    style: TextStyle(
+                  Text(
+                    s.selectedInList,
+                    style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 12,
                       letterSpacing: 1,
@@ -64,10 +67,10 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
-                            'Bypassing tunnel',
-                            style: TextStyle(
+                            s.bypassingTunnel,
+                            style: const TextStyle(
                               color: AppColors.textPrimary,
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
@@ -132,9 +135,9 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
                     ),
                   ),
                   icon: const Icon(Icons.add),
-                  label: const Text(
-                    'Add',
-                    style: TextStyle(fontWeight: FontWeight.w600),
+                  label: Text(
+                    s.add,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
@@ -145,7 +148,7 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, Strings s) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
@@ -154,11 +157,11 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           ),
-          const Expanded(
+          Expanded(
             child: Text(
-              'Split tunneling',
+              s.splitTunneling,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
