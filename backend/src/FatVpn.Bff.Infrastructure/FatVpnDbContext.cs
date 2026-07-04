@@ -8,10 +8,12 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Trial> Trials => Set<Trial>();
     public DbSet<Token> Tokens => Set<Token>();
+    public DbSet<TrialSubscriptionSlot> TrialSubscriptionSlots => Set<TrialSubscriptionSlot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Device>().HasIndex(d => d.DeviceKeyHash).IsUnique();
         modelBuilder.Entity<Token>().HasIndex(t => t.ShortToken).IsUnique();
+        modelBuilder.Entity<TrialSubscriptionSlot>().HasIndex(s => s.RemnawaveSubscriptionId).IsUnique();
     }
 }

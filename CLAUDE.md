@@ -116,6 +116,8 @@ Docker network `fatvpn_default` is shared between `fatvpn-bot` and `fatvpn-bff` 
 
 `BOT_SECRET` is set in BFF container env (`Bot__Secret`), not in a file — retrieve with `docker inspect fatvpn-bff`.
 
+⚠️ **TODO before `/trial` goes live on prod:** `Trial__DeviceKeySalt` container env must be set to a real random value — it's empty in `appsettings.json` by default (falls back to an unsalted hash, not a hard failure, but weakens device-key privacy). Set it the same way as `Bot__Secret` (container env, not a file). See `docs/api-contract.md` for details.
+
 Deploy BFF: `cd /opt/fatvpn-bff/backend && git pull && docker compose build --no-cache bff && docker compose up -d bff`  
 Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose up -d --force-recreate`
 

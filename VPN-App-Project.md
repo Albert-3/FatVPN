@@ -172,10 +172,12 @@ Split tunneling = `route.rules`, Network stack = `system/gvisor/mixed`.
 
 ---
 
-## 8. Контракт API BFF (черновик, доработать)
+## 8. Контракт API BFF
+
+Итоговый актуальный контракт — в `docs/api-contract.md`, включая `POST /trial` (реализовано 2026-07-05, MVP). Ниже — исходный черновик из ТЗ, оставлен для истории:
 
 - `POST /auth/token` — обмен кода из Telegram на JWT
-- `POST /trial` — выдать 5-дневный триал (с токеном аттестации устройства)
+- `POST /trial` — выдать 2–3-дневный триал (с токеном аттестации устройства); реализовано, срок конфигурируется через `Trial:DurationDays`
 - `GET /servers` — список стран/нод (+ адреса для пинга на клиенте)
 - `GET /config` — конфиг sing-box для текущего пользователя
 - `GET /me` — статус подписки, срок действия
@@ -215,7 +217,7 @@ Split tunneling = `route.rules`, Network stack = `system/gvisor/mixed`.
 | 4 | Нативный мост Android: Libbox, VpnService, platform channel | Ручной конфиг → туннель |
 | 5 | UI → движок end-to-end, статус, отключение, ошибки | Подключение в один тап |
 | 6 | Telegram-бот ↔ BFF: код → JWT (ТЗ для их разработчика бота) | Логин через токен |
-| 7 | Авто-триал при установке + логика Device ID (DeviceCheck / Play Integrity) | Триал 2–3 дня, 1 раз/устройство |
+| 7 🟡 | Авто-триал при установке + логика Device ID (DeviceCheck / Play Integrity) | `POST /trial` реализован на бэкенде и проверен end-to-end (2026-07-05, см. `docs/api-contract.md` и `docs/app-bff-integration.md`) — но как MVP: без реальной верификации DeviceCheck/Play Integrity (только соль-хеш токена) и без авто-выдачи на Flutter-стороне. Полноценная реализация — ещё не сделана. |
 | 8 | Push-уведомления (FCM + APNs) + iOS Network Extension (entitlements, App Group, xcframework), Codemagic + TestFlight | Пуши + iOS-туннель (в идеале) |
 | 9 | Харденинг: refresh токенов, реконнект, kill-switch, пинг, сплит-туннель, крайние случаи | Стабильный билд |
 | 10 | Полировка, внутренний тест, багбаш, подготовка листингов | Устанавливаемый билд |

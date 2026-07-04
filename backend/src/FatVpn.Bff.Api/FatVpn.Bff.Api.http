@@ -42,3 +42,30 @@ Authorization: Bearer {{accessToken}}
 
 GET {{FatVpn.Bff.Api_HostAddress}}/config
 Authorization: Bearer {{accessToken}}
+
+###
+
+# Admin/bot pre-populates the trial subscription pool (dev bot secret)
+POST {{FatVpn.Bff.Api_HostAddress}}/internal/trial-pool
+Content-Type: application/json
+X-Bot-Secret: dev-only-bot-secret
+
+{
+  "remnawaveSubscriptionIds": ["trial-slot-1", "trial-slot-2"]
+}
+
+###
+
+GET {{FatVpn.Bff.Api_HostAddress}}/internal/trial-pool
+X-Bot-Secret: dev-only-bot-secret
+
+###
+
+# App requests an auto-trial for a new device (attestation token is a placeholder for now)
+POST {{FatVpn.Bff.Api_HostAddress}}/trial
+Content-Type: application/json
+
+{
+  "attestationToken": "dev-device-placeholder-id",
+  "platform": "android"
+}

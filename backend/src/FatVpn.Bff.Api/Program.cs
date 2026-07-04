@@ -3,6 +3,7 @@ using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
 using FatVpn.Bff.Infrastructure.Bot;
 using FatVpn.Bff.Infrastructure.Remnawave;
+using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ builder.Services.AddDbContext<FatVpnDbContext>(options =>
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
 builder.Services.Configure<RemnawaveOptions>(builder.Configuration.GetSection("Remnawave"));
 builder.Services.Configure<BotOptions>(builder.Configuration.GetSection("Bot"));
+builder.Services.Configure<TrialOptions>(builder.Configuration.GetSection("Trial"));
 
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddHttpClient<IRemnawaveClient, RemnawaveClient>((sp, client) =>

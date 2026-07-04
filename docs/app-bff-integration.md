@@ -93,6 +93,19 @@ Docker установлен и работает. Поднят локальный
 
 **Проверено на эмуляторе (`emulator-5554`):** переключение EN→RU в Settings мгновенно перекрашивает весь UI без перезапуска экрана (`ChangeNotifier` + `InheritedNotifier`) — проверены Settings, Home, ChooseLocation; склонения "27 дней", "1 сервер" / "2 сервера" отображаются корректно.
 
+## Бэкенд: `POST /trial` (2026-07-05)
+
+Реализован и проверен end-to-end на локальном Postgres (эндпоинт бэкенда, Flutter-сторона ещё не подключена — приложение продолжает работать через deep-link токен от бота).
+
+- `backend/src/FatVpn.Bff.Api/Controllers/TrialController.cs` — `POST /trial`: хеширует `attestationToken` (соль + SHA256) как ключ устройства, проверяет анти-абуз по таблице `Trials`, берёт свободный слот из пула Remnawave-подписок, выдаёт JWT на `Trial:DurationDays` (по умолчанию 3 дня, конфигурируемо).
+- `backend/src/FatVpn.Bff.Api/Controllers/InternalTrialPoolController.cs` — `POST/GET /internal/trial-pool`: наполнение и статус пула триальных подписок, защищено тем же `X-Bot-Secret`.
+- `backend/src/FatVpn.Bff.Domain/TrialSubscriptionSlot.cs` + EF-миграция `AddTrialSubscriptionPool`.
+- Полный контракт и известные MVP-упрощения (attestation не верифицируется, пул подписок наполняется вручную) — см. `docs/api-contract.md`.
+- **Проверено:** наполнение пула → выдача триала → JWT → `GET /me` (`active`) → повторная попытка того же устройства → `409` → пул исчерпан → `503`.
+- ⚠️ **Перед проды**: `Trial:DeviceKeySalt` пуст в `appsettings.json` — задать реальное значение через `dotnet user-secrets`/container env до реального использования (см. `CLAUDE.md`, раздел Production Server).
+
 ## Осталось сделать
 
 1. (Опционально) починить сборку `bff` в Docker локально на Windows — либо убрать Windows-специфичный fallback путь из `nuget.config`, либо исключить его через `.dockerignore`/отдельный nuget.config для контейнера.
+2. Flutter-сторона `/trial`: авто-запрос триала при первой установке (сейчас все 4 экрана всё ещё привязаны только к deep-link токену от бота), плюс реальная верификация устройства (Play Integrity/App Attest) вместо MVP-хеша.
+3. Решить, кто и как наполняет пул `TrialSubscriptionSlots` в проде (бот при создании ключей? отдельный скрипт? вручную через `POST /internal/trial-pool`?).

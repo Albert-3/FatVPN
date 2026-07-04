@@ -1,5 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
+using FatVpn.Bff.Api.Auth;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Bot;
@@ -13,12 +12,10 @@ namespace FatVpn.Bff.Api.Controllers;
 [Route("internal/tokens")]
 public class InternalTokensController(FatVpnDbContext db, IOptions<BotOptions> botOptions) : ControllerBase
 {
-    private const string BotSecretHeader = "X-Bot-Secret";
-
     [HttpPost]
     public async Task<IActionResult> RegisterToken([FromBody] RegisterTokenRequest request, CancellationToken ct)
     {
-        if (!IsValidBotSecret(Request.Headers[BotSecretHeader]))
+        if (!BotSecretValidator.IsValid(Request.Headers[BotSecretValidator.HeaderName], botOptions.Value.Secret))
         {
             return Unauthorized();
         }
@@ -40,19 +37,6 @@ public class InternalTokensController(FatVpnDbContext db, IOptions<BotOptions> b
 
         await db.SaveChangesAsync(ct);
         return StatusCode(StatusCodes.Status201Created);
-    }
-
-    private bool IsValidBotSecret(string? provided)
-    {
-        var expected = botOptions.Value.Secret;
-        if (string.IsNullOrEmpty(provided) || string.IsNullOrEmpty(expected) || provided.Length != expected.Length)
-        {
-            return false;
-        }
-
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(provided),
-            Encoding.UTF8.GetBytes(expected));
     }
 }
 
