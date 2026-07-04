@@ -88,24 +88,41 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        const Text(
-          'FatVPN',
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
+    return SizedBox(
+      height: 48,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset('assets/images/logo.png', height: 26),
+              const SizedBox(width: 8),
+              const Text(
+                'FatVPN',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
-        ),
-        IconButton(
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
+              icon: const Icon(
+                Icons.settings,
+                color: AppColors.textSecondary,
+              ),
+            ),
           ),
-          icon: const Icon(Icons.settings, color: AppColors.textSecondary),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
