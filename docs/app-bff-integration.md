@@ -104,8 +104,35 @@ Docker установлен и работает. Поднят локальный
 - **Проверено:** наполнение пула → выдача триала → JWT → `GET /me` (`active`) → повторная попытка того же устройства → `409` → пул исчерпан → `503`.
 - ⚠️ **Перед проды**: `Trial:DeviceKeySalt` пуст в `appsettings.json` — задать реальное значение через `dotnet user-secrets`/container env до реального использования (см. `CLAUDE.md`, раздел Production Server).
 
+## Реальное VPN-туннелирование (Android, 2026-07-05)
+
+Кнопка Connect на `HomeScreen` перестала быть UI-переключателем — теперь она реально поднимает VPN-туннель через sing-box.
+
+**Решение:** взят готовый Flutter-плагин `singbox_mm` (git-зависимость на `https://github.com/thethtwe-dev/singbox_mm.git`, не pub.dev — опубликованный тарбол содержит бинарник только под `arm64-v8a`, а полный git-репозиторий даёт ещё и `x86_64` для эмулятора). Плагин реализует настоящий libbox JNI-мост (готовые `libbox.so`, без сборки Go на машине разработчика) — рассматривался и альтернативный `v2ray_box`, но у него VPN-режим всегда поднимает и sing-box, и Xray-core с самодельным SOCKS-мостом между ними и требует собирать оба нативных ядра через Go; `singbox_mm` архитектурно проще и не требует Go-тулчейна вообще.
+
+**Ключевая находка при подключении:** `GET /servers` отдаёт для ноды `port` — это служебный порт агента Remnawave (`2222`), не реальный клиентский inbound-порт (в реальности 443/8443/2083/18443 и т.д., у одной ноды их может быть несколько под разные транспорты). Поэтому сопоставление ноды из `/servers` с `vless://` URI из `/config` в `vless_config_parser.dart` идёт **только по адресу**, порт не сравнивается.
+
+**Новые файлы:**
+- `app/lib/services/vless_config_parser.dart` — декодирует base64-блок из `/config` в список `vless://` URI, ищет URI по адресу ноды.
+- `app/lib/services/vpn_controller.dart` — `ChangeNotifier`-обёртка вокруг `SignboxVpn`: `connectToBestNode()` меряет пинг по всем нодам страны (переиспользует `PingService`), выбирает самую быструю, тянет `/config`, находит нужный URI и вызывает `connectManualConfigLink()` (сам плагин внутри запрашивает VPN- и notification-разрешения и бросает понятное исключение при отказе).
+
+**Изменённые файлы:**
+- `app/pubspec.yaml` — git-зависимость `singbox_mm`.
+- `app/lib/screens/home_screen.dart` — `_toggleConnection` заменён на реальный async-вызов `VpnController`; статус/таймер сессии/ошибка подключения теперь идут от настоящего `VpnConnectionState`, а не от локального bool.
+- `app/lib/l10n/strings.dart` — добавлена строка `connecting` (EN/RU).
+- `AndroidManifest.xml` — без изменений: разрешения и объявление `VpnService` уже приезжают через Gradle manifest merger из собственного манифеста плагина (подтверждено на его example-приложении).
+
+**Проверено на эмуляторе (`emulator-5554`), сначала на example-приложении плагина, потом в самом FatVPN:**
+- Реальный `vless://` (grpc-транспорт) из живой Remnawave-подписки корректно распознан плагином (`Config Protocol: vless (supported)`), ядро sing-box v1.13.11.
+- В **собственном** приложении: локальный BFF + реальный Remnawave-пользователь → `HomeScreen` → Connect → системные диалоги VPN/notification permission → «Подключено к DE», таймер идёт, 🔑-иконка в статус-баре Android → Disconnect → чистый возврат в «Отключено».
+- Известное ограничение подтверждено на практике: `GET /config` возвращает 502 для синтетических тестовых токенов (тестовый `remnawaveSubscriptionId` не существует в Remnawave) — для проверки нужен реальный `remnawaveSubscriptionId` живого пользователя (получен через `GET /api/users` на панели и зарегистрирован вручную через `POST /internal/tokens`).
+
+**Известное ограничение среды:** сборка native-библиотек плагина под 4 ABI разом требует несколько ГБ временного места на диске при `flutter build apk` — если диск C: почти заполнен, `mergeDebugJniLibFolders`/`bundleDebugAar` падают с `FileSystemException`/`not enough space on the disk`.
+
 ## Осталось сделать
 
 1. (Опционально) починить сборку `bff` в Docker локально на Windows — либо убрать Windows-специфичный fallback путь из `nuget.config`, либо исключить его через `.dockerignore`/отдельный nuget.config для контейнера.
 2. Flutter-сторона `/trial`: авто-запрос триала при первой установке (сейчас все 4 экрана всё ещё привязаны только к deep-link токену от бота), плюс реальная верификация устройства (Play Integrity/App Attest) вместо MVP-хеша.
 3. Решить, кто и как наполняет пул `TrialSubscriptionSlots` в проде (бот при создании ключей? отдельный скрипт? вручную через `POST /internal/trial-pool`?).
+4. iOS-сторона VPN-туннеля — отдельная большая задача (Network Extension, физический iPhone, Apple Developer аккаунт — пока ничего из этого нет).
+5. Split tunneling, DNS/Network stack в Settings — всё ещё мок-данные, нет соответствующего API.

@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:singbox_mm/singbox_mm.dart';
 
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../models/server_country.dart';
 import '../services/api_client.dart';
 import '../services/auth_controller.dart';
+import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
 import 'choose_location_screen.dart';
@@ -23,8 +25,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _apiClient = ApiClient();
+  final _vpn = VpnController();
 
-  bool _connected = false;
   Timer? _timer;
   Duration _sessionTime = Duration.zero;
 
@@ -33,10 +35,26 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingServers = true;
   String? _serversError;
 
+  bool get _connected => _vpn.isConnected;
+
   @override
   void initState() {
     super.initState();
+    _vpn.addListener(_handleVpnChange);
     _loadServers();
+  }
+
+  void _handleVpnChange() {
+    if (_vpn.isConnected && _timer == null) {
+      _sessionTime = Duration.zero;
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        setState(() => _sessionTime += const Duration(seconds: 1));
+      });
+    } else if (!_vpn.isConnected && _timer != null) {
+      _timer?.cancel();
+      _timer = null;
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadServers() async {
@@ -65,23 +83,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _toggleConnection() {
-    setState(() {
-      _connected = !_connected;
-      if (_connected) {
-        _sessionTime = Duration.zero;
-        _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-          setState(() => _sessionTime += const Duration(seconds: 1));
-        });
-      } else {
-        _timer?.cancel();
-      }
-    });
+  Future<void> _onPowerButtonTap() async {
+    if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
+      await _vpn.disconnect();
+      return;
+    }
+    final server = _selectedServer;
+    final session = widget.auth.session;
+    if (server == null || session == null) return;
+    try {
+      await _vpn.connectToBestNode(server, session.accessToken);
+    } catch (_) {
+      // Error is surfaced via _vpn.errorMessage in the status section.
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _vpn.removeListener(_handleVpnChange);
+    _vpn.dispose();
     super.dispose();
   }
 
@@ -230,7 +251,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildPowerButton() {
     return GestureDetector(
-      onTap: _toggleConnection,
+      onTap: _onPowerButtonTap,
       child: Container(
         width: 160,
         height: 160,
@@ -257,19 +278,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildStatus(Strings s) {
+    final connecting = _vpn.state == VpnConnectionState.connecting;
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.circle,
-              size: 10,
-              color: _connected ? AppColors.accent : AppColors.textSecondary,
-            ),
+            if (connecting)
+              const SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+              )
+            else
+              Icon(
+                Icons.circle,
+                size: 10,
+                color: _connected ? AppColors.accent : AppColors.textSecondary,
+              ),
             const SizedBox(width: 8),
             Text(
-              _connected ? s.connected : s.disconnected,
+              connecting ? s.connecting : (_connected ? s.connected : s.disconnected),
               style: const TextStyle(
                 color: AppColors.textPrimary,
                 fontSize: 16,
@@ -292,7 +321,13 @@ class _HomeScreenState extends State<HomeScreen> {
             s.sessionTime,
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
           ),
-        ] else
+        ] else if (_vpn.errorMessage != null)
+          Text(
+            _vpn.errorMessage!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+          )
+        else
           Text(
             s.connectionNotProtected,
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),

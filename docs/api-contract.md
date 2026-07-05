@@ -42,7 +42,7 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 - **Запрос:** `{ "attestationToken": string, "platform": "ios" | "android" }`
 - **Ответ:** `{ "accessToken": string, "expiresAt": datetime }`
 - **Ошибки:** 409 — триал для этого устройства уже был выдан; 503 — пул триальных подписок пуст
-- **Срок триала:** `Trial:DurationDays` в конфиге (по умолчанию 3 дня) — поменять одной строкой, когда заказчик подтвердит точную цифру.
+- **Срок триала:** 3 дня, подтверждено заказчиком (2026-07-05) — `Trial:DurationDays` в конфиге, уже стоит `3` по умолчанию.
 - **Реализация (MVP, см. "Открытые вопросы"):**
   - `attestationToken` пока НЕ верифицируется через Play Integrity/App Attest — он просто солёно хешируется (`Trial:DeviceKeySalt`) и используется как ключ устройства в таблице `Devices`. Полноценная верификация — отдельная задача (нужны Google Cloud service account и Apple App Attest ключи).
   - Remnawave-подписка для триала берётся из заранее наполненного пула (`TrialSubscriptionSlots`), а не создаётся через Remnawave Admin API на лету. Пул наполняется через `POST /internal/trial-pool`.
@@ -93,6 +93,5 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 **Открытые вопросы:**
 - Sing-box шаблоны в Remnawave — нужна настройка панели, чтобы `/config` отдавал JSON.
 - Лимит устройств на ключ (у Sota — 1) — влияет на `/auth/token` и `/trial`.
-- Точный срок триала (2 или 3 дня) — не подтверждён заказчиком, сейчас дефолт 3 (`Trial:DurationDays`).
 - Реальная верификация `attestationToken` (Play Integrity / App Attest) — не реализована, см. `POST /trial` выше.
 - Пул `TrialSubscriptionSlots` нужно наполнять вручную через `POST /internal/trial-pool` — ещё не решено, кто и как создаёт эти подписки в самой Remnawave-панели (бот? скрипт? вручную?) и как пул пополняется, когда заканчивается.

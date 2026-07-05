@@ -31,6 +31,7 @@ class Strings {
     required this.location,
     required this.bestServer,
     required this.connected,
+    required this.connecting,
     required this.disconnected,
     required this.sessionTime,
     required this.connectionNotProtected,
@@ -80,6 +81,7 @@ class Strings {
   final String location;
   final String bestServer;
   final String connected;
+  final String connecting;
   final String disconnected;
   final String sessionTime;
   final String connectionNotProtected;
@@ -147,6 +149,7 @@ const Strings enStrings = Strings(
   location: 'LOCATION',
   bestServer: 'Best server',
   connected: 'Connected',
+  connecting: 'Connecting…',
   disconnected: 'Disconnected',
   sessionTime: 'SESSION TIME',
   connectionNotProtected: 'Your connection is not protected',
@@ -199,6 +202,7 @@ final Strings ruStrings = Strings(
   location: 'ЛОКАЦИЯ',
   bestServer: 'Лучший сервер',
   connected: 'Подключено',
+  connecting: 'Подключение…',
   disconnected: 'Отключено',
   sessionTime: 'ВРЕМЯ СЕССИИ',
   connectionNotProtected: 'Ваше соединение не защищено',
