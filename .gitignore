@@ -38,3 +38,6 @@ appsettings.*.local.json
 
 # Claude Code local state
 .claude/
+
+# Design assets (source files, not needed in the app repo)
+Designe/
