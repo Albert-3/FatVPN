@@ -127,10 +127,10 @@ docker compose build --no-cache bff
 docker compose up -d bff
 ```
 
-## Миграция на боевой бот
+## Миграция на прод-бот
 
-Текущая интеграция работает только на `@testfatvpnnbot`. При переносе на боевой бот:
-1. Скопировать `bot/api/fatvpn_bff_api.py` в боевой репозиторий бота
+Текущая интеграция работает только на `@testfatvpnnbot`. При переносе на прод-бот:
+1. Скопировать `bot/api/fatvpn_bff_api.py` в прод-репозиторий бота
 2. Применить те же патчи к `handlers/key_handlers.py`
-3. Убедиться, что боевой бот в той же Docker-сети что и BFF
+3. Убедиться, что прод-бот в той же Docker-сети что и BFF
 4. `BOT_SECRET` взять из `docker inspect fatvpn-bff` → `Bot__Secret`

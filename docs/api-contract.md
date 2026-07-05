@@ -6,7 +6,7 @@
 
 Все эндпоинты реализованы в `backend/src/FatVpn.Bff.Api/Controllers`.
 
-Проверено end-to-end на боевом сервере (87.121.221.229):
+Проверено end-to-end на тестовом сервере (87.121.221.229, тестовый бот `@testfatvpnnbot` — это не прод):
 - Бот нажимает «Поменять ключ» → регистрирует 32-символьный токен через `POST /internal/tokens`
 - `POST /auth/token` возвращает JWT
 - `GET /config` проксирует сырую подписку Remnawave с правильным Content-Type
@@ -79,7 +79,7 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 
 - **Ответ:** `{ "status": "trial" | "active" | "expired", "expiresAt": datetime }`
 
-## Внутренние эндпоинты (только для тестового/боевого Telegram-бота)
+## Внутренние эндпоинты (только для тестового/прод Telegram-бота)
 
 ### `POST /internal/tokens`
 Регистрация короткого токена ботом при нажатии «сменить ключ».
