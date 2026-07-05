@@ -126,5 +126,6 @@ Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose
 - `docs/app-bff-integration.md` — status of wiring the Flutter screens to the real BFF (done/pending, deep-link auth flow)
 - `docs/api-contract.md` — BFF API reference
 - `docs/ui-design-spec.md` — Flutter UI spec
-- `docs/bot-integration-spec.md` — Telegram bot integration spec
+- `docs/bot-integration-spec.md` — Telegram bot integration spec (deep-link token flow)
+- `docs/bot-pairing-spec.md` — standalone dev spec for the bot-side pairing changes (new Account-based onboarding)
 - `VPN-App-Project.md` — master project document (Russian): requirements, 10-day plan, open questions

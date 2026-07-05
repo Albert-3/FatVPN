@@ -11,4 +11,10 @@ public static class ClaimsPrincipalExtensions
             ?? throw new InvalidOperationException("Missing token id claim.");
         return Guid.Parse(value);
     }
+
+    public static Guid? TryGetAccountId(this ClaimsPrincipal user)
+    {
+        var value = user.FindFirstValue(FatVpnClaimTypes.AccountId);
+        return value is null ? null : Guid.Parse(value);
+    }
 }

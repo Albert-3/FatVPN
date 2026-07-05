@@ -1,10 +1,12 @@
 using FatVpn.Bff.Infrastructure.Remnawave;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FatVpn.Bff.Api.Controllers;
 
 [ApiController]
 [Route("servers")]
+[Authorize]
 public class ServersController(IRemnawaveClient remnawaveClient) : ControllerBase
 {
     [HttpGet]

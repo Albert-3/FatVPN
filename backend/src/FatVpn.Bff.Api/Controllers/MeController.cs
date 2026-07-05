@@ -13,13 +13,28 @@ public class MeController(FatVpnDbContext db) : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetMe(CancellationToken ct)
     {
-        var token = await db.Tokens.FindAsync([User.GetTokenId()], ct);
-        if (token is null)
+        var expiresAt = await ResolveExpiryAsync(ct);
+        if (expiresAt is null)
         {
             return NotFound();
         }
 
-        var status = token.ExpiresAt > DateTimeOffset.UtcNow ? "active" : "expired";
-        return Ok(new { status, expiresAt = token.ExpiresAt });
+        var status = expiresAt > DateTimeOffset.UtcNow ? "active" : "expired";
+        return Ok(new { status, expiresAt });
+    }
+
+    // Account-based sessions (pairing) resolve the current subscription through
+    // the account; legacy deep-link tokens fall back to the token row.
+    private async Task<DateTimeOffset?> ResolveExpiryAsync(CancellationToken ct)
+    {
+        var accountId = User.TryGetAccountId();
+        if (accountId is not null)
+        {
+            var account = await db.Accounts.FindAsync([accountId.Value], ct);
+            return account?.ExpiresAt;
+        }
+
+        var token = await db.Tokens.FindAsync([User.GetTokenId()], ct);
+        return token?.ExpiresAt;
     }
 }

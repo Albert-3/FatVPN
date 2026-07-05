@@ -36,6 +36,22 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 - **Ответ:** `{ "accessToken": string, "expiresAt": datetime }`
 - **Ошибки:** 404 — токен не найден/просрочен
 
+### `POST /pair/start`
+Приложение начинает pairing (связывание по одноразовому коду). Показывает `pairCode`/QR и открывает бота ссылкой `t.me/<bot>?start=pair<pairCode>`.
+
+- **Запрос:** тело не требуется
+- **Ответ:** `{ "pairCode": string, "pollToken": string, "expiresAt": datetime }`
+- `pairCode` — 8 символов (base32 без похожих букв), уходит в Telegram deep link.
+- `pollToken` — секрет устройства, с которым приложение опрашивает статус. Не передаётся в чат.
+- Код живёт 15 минут.
+
+### `GET /pair/status?pollToken=<...>`
+Приложение опрашивает, пока бот не завершит pairing.
+
+- **Ответ:** `{ "status": "pending" }` | `{ "status": "completed", "accessToken": string, "expiresAt": datetime }` | `{ "status": "expired" }`
+- **Ошибки:** 404 — `pollToken` неизвестен
+- `accessToken` — JWT на **Account** (claim `fatvpn_account_id`), в отличие от deep-link-пути (claim `fatvpn_token_id`).
+
 ### `POST /trial`
 Выдать триал новому устройству (без ввода кода).
 
@@ -63,6 +79,7 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 ### `GET /servers`
 Список стран с вложенным списком реальных нод (адрес/порт для клиентского TCP-пинга).
 
+- **Авторизация:** JWT Bearer (эндпоинт закрыт с pairing-релиза)
 - **Ответ:** `[{ "country": string, "flag": string, "nodeCount": int, "nodes": [{ "id": string, "name": string, "address": string, "port": int, "usersOnline": int }] }]`
 
 ### `GET /config`
@@ -82,11 +99,28 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 ## Внутренние эндпоинты (только для тестового/прод Telegram-бота)
 
 ### `POST /internal/tokens`
-Регистрация короткого токена ботом при нажатии «сменить ключ».
+Регистрация короткого токена ботом при нажатии «сменить ключ» (legacy deep-link-путь).
 
 - **Авторизация:** секрет бота (заголовок, не JWT)
 - **Запрос:** `{ "shortToken": string, "remnawaveSubscriptionId": string, "expiresAt": datetime }`
 - **Ответ:** 201 Created
+
+### `POST /internal/pair/complete`
+Бот завершает pairing по коду: создаёт/обновляет Account и привязывает к нему код.
+
+- **Авторизация:** секрет бота (`X-Bot-Secret`)
+- **Запрос:** `{ "pairCode": string, "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime }`
+- **Ответ:** 200 OK
+- **Ошибки:** 404 — код неизвестен/истёк; 409 — код уже использован
+
+### `POST /internal/account/subscription`
+Бот обновляет текущую подписку аккаунта при любом изменении активного ключа (создание/смена/продление). Upsert по `telegramUserId`. Именно это не даёт продлению/смене ключа рвать сессию приложения.
+
+- **Авторизация:** секрет бота (`X-Bot-Secret`)
+- **Запрос:** `{ "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime }`
+- **Ответ:** 200 OK
+
+> Полное ТЗ по стороне бота — `docs/bot-pairing-spec.md`.
 
 ---
 
