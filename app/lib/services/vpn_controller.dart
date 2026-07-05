@@ -41,6 +41,26 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> connectToBestNode(ServerCountry country, String accessToken) async {
+    await _connect(country.nodes, accessToken);
+  }
+
+  /// Connects to the fastest node across *all* countries — used when the
+  /// user hasn't explicitly chosen a location yet (still on the default
+  /// "Best Server" state) so first launch doesn't force a manual pick.
+  ///
+  /// Returns the country the chosen node belongs to, so the caller can
+  /// reflect the auto-picked location in the UI.
+  Future<ServerCountry?> connectToBestOverall(
+    List<ServerCountry> countries,
+    String accessToken,
+  ) async {
+    final allNodes = countries.expand((c) => c.nodes).toList();
+    final node = await _connect(allNodes, accessToken);
+    if (node == null) return null;
+    return countries.firstWhere((c) => c.nodes.contains(node));
+  }
+
+  Future<ServerNode?> _connect(List<ServerNode> candidates, String accessToken) async {
     _errorMessage = null;
     _state = VpnConnectionState.connecting;
     notifyListeners();
@@ -48,16 +68,23 @@ class VpnController extends ChangeNotifier {
     try {
       await _ensureInitialized();
 
-      final node = await _pickBestNode(country);
+      // `/servers` lists every Remnawave node regardless of squad, but
+      // `/config` only contains vless entries for nodes in this user's
+      // subscription — narrow to the intersection before picking by ping,
+      // otherwise the "best" node can be one this subscription can't use.
       final (content, _) = await _apiClient.getConfig(accessToken);
       final uris = parseVlessUris(content);
-      final uri = findUriForNode(uris, node);
-      if (uri == null) {
-        throw StateError('No matching config found for ${node.name}');
+      final usableNodes = candidates.where((n) => findUriForNode(uris, n) != null).toList();
+      if (usableNodes.isEmpty) {
+        throw StateError('No available node in this subscription');
       }
+
+      final node = await _pickBestNode(usableNodes);
+      final uri = findUriForNode(uris, node)!;
 
       await _vpn.connectManualConfigLink(configLink: uri);
       _connectedNodeName = node.name;
+      return node;
     } catch (e) {
       _state = VpnConnectionState.error;
       _errorMessage = e is SignboxVpnException ? e.message : e.toString();
@@ -66,17 +93,17 @@ class VpnController extends ChangeNotifier {
     }
   }
 
-  Future<ServerNode> _pickBestNode(ServerCountry country) async {
+  Future<ServerNode> _pickBestNode(List<ServerNode> nodes) async {
     ServerNode? best;
     int? bestPing;
-    for (final node in country.nodes) {
+    for (final node in nodes) {
       final ms = await _pingService.pingMs(node.address, node.port);
       if (ms != null && (bestPing == null || ms < bestPing)) {
         best = node;
         bestPing = ms;
       }
     }
-    return best ?? country.nodes.first;
+    return best ?? nodes.first;
   }
 
   Future<void> disconnect() async {

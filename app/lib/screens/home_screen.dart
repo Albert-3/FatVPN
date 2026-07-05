@@ -8,6 +8,7 @@ import '../l10n/strings.dart';
 import '../models/server_country.dart';
 import '../services/api_client.dart';
 import '../services/auth_controller.dart';
+import '../services/ping_service.dart';
 import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
@@ -26,14 +27,19 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _apiClient = ApiClient();
   final _vpn = VpnController();
+  final _pingService = PingService();
 
   Timer? _timer;
   Duration _sessionTime = Duration.zero;
 
   List<ServerCountry> _servers = [];
   ServerCountry? _selectedServer;
+  bool _serverExplicitlySelected = false;
   bool _loadingServers = true;
   String? _serversError;
+
+  final Map<String, int?> _bestPingByCountry = {};
+  bool _measuringPings = false;
 
   bool get _connected => _vpn.isConnected;
 
@@ -66,9 +72,9 @@ class _HomeScreenState extends State<HomeScreen> {
       final servers = await _apiClient.getServers();
       setState(() {
         _servers = servers;
-        _selectedServer = servers.isNotEmpty ? servers.first : null;
         _loadingServers = false;
       });
+      unawaited(_measureBestPings(servers));
     } on ApiException catch (e) {
       setState(() {
         _serversError = e.message;
@@ -83,16 +89,55 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Ranks countries by real latency (fastest node per country) instead of
+  /// just showing whatever order `/servers` returned them in.
+  Future<void> _measureBestPings(List<ServerCountry> servers) async {
+    setState(() {
+      _measuringPings = true;
+      _bestPingByCountry.clear();
+    });
+    await Future.wait(servers.map((country) async {
+      final pings = await Future.wait(
+        country.nodes.map((n) => _pingService.pingMs(n.address, n.port)),
+      );
+      final reachable = pings.whereType<int>();
+      final best = reachable.isEmpty ? null : reachable.reduce((a, b) => a < b ? a : b);
+      if (!mounted) return;
+      setState(() => _bestPingByCountry[country.country] = best);
+    }));
+    if (!mounted) return;
+    setState(() => _measuringPings = false);
+  }
+
+  List<ServerCountry> get _rankedServers {
+    final ranked = [..._servers];
+    ranked.sort((a, b) {
+      final pa = _bestPingByCountry[a.country];
+      final pb = _bestPingByCountry[b.country];
+      if (pa == null && pb == null) return 0;
+      if (pa == null) return 1;
+      if (pb == null) return -1;
+      return pa.compareTo(pb);
+    });
+    return ranked;
+  }
+
   Future<void> _onPowerButtonTap() async {
     if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
       await _vpn.disconnect();
       return;
     }
-    final server = _selectedServer;
     final session = widget.auth.session;
-    if (server == null || session == null) return;
+    if (session == null || _servers.isEmpty) return;
     try {
-      await _vpn.connectToBestNode(server, session.accessToken);
+      if (_serverExplicitlySelected && _selectedServer != null) {
+        await _vpn.connectToBestNode(_selectedServer!, session.accessToken);
+      } else {
+        final picked = await _vpn.connectToBestOverall(_servers, session.accessToken);
+        if (picked != null && mounted) {
+          setState(() => _selectedServer = picked);
+        }
+      }
     } catch (_) {
       // Error is surfaced via _vpn.errorMessage in the status section.
     }
@@ -191,7 +236,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
         if (selected != null) {
-          setState(() => _selectedServer = selected);
+          setState(() {
+            _selectedServer = selected;
+            _serverExplicitlySelected = true;
+          });
         }
       },
       child: _locationCard(s),
@@ -225,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  _connected && _selectedServer != null
+                  (_connected || _serverExplicitlySelected) && _selectedServer != null
                       ? _selectedServer!.country
                       : s.bestServer,
                   style: const TextStyle(
@@ -359,7 +407,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 );
                 if (selected != null) {
-                  setState(() => _selectedServer = selected);
+                  setState(() {
+                    _selectedServer = selected;
+                    _serverExplicitlySelected = true;
+                  });
                 }
               },
               child: Text(
@@ -394,11 +445,17 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         else
           Row(
-            children: _servers.take(3).map((server) {
-              final isSelected = _connected && server.country == _selectedServer?.country;
+            children: _rankedServers.take(3).map((server) {
+              final isSelected = _serverExplicitlySelected &&
+                  server.country == _selectedServer?.country;
+              final ping = _bestPingByCountry[server.country];
+              final pingKnown = _bestPingByCountry.containsKey(server.country);
               return Expanded(
                 child: GestureDetector(
-                  onTap: () => setState(() => _selectedServer = server),
+                  onTap: () => setState(() {
+                    _selectedServer = server;
+                    _serverExplicitlySelected = true;
+                  }),
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 4),
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -426,6 +483,24 @@ class _HomeScreenState extends State<HomeScreen> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                        const SizedBox(height: 2),
+                        if (_measuringPings && !pingKnown)
+                          const SizedBox(
+                            width: 10,
+                            height: 10,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              color: AppColors.textSecondary,
+                            ),
+                          )
+                        else
+                          Text(
+                            ping != null ? '${ping}ms' : s.unreachable,
+                            style: TextStyle(
+                              color: ping != null ? AppColors.accent : Colors.redAccent,
+                              fontSize: 10,
+                            ),
+                          ),
                       ],
                     ),
                   ),
