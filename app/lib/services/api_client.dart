@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../models/account_status.dart';
 import '../models/auth_session.dart';
+import '../models/pairing.dart';
 import '../models/server_country.dart';
 
 class ApiException implements Exception {
@@ -42,8 +43,40 @@ class ApiClient {
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<List<ServerCountry>> getServers() async {
-    final response = await _httpClient.get(Uri.parse('$_baseUrl/servers'));
+  /// Starts a pairing attempt; the app shows the code/QR and opens the bot.
+  Future<PairingStart> startPairing() async {
+    final response = await _httpClient
+        .post(Uri.parse('$_baseUrl/pair/start'))
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to start pairing', statusCode: response.statusCode);
+    }
+
+    return PairingStart.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Polls pairing status; returns completed with a session once the bot links.
+  Future<PairingStatus> pollPairing(String pollToken) async {
+    final response = await _httpClient
+        .get(Uri.parse('$_baseUrl/pair/status?pollToken=$pollToken'))
+        .timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 404) {
+      return const PairingStatus(PairingState.expired);
+    }
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to poll pairing', statusCode: response.statusCode);
+    }
+
+    return PairingStatus.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<List<ServerCountry>> getServers(String accessToken) async {
+    final response = await _httpClient.get(
+      Uri.parse('$_baseUrl/servers'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
 
     if (response.statusCode != 200) {
       throw ApiException('Failed to load servers', statusCode: response.statusCode);

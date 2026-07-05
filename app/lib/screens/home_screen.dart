@@ -77,7 +77,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _serversError = null;
     });
     try {
-      final servers = await _apiClient.getServers();
+      final servers = await _apiClient.getServers(widget.auth.session!.accessToken);
       setState(() {
         _servers = servers;
         _loadingServers = false;
@@ -243,7 +243,10 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: () async {
         final selected = await Navigator.of(context).push<ServerCountry>(
           MaterialPageRoute(
-            builder: (_) => ChooseLocationScreen(initialServers: _servers),
+            builder: (_) => ChooseLocationScreen(
+              initialServers: _servers,
+              accessToken: widget.auth.session!.accessToken,
+            ),
           ),
         );
         if (selected != null) {
@@ -414,7 +417,10 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 final selected = await Navigator.of(context).push<ServerCountry>(
                   MaterialPageRoute(
-                    builder: (_) => ChooseLocationScreen(initialServers: _servers),
+                    builder: (_) => ChooseLocationScreen(
+                      initialServers: _servers,
+                      accessToken: widget.auth.session!.accessToken,
+                    ),
                   ),
                 );
                 if (selected != null) {

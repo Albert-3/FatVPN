@@ -9,8 +9,13 @@ import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
 
 class ChooseLocationScreen extends StatefulWidget {
-  const ChooseLocationScreen({super.key, this.initialServers = const []});
+  const ChooseLocationScreen({
+    super.key,
+    required this.accessToken,
+    this.initialServers = const [],
+  });
 
+  final String accessToken;
   final List<ServerCountry> initialServers;
 
   @override
@@ -42,7 +47,7 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
       _error = null;
     });
     try {
-      final servers = await _apiClient.getServers();
+      final servers = await _apiClient.getServers(widget.accessToken);
       setState(() {
         _servers = servers;
         _loading = false;

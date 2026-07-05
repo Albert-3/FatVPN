@@ -44,6 +44,11 @@ class Strings {
     required this.unreachable,
     required this.openBotTitle,
     required this.openBotSubtitle,
+    required this.connectWithTelegram,
+    required this.pairingWaiting,
+    required this.pairingScanHint,
+    required this.pairingCodeExpired,
+    required this.getNewCode,
     required this.splitTunneling,
     required this.appsBypassVpn,
     required this.selectedInList,
@@ -97,6 +102,11 @@ class Strings {
 
   final String openBotTitle;
   final String openBotSubtitle;
+  final String connectWithTelegram;
+  final String pairingWaiting;
+  final String pairingScanHint;
+  final String pairingCodeExpired;
+  final String getNewCode;
 
   final String splitTunneling;
   final String appsBypassVpn;
@@ -162,8 +172,13 @@ const Strings enStrings = Strings(
   allLocations: 'ALL LOCATIONS',
   serversCount: _enServersCount,
   unreachable: 'unreachable',
-  openBotTitle: 'Open FatVPN bot in Telegram',
-  openBotSubtitle: 'Tap the link the bot sends you to sign in automatically.',
+  openBotTitle: 'Connect your account',
+  openBotSubtitle: 'Sign in through the FatVPN Telegram bot. Buy or activate a trial there — the app connects automatically.',
+  connectWithTelegram: 'Connect with Telegram',
+  pairingWaiting: 'Waiting for the bot to confirm…',
+  pairingScanHint: 'On another device? Scan this code or open the bot and send:',
+  pairingCodeExpired: 'Pairing code expired.',
+  getNewCode: 'Get a new code',
   splitTunneling: 'Split tunneling',
   appsBypassVpn: 'Apps that bypass the VPN',
   selectedInList: 'SELECTED IN LIST',
@@ -216,9 +231,14 @@ final Strings ruStrings = Strings(
   allLocations: 'ВСЕ ЛОКАЦИИ',
   serversCount: (n) => '$n ${_ruPluralServers(n)}',
   unreachable: 'недоступен',
-  openBotTitle: 'Откройте бота FatVPN в Telegram',
+  openBotTitle: 'Подключите аккаунт',
   openBotSubtitle:
-      'Нажмите на ссылку, которую пришлёт бот, чтобы войти автоматически.',
+      'Войдите через Telegram-бота FatVPN. Оформите подписку или пробный период там — приложение подключится автоматически.',
+  connectWithTelegram: 'Подключить через Telegram',
+  pairingWaiting: 'Ожидаем подтверждения от бота…',
+  pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',
+  pairingCodeExpired: 'Код подключения истёк.',
+  getNewCode: 'Получить новый код',
   splitTunneling: 'Раздельное туннелирование',
   appsBypassVpn: 'Приложения, которые обходят VPN',
   selectedInList: 'ВЫБРАНО В СПИСКЕ',

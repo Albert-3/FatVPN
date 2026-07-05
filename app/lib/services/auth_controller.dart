@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/api_config.dart';
 import '../models/auth_session.dart';
+import '../models/pairing.dart';
 import 'api_client.dart';
 import 'token_storage.dart';
 
@@ -26,10 +27,25 @@ class AuthController extends ChangeNotifier {
   bool _initializing = true;
   String? _error;
 
+  PairingStart? _pairing;
+  Timer? _pollTimer;
+  bool _pairingBusy = false;
+  bool _pollInFlight = false;
+
   AuthSession? get session => _session;
   bool get initializing => _initializing;
   bool get isAuthenticated => _session != null && !_session!.isExpired;
   String? get error => _error;
+
+  /// Pairing code to show/QR-encode, or null while none is active.
+  String? get pairCode => _pairing?.pairCode;
+
+  /// Telegram deep link that carries the pairing code into the bot.
+  Uri? get telegramPairUri =>
+      _pairing == null ? null : telegramPairLink(_pairing!.pairCode);
+
+  /// True while a pairing code exists and we're polling for completion.
+  bool get pairingActive => _pairing != null;
 
   Future<void> start() async {
     final stored = await _tokenStorage.read();
@@ -73,7 +89,70 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Requests a fresh pairing code and starts polling for completion. Safe to
+  /// call again to retry after a code expires.
+  Future<void> startPairing() async {
+    if (_pairingBusy) return;
+    _pairingBusy = true;
+    _pollTimer?.cancel();
+    _pairing = null;
+    _error = null;
+    notifyListeners();
+
+    try {
+      _pairing = await _apiClient.startPairing();
+      notifyListeners();
+      _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollOnce());
+    } on ApiException catch (e) {
+      _error = e.message;
+      notifyListeners();
+    } catch (_) {
+      _error = 'Could not reach the server. Check your connection and try again.';
+      notifyListeners();
+    } finally {
+      _pairingBusy = false;
+    }
+  }
+
+  Future<void> _pollOnce() async {
+    // Guard against overlapping ticks so a completion is handled exactly once.
+    if (_pollInFlight) return;
+    final pairing = _pairing;
+    if (pairing == null) return;
+    _pollInFlight = true;
+
+    try {
+      final status = await _apiClient.pollPairing(pairing.pollToken);
+      switch (status.state) {
+        case PairingState.completed:
+          _pollTimer?.cancel();
+          _pollTimer = null;
+          _pairing = null;
+          _session = status.session;
+          // Transition the UI first; persistence is best-effort so a slow or
+          // failing secure-storage write can't strand the user on this screen.
+          notifyListeners();
+          unawaited(_tokenStorage.save(status.session!).catchError((_) {}));
+        case PairingState.expired:
+          _pollTimer?.cancel();
+          _pollTimer = null;
+          _pairing = null;
+          _error = 'Pairing code expired. Tap to get a new one.';
+          notifyListeners();
+        case PairingState.pending:
+          break;
+      }
+    } catch (_) {
+      // Transient network blip — keep polling; the next tick may succeed.
+    } finally {
+      _pollInFlight = false;
+    }
+  }
+
   Future<void> signOut() async {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pairing = null;
     await _tokenStorage.clear();
     _session = null;
     notifyListeners();
@@ -81,6 +160,7 @@ class AuthController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _linkSubscription?.cancel();
     super.dispose();
   }
