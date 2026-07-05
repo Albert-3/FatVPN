@@ -140,4 +140,8 @@ Docker установлен и работает. Поднят локальный
 2. Flutter-сторона `/trial`: авто-запрос триала при первой установке (сейчас все 4 экрана всё ещё привязаны только к deep-link токену от бота), плюс реальная верификация устройства (Play Integrity/App Attest) вместо MVP-хеша.
 3. Решить, кто и как наполняет пул `TrialSubscriptionSlots` в проде (бот при создании ключей? отдельный скрипт? вручную через `POST /internal/trial-pool`?).
 4. iOS-сторона VPN-туннеля — отдельная большая задача (Network Extension, физический iPhone, Apple Developer аккаунт — пока ничего из этого нет).
-5. Split tunneling, DNS/Network stack в Settings — всё ещё мок-данные, нет соответствующего API.
+5. Settings пока мок-данные — `singbox_mm` уже поддерживает нужное через `SingboxFeatureSettings` (см. `lib/src/models/singbox_feature_settings.dart` в репо плагина), реализовать реально:
+   - **DNS-сервер**: `DnsOptions.providerPreset` — есть готовые `DnsProviderPreset.cloudflare` (1.1.1.1), `.google` (8.8.8.8), `.adguard` (94.140.14.14) плюс `.quad9`/`.custom`; каждый пресет уже задаёт и remote (`dns-query` HTTPS), и direct DNS.
+   - **Network stack**: `InboundOptions.tunImplementation` — у плагина только `SingboxTunImplementation.system` и `.gvisor` (это и есть Mixed/gVisor из мокапа; отдельного "Mixed" значения в плагине нет — уточнить у дизайна, маппить ли UI-текст "Mixed" на `system`).
+   - **Split tunneling**: `InboundOptions.includePackages`/`excludePackages` + `splitTunnelingEnabled` — маппится на `route.include_package`/`exclude_package` в sing-box. Нужен способ показать список установленных приложений в `SplitTunnelingScreen` (пакет `singbox_mm` его не даёт — понадобится отдельный пакет вроде `device_apps`/`installed_apps` или platform channel).
+   - Открытый вопрос: применяются ли эти настройки только при следующем `connectManualConfigLink()` (нужен реконнект) или можно "hot-reload" на лету — проверить на `restart()`/`applyProfile()` в API плагина.
