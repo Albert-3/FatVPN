@@ -8,6 +8,7 @@ import '../l10n/strings.dart';
 import '../models/server_country.dart';
 import '../services/api_client.dart';
 import '../services/auth_controller.dart';
+import '../services/connection_settings_controller.dart';
 import '../services/ping_service.dart';
 import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
@@ -16,9 +17,14 @@ import 'choose_location_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.auth});
+  const HomeScreen({
+    super.key,
+    required this.auth,
+    required this.connectionSettings,
+  });
 
   final AuthController auth;
+  final ConnectionSettingsController connectionSettings;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -26,7 +32,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _apiClient = ApiClient();
-  final _vpn = VpnController();
+  late final _vpn = VpnController(
+    connectionSettings: widget.connectionSettings,
+  );
   final _pingService = PingService();
 
   Timer? _timer;
@@ -213,7 +221,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: IconButton(
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => SettingsScreen(auth: widget.auth),
+                  builder: (_) => SettingsScreen(
+                    auth: widget.auth,
+                    connectionSettings: widget.connectionSettings,
+                  ),
                 ),
               ),
               icon: const Icon(

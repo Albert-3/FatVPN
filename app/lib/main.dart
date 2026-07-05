@@ -4,6 +4,7 @@ import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_controller.dart';
+import 'services/connection_settings_controller.dart';
 import 'services/locale_controller.dart';
 import 'theme/app_colors.dart';
 
@@ -21,18 +22,21 @@ class FatVpnApp extends StatefulWidget {
 class _FatVpnAppState extends State<FatVpnApp> {
   final _auth = AuthController();
   final _locale = LocaleController();
+  final _connectionSettings = ConnectionSettingsController();
 
   @override
   void initState() {
     super.initState();
     _auth.start();
     _locale.load();
+    _connectionSettings.load();
   }
 
   @override
   void dispose() {
     _auth.dispose();
     _locale.dispose();
+    _connectionSettings.dispose();
     super.dispose();
   }
 
@@ -65,7 +69,10 @@ class _FatVpnAppState extends State<FatVpnApp> {
             if (!_auth.isAuthenticated) {
               return AwaitingAuthScreen(auth: _auth);
             }
-            return HomeScreen(auth: _auth);
+            return HomeScreen(
+              auth: _auth,
+              connectionSettings: _connectionSettings,
+            );
           },
         ),
       ),

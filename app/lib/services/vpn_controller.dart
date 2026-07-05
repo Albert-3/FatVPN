@@ -5,16 +5,21 @@ import 'package:singbox_mm/singbox_mm.dart';
 
 import '../models/server_country.dart';
 import 'api_client.dart';
+import 'connection_settings_controller.dart';
 import 'ping_service.dart';
 import 'vless_config_parser.dart';
 
 /// Owns the sing-box VPN tunnel and exposes real connection state to the UI,
 /// replacing the fake local-timer toggle that used to live in [HomeScreen].
 class VpnController extends ChangeNotifier {
-  VpnController({ApiClient? apiClient, PingService? pingService})
-      : _apiClient = apiClient ?? ApiClient(),
+  VpnController({
+    required this.connectionSettings,
+    ApiClient? apiClient,
+    PingService? pingService,
+  })  : _apiClient = apiClient ?? ApiClient(),
         _pingService = pingService ?? PingService();
 
+  final ConnectionSettingsController connectionSettings;
   final ApiClient _apiClient;
   final PingService _pingService;
   final SignboxVpn _vpn = SignboxVpn();
@@ -82,7 +87,12 @@ class VpnController extends ChangeNotifier {
       final node = await _pickBestNode(usableNodes);
       final uri = findUriForNode(uris, node)!;
 
-      await _vpn.connectManualConfigLink(configLink: uri);
+      // Built fresh here so DNS / network-stack preference edits in Settings
+      // take effect on this (re)connect.
+      await _vpn.connectManualConfigLink(
+        configLink: uri,
+        featureSettings: connectionSettings.buildFeatureSettings(),
+      );
       _connectedNodeName = node.name;
       return node;
     } catch (e) {

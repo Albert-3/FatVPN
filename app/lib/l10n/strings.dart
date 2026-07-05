@@ -11,6 +11,7 @@ class Strings {
     required this.connectionSettings,
     required this.dnsServer,
     required this.networkStack,
+    required this.appliesOnNextConnection,
     required this.routing,
     required this.splitTunnelingSettings,
     required this.splitTunnelingSubtitle,
@@ -60,6 +61,7 @@ class Strings {
   final String connectionSettings;
   final String dnsServer;
   final String networkStack;
+  final String appliesOnNextConnection;
   final String routing;
   final String splitTunnelingSettings;
   final String splitTunnelingSubtitle;
@@ -129,6 +131,7 @@ const Strings enStrings = Strings(
   connectionSettings: 'CONNECTION SETTINGS',
   dnsServer: 'DNS Server',
   networkStack: 'Network stack',
+  appliesOnNextConnection: 'Applies on the next connection',
   routing: 'ROUTING',
   splitTunnelingSettings: 'Split tunneling settings',
   splitTunnelingSubtitle: 'Choose apps that bypass the VPN',
@@ -182,6 +185,7 @@ final Strings ruStrings = Strings(
   connectionSettings: 'НАСТРОЙКИ ПОДКЛЮЧЕНИЯ',
   dnsServer: 'DNS-сервер',
   networkStack: 'Сетевой стек',
+  appliesOnNextConnection: 'Применится при следующем подключении',
   routing: 'МАРШРУТИЗАЦИЯ',
   splitTunnelingSettings: 'Настройки раздельного туннелирования',
   splitTunnelingSubtitle: 'Выберите приложения, которые обходят VPN',

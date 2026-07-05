@@ -152,16 +152,38 @@ Docker установлен и работает. Поднят локальный
 
 **Проверено на физическом телефоне (Redmi Note 7, релизный arm64-APK):** установлен `1.0.1+2`, авторизация через deep link на реальную подписку, блок «Best Servers» ранжируется по живому пингу, выбор подсвечивается в отключённом режиме. `adb reverse tcp:5030` слетает при переподключении USB/перезапуске adb-демона — при обрыве связи с BFF первым делом восстанавливать его.
 
+## Settings: реальные DNS и Network stack (2026-07-05)
+
+DNS-сервер и Network stack в `SettingsScreen` перестали быть мок-строками — теперь это настоящие настройки, сохраняются между запусками и применяются к туннелю при следующем подключении.
+
+**Как прокидывается в туннель:** `singbox_mm.connectManualConfigLink(...)` принимает `featureSettings: SingboxFeatureSettings`. Раньше приложение его не передавало (действовали дефолты плагина). Теперь `VpnController._connect` собирает `featureSettings` из пользовательских настроек **на каждом коннекте**, поэтому правки в Settings вступают в силу при следующем (пере)подключении — под карточкой CONNECTION SETTINGS показана подсказка «Применится при следующем подключении».
+
+**Маппинг:**
+- **DNS-сервер** → `DnsOptions.fromProvider(preset:)`. В UI четыре пресета: Cloudflare (1.1.1.1), Google (8.8.8.8), Quad9 (9.9.9.9), AdGuard (94.140.14.14). `custom` пока не выводим — под него нужен текстовый ввод резолвера (отдельная задача).
+- **Network stack** → `InboundOptions(tunImplementation:)`. Два значения плагина: `system` (в UI подписан «Mixed», как в мокапе) и `gVisor`.
+
+**Дефолты выбраны так, чтобы не менять уже проверенное на устройстве поведение туннеля:** до этой правки `featureSettings` не передавался → действовали дефолты плагина (Cloudflare-подобный DNS, gVisor tun). Поэтому стартовые значения — Cloudflare + gVisor.
+
+**Новые/изменённые файлы:**
+- `app/lib/services/connection_settings_controller.dart` (новый) — `ChangeNotifier`, хранит DNS-пресет и tun-стек в `flutter_secure_storage` (ключи `conn_dns_preset`/`conn_network_stack`), собирает `SingboxFeatureSettings.buildFeatureSettings()`. Паттерн как у `LocaleController`.
+- `app/lib/services/vpn_controller.dart` — конструктор принимает `ConnectionSettingsController`, `_connect` передаёт `featureSettings` в `connectManualConfigLink`.
+- `app/lib/main.dart` — контроллер создаётся на старте (`.load()`), прокидывается в `HomeScreen`.
+- `app/lib/screens/home_screen.dart` — принимает и форвардит контроллер в `VpnController` и `SettingsScreen`.
+- `app/lib/screens/settings_screen.dart` — статичные строки DNS/Network stack заменены на реактивные пикеры (`AnimatedBuilder` + модальный bottom-sheet с галочкой на выбранном) + подсказка о реконнекте.
+- `app/lib/l10n/strings.dart` — строка `appliesOnNextConnection` (EN/RU). Имена DNS-провайдеров и Mixed/gVisor — технические/брендовые, не локализуются.
+
+**Проверено:** `flutter analyze` — чисто. Runtime-прогон на устройстве (сохранение выбора между запусками + фактическое применение DNS/стека к живому соединению) — требует поднятого BFF и реальной Remnawave-подписки, **ещё не прогнан**.
+
+**Осталось из этого блока:** split tunneling (см. пункт 5 ниже) — по решению заказчика вынесен в отдельную задачу.
+
 ## Осталось сделать
 
 1. (Опционально) починить сборку `bff` в Docker локально на Windows — либо убрать Windows-специфичный fallback путь из `nuget.config`, либо исключить его через `.dockerignore`/отдельный nuget.config для контейнера.
 2. Flutter-сторона `/trial`: авто-запрос триала при первой установке (сейчас все 4 экрана всё ещё привязаны только к deep-link токену от бота), плюс реальная верификация устройства (Play Integrity/App Attest) вместо MVP-хеша.
 3. Решить, кто и как наполняет пул `TrialSubscriptionSlots` в проде (бот при создании ключей? отдельный скрипт? вручную через `POST /internal/trial-pool`?).
 4. iOS-сторона VPN-туннеля — отдельная большая задача (Network Extension, физический iPhone, Apple Developer аккаунт — пока ничего из этого нет).
-5. Settings пока мок-данные — `singbox_mm` уже поддерживает нужное через `SingboxFeatureSettings` (см. `lib/src/models/singbox_feature_settings.dart` в репо плагина), реализовать реально:
-   - **DNS-сервер**: `DnsOptions.providerPreset` — есть готовые `DnsProviderPreset.cloudflare` (1.1.1.1), `.google` (8.8.8.8), `.adguard` (94.140.14.14) плюс `.quad9`/`.custom`; каждый пресет уже задаёт и remote (`dns-query` HTTPS), и direct DNS.
-   - **Network stack**: `InboundOptions.tunImplementation` — у плагина только `SingboxTunImplementation.system` и `.gvisor` (это и есть Mixed/gVisor из мокапа; отдельного "Mixed" значения в плагине нет — уточнить у дизайна, маппить ли UI-текст "Mixed" на `system`).
-   - **Split tunneling**: `InboundOptions.includePackages`/`excludePackages` + `splitTunnelingEnabled` — маппится на `route.include_package`/`exclude_package` в sing-box. Нужен способ показать список установленных приложений в `SplitTunnelingScreen` (пакет `singbox_mm` его не даёт — понадобится отдельный пакет вроде `device_apps`/`installed_apps` или platform channel).
-   - Открытый вопрос: применяются ли эти настройки только при следующем `connectManualConfigLink()` (нужен реконнект) или можно "hot-reload" на лету — проверить на `restart()`/`applyProfile()` в API плагина.
+5. Settings: **DNS-сервер и Network stack — сделаны** (см. секцию «Settings: реальные DNS и Network stack» выше). Осталась только **split tunneling** (по решению заказчика вынесена отдельно):
+   - **Split tunneling**: `InboundOptions.includePackages`/`excludePackages` + `splitTunnelingEnabled` — маппится на `route.include_package`/`exclude_package` в sing-box. Нужен способ показать список установленных приложений в `SplitTunnelingScreen` (пакет `singbox_mm` его не даёт — понадобится отдельный пакет вроде `device_apps`/`installed_apps` или platform channel). Android-only, полноценно тестируется лишь на реальном телефоне.
+   - Уточнено на практике: `featureSettings` применяется при `connectManualConfigLink()` — т.е. нужен реконнект (в UI есть подсказка). Возможность "hot-reload" на лету (`restart()`/`applyProfile()`) не проверялась — при необходимости изучить.
 6. Перенос на прод: сейчас всё (BFF + бот) работает только на тестовом сервере (87.121.221.229, тестовый бот `@testfatvpnnbot`) — миграция на прод-бот и прод-окружение ещё не сделана, шаги описаны в `docs/bot-integration-spec.md` ("Миграция на прод-бот").
 7. Google Play Console / Apple Developer аккаунты — ждём данные от заказчика (см. `VPN-App-Project.md`, п.11).
