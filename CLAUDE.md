@@ -106,9 +106,11 @@ Telegram Bot ──X-Bot-Secret──► /internal/tokens
 
 | Component | Path | Container |
 |---|---|---|
-| BFF | `/opt/fatvpn-bff/backend/` | `fatvpn-bff` (port `127.0.0.1:5030`) |
+| BFF | `/opt/fatvpn-bff/backend/` | `fatvpn-bff` (**public** `0.0.0.0:5030`, HTTP) |
 | Bot (Python) | `/opt/FatVPN/` | `fatvpn-bot` |
-| Postgres | — | `fatvpn-postgres` (port `5433`) |
+| Postgres | — | `fatvpn-postgres` (`127.0.0.1:5433`, localhost-only) |
+
+> **State as of 2026-07-06:** BFF is exposed publicly over **HTTP** for the pairing demo (app APK points at `http://87.121.221.229:5030`). The BFF checkout is on branch **`feat/pairing-onboarding`**, not `master` — merge once validated. `ufw` is enabled (allows `22`/`5030`/`4444`). Postgres was moved off `0.0.0.0` to localhost. Next: HTTPS + domain (see `docs/app-bff-integration.md` pairing section).
 
 Docker network `fatvpn_default` is shared between `fatvpn-bot` and `fatvpn-bff` so the bot reaches BFF via `http://fatvpn-bff:5030`. The network is declared in both compose files — no manual `docker network connect` needed after restarts:
 - Bot compose (`/opt/FatVPN/docker-compose.yml`): `networks.default.name: fatvpn_default`
@@ -117,6 +119,10 @@ Docker network `fatvpn_default` is shared between `fatvpn-bot` and `fatvpn-bff` 
 `BOT_SECRET` is set in BFF container env (`Bot__Secret`), not in a file — retrieve with `docker inspect fatvpn-bff`.
 
 ⚠️ **TODO before `/trial` goes live on prod:** `Trial__DeviceKeySalt` container env must be set to a real random value — it's empty in `appsettings.json` by default (falls back to an unsalted hash, not a hard failure, but weakens device-key privacy). Set it the same way as `Bot__Secret` (container env, not a file). See `docs/api-contract.md` for details.
+
+✅ **Server hardening done (2026-07-06):** Postgres moved to `127.0.0.1:5433` (BFF compose), `ufw` enabled (`22`/`5030`/`4444`). Postgres creds are still weak (`fatvpn`/`fatvpn_dev`) — rotate before real prod. Note: Docker-published ports bypass `ufw`, so the BFF (`5030`) stays reachable regardless; the real protection for Postgres is the localhost bind.
+
+⚠️ **Fixed a pre-existing bug (2026-07-06):** `/opt/FatVPN/docker-compose.yml` had a duplicated `networks:` key — `docker compose` v2 refused to parse it, silently blocking bot redeploys. Removed the duplicate (backup at `/root/bot-compose.yml.bak`).
 
 Deploy BFF: `cd /opt/fatvpn-bff/backend && git pull && docker compose build --no-cache bff && docker compose up -d bff`  
 Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose up -d --force-recreate`

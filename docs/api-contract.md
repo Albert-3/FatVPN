@@ -12,6 +12,8 @@
 - `GET /config` проксирует сырую подписку Remnawave с правильным Content-Type
 - `GET /servers` возвращает список из 10 стран / 36 нод
 
+Pairing-эндпоинты (`/pair/*`, `/internal/pair/complete`, `/internal/account/subscription`) — **задеплоены на тестовый сервер и проверены** (2026-07-06): pairing-цикл curl-ом, проводка бот→BFF, полный e2e на реальном телефоне (см. `docs/app-bff-integration.md`). BFF там выставлен наружу по HTTP (`http://87.121.221.229:5030`).
+
 Проверено end-to-end только локально (не на проде, 2026-07-05):
 - `POST /trial` — MVP-версия, см. подробности и открытые вопросы ниже.
 
@@ -57,22 +59,22 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 
 - **Запрос:** `{ "attestationToken": string, "platform": "ios" | "android" }`
 - **Ответ:** `{ "accessToken": string, "expiresAt": datetime }`
-- **Ошибки:** 409 — триал для этого устройства уже был выдан; 503 — пул триальных подписок пуст
-- **Срок триала:** 3 дня, подтверждено заказчиком (2026-07-05) — `Trial:DurationDays` в конфиге, уже стоит `3` по умолчанию.
-- **Реализация (MVP, см. "Открытые вопросы"):**
-  - `attestationToken` пока НЕ верифицируется через Play Integrity/App Attest — он просто солёно хешируется (`Trial:DeviceKeySalt`) и используется как ключ устройства в таблице `Devices`. Полноценная верификация — отдельная задача (нужны Google Cloud service account и Apple App Attest ключи).
-  - Remnawave-подписка для триала берётся из заранее наполненного пула (`TrialSubscriptionSlots`), а не создаётся через Remnawave Admin API на лету. Пул наполняется через `POST /internal/trial-pool`.
+- **Ошибки:** 409 — триал для этого устройства уже был выдан; 502 — не удалось создать подписку в Remnawave
+- **Срок триала:** **2 дня** (`Trial:DurationDays` в `appsettings.json`; было 3, изменено на 2 по решению заказчика 2026-07-07).
+- **Выдача подписки — на лету (2026-07-07):** `POST /trial` **создаёт нового пользователя в Remnawave** через `POST /api/users` (squad `Remnawave:TrialSquadUuid`, по умолчанию `Default-Squad`, `NO_RESET`, срок = now + `Trial:DurationDays`) и берёт его `shortUuid` как `remnawaveSubscriptionId`. Пул (`TrialSubscriptionSlots`) больше **не используется** — это масштабируется на любое число установок из стора без ручного пополнения. Старые эндпоинты `/internal/trial-pool` оставлены как legacy (не задействованы).
+- **Анти-абуз (MVP, см. "Открытые вопросы"):**
+  - `attestationToken` пока НЕ верифицируется через Play Integrity/App Attest — он просто солёно хешируется (`Trial:DeviceKeySalt`) и используется как ключ устройства в таблице `Devices` (409 при повторе).
 
-### `POST /internal/trial-pool`
-Добавить Remnawave-подписки в пул для выдачи триалов (внутренний, для бота/админа).
+### `POST /internal/trial-pool` (legacy, не используется)
+Ранее наполнял пул триальных подписок. После перехода на выдачу на лету (2026-07-07)
+не задействован; эндпоинт и таблица `TrialSubscriptionSlots` оставлены, чтобы не
+делать миграцию. Можно удалить при чистке.
 
 - **Авторизация:** секрет бота (`X-Bot-Secret`)
 - **Запрос:** `{ "remnawaveSubscriptionIds": string[] }`
-- **Ответ:** `{ "added": int }` — сколько новых записей добавлено (дубликаты пропускаются)
+- **Ответ:** `{ "added": int }`
 
-### `GET /internal/trial-pool`
-Проверить остаток пула триальных подписок.
-
+### `GET /internal/trial-pool` (legacy, не используется)
 - **Авторизация:** секрет бота (`X-Bot-Secret`)
 - **Ответ:** `{ "total": int, "available": int }`
 
@@ -127,5 +129,8 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 **Открытые вопросы:**
 - Sing-box шаблоны в Remnawave — нужна настройка панели, чтобы `/config` отдавал JSON.
 - Лимит устройств на ключ (у Sota — 1) — влияет на `/auth/token` и `/trial`.
-- Реальная верификация `attestationToken` (Play Integrity / App Attest) — не реализована, см. `POST /trial` выше.
-- Пул `TrialSubscriptionSlots` нужно наполнять вручную через `POST /internal/trial-pool` — ещё не решено, кто и как создаёт эти подписки в самой Remnawave-панели (бот? скрипт? вручную?) и как пул пополняется, когда заканчивается.
+- **⚠️ Абуз триала «удалил → скачал заново» (нужно реализовать перед стором).** Сейчас `attestationToken` — это случайный UUID в `flutter_secure_storage`. При удалении приложения хранилище стирается → при переустановке генерируется новый ключ → сервер видит «новое устройство» → **выдаёт ещё один триал**. Т.е. триал можно крутить бесконечно (удалил/поставил). Планы фикса:
+  - **Стопгап (без гугл/эппл-аккаунтов): ANDROID_ID (SSAID)** как `attestationToken` вместо случайного UUID. Переживает переустановку (пока APK подписан тем же ключом), сбрасывается только factory reset → повтор даёт 409. Стабилен только на **release**-сборке (у debug ключ подписи может отличаться). Закрывает казуальный абуз, делается быстро.
+  - **Правильно (для стора): Play Integrity API (Android) / App Attest (iOS)** — привязка к устройству+приложению, не обходится переустановкой и не подделывается. Требует Google Cloud service account и Apple-аккаунт. Это же закрывает и следующий пункт (верификацию `attestationToken`).
+- Реальная верификация `attestationToken` (Play Integrity / App Attest) — не реализована, см. пункт выше и `POST /trial`.
+- Выдача триала теперь **на лету** (создание Remnawave-юзера при `POST /trial`), пул `TrialSubscriptionSlots` больше не используется (legacy). Открытый вопрос по пулу снят.
