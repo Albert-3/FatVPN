@@ -12,6 +12,7 @@ class Strings {
     required this.dnsServer,
     required this.networkStack,
     required this.appliesOnNextConnection,
+    required this.customDnsHint,
     required this.routing,
     required this.splitTunnelingSettings,
     required this.splitTunnelingSubtitle,
@@ -31,6 +32,8 @@ class Strings {
     required this.connectedTo,
     required this.location,
     required this.bestServer,
+    required this.bestServerAuto,
+    required this.activeBadge,
     required this.connected,
     required this.connecting,
     required this.disconnected,
@@ -49,11 +52,22 @@ class Strings {
     required this.pairingScanHint,
     required this.pairingCodeExpired,
     required this.getNewCode,
+    required this.haveKeyTitle,
+    required this.enterKeyHint,
+    required this.submitKey,
+    required this.tryFreeTrial,
+    required this.settingUpFreeAccess,
+    required this.trialAlreadyUsed,
+    required this.trialNoCapacity,
+    required this.trialFailed,
     required this.splitTunneling,
     required this.appsBypassVpn,
     required this.selectedInList,
     required this.bypassingTunnel,
     required this.add,
+    required this.searchApps,
+    required this.loadingApps,
+    required this.splitTunnelDisabledHint,
   });
 
   final String notSignedIn;
@@ -67,6 +81,7 @@ class Strings {
   final String dnsServer;
   final String networkStack;
   final String appliesOnNextConnection;
+  final String customDnsHint;
   final String routing;
   final String splitTunnelingSettings;
   final String splitTunnelingSubtitle;
@@ -87,6 +102,8 @@ class Strings {
   final String connectedTo;
   final String location;
   final String bestServer;
+  final String bestServerAuto;
+  final String activeBadge;
   final String connected;
   final String connecting;
   final String disconnected;
@@ -107,12 +124,23 @@ class Strings {
   final String pairingScanHint;
   final String pairingCodeExpired;
   final String getNewCode;
+  final String haveKeyTitle;
+  final String enterKeyHint;
+  final String submitKey;
+  final String tryFreeTrial;
+  final String settingUpFreeAccess;
+  final String trialAlreadyUsed;
+  final String trialNoCapacity;
+  final String trialFailed;
 
   final String splitTunneling;
   final String appsBypassVpn;
   final String selectedInList;
   final String bypassingTunnel;
   final String add;
+  final String searchApps;
+  final String loadingApps;
+  final String splitTunnelDisabledHint;
 }
 
 String _ruPluralDays(int n) {
@@ -141,7 +169,8 @@ const Strings enStrings = Strings(
   connectionSettings: 'CONNECTION SETTINGS',
   dnsServer: 'DNS Server',
   networkStack: 'Network stack',
-  appliesOnNextConnection: 'Applies on the next connection',
+  appliesOnNextConnection: 'Changes apply automatically',
+  customDnsHint: 'Custom resolver (DoH URL, tls:// or IP)',
   routing: 'ROUTING',
   splitTunnelingSettings: 'Split tunneling settings',
   splitTunnelingSubtitle: 'Choose apps that bypass the VPN',
@@ -161,6 +190,8 @@ const Strings enStrings = Strings(
   connectedTo: 'Connected to',
   location: 'LOCATION',
   bestServer: 'Best server',
+  bestServerAuto: 'Automatic · fastest & nearest',
+  activeBadge: 'ACTIVE',
   connected: 'Connected',
   connecting: 'Connecting…',
   disconnected: 'Disconnected',
@@ -179,11 +210,22 @@ const Strings enStrings = Strings(
   pairingScanHint: 'On another device? Scan this code or open the bot and send:',
   pairingCodeExpired: 'Pairing code expired.',
   getNewCode: 'Get a new code',
+  haveKeyTitle: 'I already have a key',
+  enterKeyHint: 'Paste your key code',
+  submitKey: 'Connect',
+  tryFreeTrial: 'Try 3 days free',
+  settingUpFreeAccess: 'Setting up your free access…',
+  trialAlreadyUsed: 'A trial was already used on this device.',
+  trialNoCapacity: 'No trial slots available right now. Please try later.',
+  trialFailed: 'Could not start the trial. Check your connection and try again.',
   splitTunneling: 'Split tunneling',
   appsBypassVpn: 'Apps that bypass the VPN',
   selectedInList: 'SELECTED IN LIST',
   bypassingTunnel: 'Bypassing tunnel',
   add: 'Add',
+  searchApps: 'Search apps',
+  loadingApps: 'Loading apps…',
+  splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
 );
 
 String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
@@ -200,7 +242,8 @@ final Strings ruStrings = Strings(
   connectionSettings: 'НАСТРОЙКИ ПОДКЛЮЧЕНИЯ',
   dnsServer: 'DNS-сервер',
   networkStack: 'Сетевой стек',
-  appliesOnNextConnection: 'Применится при следующем подключении',
+  appliesOnNextConnection: 'Изменения применяются автоматически',
+  customDnsHint: 'Свой резолвер (DoH-URL, tls:// или IP)',
   routing: 'МАРШРУТИЗАЦИЯ',
   splitTunnelingSettings: 'Настройки раздельного туннелирования',
   splitTunnelingSubtitle: 'Выберите приложения, которые обходят VPN',
@@ -220,6 +263,8 @@ final Strings ruStrings = Strings(
   connectedTo: 'Подключено к',
   location: 'ЛОКАЦИЯ',
   bestServer: 'Лучший сервер',
+  bestServerAuto: 'Автоматически · быстрейший',
+  activeBadge: 'АКТИВНО',
   connected: 'Подключено',
   connecting: 'Подключение…',
   disconnected: 'Отключено',
@@ -239,11 +284,22 @@ final Strings ruStrings = Strings(
   pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',
   pairingCodeExpired: 'Код подключения истёк.',
   getNewCode: 'Получить новый код',
+  haveKeyTitle: 'У меня уже есть ключ',
+  enterKeyHint: 'Вставьте код ключа',
+  submitKey: 'Подключить',
+  tryFreeTrial: 'Попробовать 3 дня бесплатно',
+  settingUpFreeAccess: 'Настраиваем бесплатный доступ…',
+  trialAlreadyUsed: 'Пробный период уже был использован на этом устройстве.',
+  trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
+  trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
   splitTunneling: 'Раздельное туннелирование',
   appsBypassVpn: 'Приложения, которые обходят VPN',
   selectedInList: 'ВЫБРАНО В СПИСКЕ',
   bypassingTunnel: 'Обход туннеля',
   add: 'Добавить',
+  searchApps: 'Поиск приложений',
+  loadingApps: 'Загрузка приложений…',
+  splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
 );
 
 String _ruPluralServers(int n) {

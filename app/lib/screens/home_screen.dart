@@ -38,6 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _pingService = PingService();
 
   Timer? _timer;
+  Timer? _connSettingsDebounce;
   Duration _sessionTime = Duration.zero;
 
   List<ServerCountry> _servers = [];
@@ -55,7 +56,23 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _vpn.addListener(_handleVpnChange);
+    widget.connectionSettings.addListener(_onConnSettingsChanged);
     _loadServers();
+  }
+
+  /// Re-applies connection settings (DNS / network stack / split-tunnel) on the
+  /// fly: when they change while the tunnel is up, reconnect so the new
+  /// featureSettings take effect without a manual off/on. Debounced so rapid
+  /// split-tunnel edits coalesce into a single reconnect.
+  void _onConnSettingsChanged() {
+    if (!_isActive) return;
+    _connSettingsDebounce?.cancel();
+    _connSettingsDebounce = Timer(const Duration(milliseconds: 1500), () async {
+      if (!mounted || !_isActive) return;
+      await _switchOff();
+      if (!mounted) return;
+      await _connectCurrentSelection();
+    });
   }
 
   void _handleVpnChange() {
@@ -77,12 +94,17 @@ class _HomeScreenState extends State<HomeScreen> {
       _serversError = null;
     });
     try {
-      final servers = await _apiClient.getServers(widget.auth.session!.accessToken);
+      final servers = await _apiClient.getUsableServers(widget.auth.session!.accessToken);
       setState(() {
         _servers = servers;
         _loadingServers = false;
       });
       unawaited(_measureBestPings(servers));
+      // Right after a trial grant, bring the tunnel up automatically so the
+      // user reaches Telegram (to buy a key) without a manual tap.
+      if (widget.auth.consumeAutoConnect()) {
+        unawaited(_autoConnect());
+      }
     } on ApiException catch (e) {
       setState(() {
         _serversError = e.message;
@@ -130,11 +152,102 @@ class _HomeScreenState extends State<HomeScreen> {
     return ranked;
   }
 
+  /// Opens the location picker and applies the choice: a specific country, or
+  /// "best server" (auto) — which clears the explicit selection so Connect goes
+  /// back to picking the fastest node overall.
+  Future<void> _openLocationPicker() async {
+    final choice = await Navigator.of(context).push<LocationSelection>(
+      MaterialPageRoute(
+        builder: (_) => ChooseLocationScreen(
+          initialServers: _servers,
+          accessToken: widget.auth.session!.accessToken,
+          selectedCountry:
+              _serverExplicitlySelected ? _selectedServer?.country : null,
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final wasActive = _isActive;
+    setState(() {
+      if (choice.isBest) {
+        _serverExplicitlySelected = false;
+        _selectedServer = null;
+      } else {
+        _selectedServer = choice.country;
+        _serverExplicitlySelected = true;
+      }
+    });
+    // Apply the new location immediately: if the tunnel is up, tear it down and
+    // reconnect to the new choice (otherwise the change only took effect after a
+    // manual off/on).
+    if (wasActive) {
+      await _switchOff();
+      if (!mounted) return;
+      await _connectCurrentSelection();
+    }
+  }
+
+  /// Tapping a "Best servers" shortcut selects that country and connects to it
+  /// right away (reconnecting if a tunnel is already up), so it works as a
+  /// one-tap quick-connect rather than just highlighting the tile.
+  Future<void> _selectAndConnect(ServerCountry country) async {
+    final wasActive = _isActive;
+    setState(() {
+      _selectedServer = country;
+      _serverExplicitlySelected = true;
+    });
+    if (wasActive) {
+      await _switchOff();
+      if (!mounted) return;
+    }
+    await _connectCurrentSelection();
+  }
+
+  bool get _isActive =>
+      _vpn.isConnected ||
+      _vpn.state == VpnConnectionState.connecting ||
+      _vpn.state == VpnConnectionState.preparing;
+
+  /// Stops the tunnel and waits until it's actually down. A follow-up connect
+  /// issued while the previous session is still tearing down gets dropped by
+  /// the plugin (symptom: you pick a new country but stay on the old node), so
+  /// we block until the state machine reports disconnected.
+  Future<void> _switchOff() async {
+    await _vpn.disconnect();
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    while (_vpn.state != VpnConnectionState.disconnected &&
+        _vpn.state != VpnConnectionState.error &&
+        DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 150));
+    }
+  }
+
+  /// One-off auto-connect to the fastest node overall (used after a trial
+  /// grant). Mirrors the "best overall" branch of the power button.
+  Future<void> _autoConnect() async {
+    final session = widget.auth.session;
+    if (session == null || _servers.isEmpty) return;
+    try {
+      final picked = await _vpn.connectToBestOverall(_servers, session.accessToken);
+      if (picked != null && mounted) {
+        setState(() => _selectedServer = picked);
+      }
+    } catch (_) {
+      // Surfaced via _vpn.errorMessage in the status section.
+    }
+  }
+
   Future<void> _onPowerButtonTap() async {
     if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
       await _vpn.disconnect();
       return;
     }
+    await _connectCurrentSelection();
+  }
+
+  /// Connects to the current selection: the explicitly chosen country, or the
+  /// fastest node overall in "best server" mode.
+  Future<void> _connectCurrentSelection() async {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;
     try {
@@ -154,6 +267,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _connSettingsDebounce?.cancel();
+    widget.connectionSettings.removeListener(_onConnSettingsChanged);
     _vpn.removeListener(_handleVpnChange);
     _vpn.dispose();
     super.dispose();
@@ -240,22 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildLocationSelector(Strings s) {
     return GestureDetector(
-      onTap: () async {
-        final selected = await Navigator.of(context).push<ServerCountry>(
-          MaterialPageRoute(
-            builder: (_) => ChooseLocationScreen(
-              initialServers: _servers,
-              accessToken: widget.auth.session!.accessToken,
-            ),
-          ),
-        );
-        if (selected != null) {
-          setState(() {
-            _selectedServer = selected;
-            _serverExplicitlySelected = true;
-          });
-        }
-      },
+      onTap: _openLocationPicker,
       child: _locationCard(s),
     );
   }
@@ -414,22 +514,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             TextButton(
-              onPressed: () async {
-                final selected = await Navigator.of(context).push<ServerCountry>(
-                  MaterialPageRoute(
-                    builder: (_) => ChooseLocationScreen(
-                      initialServers: _servers,
-                      accessToken: widget.auth.session!.accessToken,
-                    ),
-                  ),
-                );
-                if (selected != null) {
-                  setState(() {
-                    _selectedServer = selected;
-                    _serverExplicitlySelected = true;
-                  });
-                }
-              },
+              onPressed: _openLocationPicker,
               child: Text(
                 s.seeAll,
                 style: const TextStyle(color: AppColors.accent),
@@ -469,10 +554,7 @@ class _HomeScreenState extends State<HomeScreen> {
               final pingKnown = _bestPingByCountry.containsKey(server.country);
               return Expanded(
                 child: GestureDetector(
-                  onTap: () => setState(() {
-                    _selectedServer = server;
-                    _serverExplicitlySelected = true;
-                  }),
+                  onTap: () => _selectAndConnect(server),
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 4),
                     padding: const EdgeInsets.symmetric(vertical: 14),

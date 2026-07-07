@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
@@ -9,6 +10,9 @@ import 'services/locale_controller.dart';
 import 'theme/app_colors.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Lock the app to portrait — the UI is designed for vertical phones only.
+  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const FatVpnApp());
 }
 

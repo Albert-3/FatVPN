@@ -7,6 +7,7 @@ import '../models/account_status.dart';
 import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import '../models/server_country.dart';
+import 'vless_config_parser.dart';
 
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
@@ -38,6 +39,25 @@ class ApiClient {
         'Token exchange failed',
         statusCode: response.statusCode,
       );
+    }
+
+    return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Requests a free trial for this device. [attestationToken] is the stable
+  /// device key; [platform] is "android" or "ios". 409 = trial already used by
+  /// this device, 503 = trial pool exhausted (surfaced via [ApiException.statusCode]).
+  Future<AuthSession> startTrial(String attestationToken, String platform) async {
+    final response = await _httpClient
+        .post(
+          Uri.parse('$_baseUrl/trial'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'attestationToken': attestationToken, 'platform': platform}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to start trial', statusCode: response.statusCode);
     }
 
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
@@ -86,6 +106,38 @@ class ApiClient {
     return body
         .map((e) => ServerCountry.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Like [getServers] but keeps only the countries/nodes actually present in
+  /// this subscription's `/config` — `/servers` lists every Remnawave node
+  /// regardless of squad, so offering the others just fails at connect time
+  /// ("No available node in this subscription"). Falls back to the full list if
+  /// the config can't be fetched.
+  Future<List<ServerCountry>> getUsableServers(String accessToken) async {
+    final servers = await getServers(accessToken);
+    List<String> uris;
+    try {
+      final (content, _) = await getConfig(accessToken);
+      uris = parseVlessUris(content);
+    } catch (_) {
+      return servers;
+    }
+    if (uris.isEmpty) return servers;
+
+    final usable = <ServerCountry>[];
+    for (final country in servers) {
+      final nodes =
+          country.nodes.where((n) => findUriForNode(uris, n) != null).toList();
+      if (nodes.isNotEmpty) {
+        usable.add(ServerCountry(
+          country: country.country,
+          flag: country.flag,
+          nodeCount: nodes.length,
+          nodes: nodes,
+        ));
+      }
+    }
+    return usable.isEmpty ? servers : usable;
   }
 
   Future<AccountStatus> getMe(String accessToken) async {

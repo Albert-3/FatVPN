@@ -31,11 +31,31 @@ class AuthController extends ChangeNotifier {
   Timer? _pollTimer;
   bool _pairingBusy = false;
   bool _pollInFlight = false;
+  bool _trialBusy = false;
+  bool _trialAvailable = false;
+  bool _autoConnectRequested = false;
 
   AuthSession? get session => _session;
   bool get initializing => _initializing;
   bool get isAuthenticated => _session != null && !_session!.isExpired;
   String? get error => _error;
+
+  /// True while a trial request is in flight (for the onboarding button spinner).
+  bool get trialBusy => _trialBusy;
+
+  /// Read-once flag: true right after a trial was granted so [HomeScreen] can
+  /// auto-connect the tunnel once (so a store user reaches Telegram without a
+  /// manual tap). Consuming it clears it.
+  bool consumeAutoConnect() {
+    if (!_autoConnectRequested) return false;
+    _autoConnectRequested = false;
+    return true;
+  }
+
+  /// Whether this device is still eligible for a free trial (hasn't used one
+  /// yet). Drives whether the onboarding shows the "3 days free" button — a
+  /// device that already had its trial only sees the Telegram / key options.
+  bool get trialAvailable => _trialAvailable;
 
   /// Pairing code to show/QR-encode, or null while none is active.
   String? get pairCode => _pairing?.pairCode;
@@ -52,6 +72,8 @@ class AuthController extends ChangeNotifier {
     if (stored != null && !stored.isExpired) {
       _session = stored;
     }
+    // Trial button shows only for a device that hasn't used its trial yet.
+    _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
     _initializing = false;
     notifyListeners();
 
@@ -60,6 +82,21 @@ class AuthController extends ChangeNotifier {
     if (initialUri != null) {
       await _handleUri(initialUri);
     }
+  }
+
+  /// Core trial grant shared by the onboarding button. Throws [ApiException]
+  /// on non-200 so callers can react to 409/503. On success requests a one-off
+  /// auto-connect so the user is online immediately.
+  Future<void> _grantTrial() async {
+    final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
+    final platform =
+        defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+    final session = await _apiClient.startTrial(deviceKey, platform);
+    _session = session;
+    _trialAvailable = false;
+    _autoConnectRequested = true;
+    notifyListeners();
+    unawaited(_tokenStorage.save(session).catchError((_) {}));
   }
 
   Future<void> _handleUri(Uri uri) async {
@@ -85,6 +122,42 @@ class AuthController extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       _error = 'Could not reach the server. Check your connection and try again.';
+      notifyListeners();
+    }
+  }
+
+  /// Requests a free trial for this device and logs in on success. Error
+  /// messages are passed in by the caller so they can be localized.
+  Future<void> requestTrial({
+    required String conflictMessage,
+    required String noCapacityMessage,
+    required String genericMessage,
+  }) async {
+    if (_trialBusy) return;
+    _trialBusy = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _grantTrial();
+      await _tokenStorage.markAutoTrialAttempted();
+    } on ApiException catch (e) {
+      _error = switch (e.statusCode) {
+        409 => conflictMessage,
+        503 => noCapacityMessage,
+        _ => genericMessage,
+      };
+      if (e.statusCode == 409) {
+        // Device already used its trial — hide the button and remember it.
+        _trialAvailable = false;
+        await _tokenStorage.markAutoTrialAttempted();
+      }
+      notifyListeners();
+    } catch (_) {
+      _error = genericMessage;
+      notifyListeners();
+    } finally {
+      _trialBusy = false;
       notifyListeners();
     }
   }

@@ -7,14 +7,14 @@ class LocaleController extends ChangeNotifier {
   static const _storageKey = 'app_language';
   final _storage = const FlutterSecureStorage();
 
-  AppLanguage _language = AppLanguage.en;
+  AppLanguage _language = AppLanguage.ru;
   AppLanguage get language => _language;
   Strings get strings => stringsFor(_language);
 
   Future<void> load() async {
     final saved = await _storage.read(key: _storageKey);
-    if (saved == 'ru') {
-      _language = AppLanguage.ru;
+    if (saved == 'en') {
+      _language = AppLanguage.en;
       notifyListeners();
     }
   }

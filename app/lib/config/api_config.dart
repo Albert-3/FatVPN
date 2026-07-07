@@ -1,14 +1,7 @@
-import 'dart:io' show Platform;
-
-/// Base URL of the FatVPN BFF. `10.0.2.2` is the Android emulator's alias
-/// for the host machine's `localhost`; physical devices/iOS simulator need
-/// this pointed at the host's real LAN IP or the production BFF URL.
-String get bffBaseUrl {
-  if (Platform.isAndroid) {
-    return 'http://10.0.2.2:5030';
-  }
-  return 'http://localhost:5030';
-}
+/// Base URL of the FatVPN BFF.
+/// Test deployment: public BFF on the bot server over HTTP. Switch to the
+/// HTTPS domain once one is set up (see the project deploy plan).
+const bffBaseUrl = 'http://87.121.221.229:5030';
 
 /// URI scheme the Telegram bot uses to deep-link a short token into the app,
 /// e.g. `fatvpn://token/AB12CD34`. Legacy path — kept for the transition.

@@ -2,21 +2,48 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
+import '../services/connection_settings_controller.dart';
+import '../services/installed_apps_service.dart';
 import '../theme/app_colors.dart';
 
+/// Lets the user pick installed apps that bypass the VPN tunnel
+/// (sing-box `exclude_package`). Android-only; the selection is persisted in
+/// [ConnectionSettingsController] and applied on the next connect.
 class SplitTunnelingScreen extends StatefulWidget {
-  const SplitTunnelingScreen({super.key});
+  const SplitTunnelingScreen({super.key, required this.connectionSettings});
+
+  final ConnectionSettingsController connectionSettings;
 
   @override
   State<SplitTunnelingScreen> createState() => _SplitTunnelingScreenState();
 }
 
 class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
-  bool _enabled = true;
-  final List<String> _bypassedGroups = ['Russian services'];
+  List<LaunchableApp>? _apps;
+  String _query = '';
 
-  void _removeGroup(String group) {
-    setState(() => _bypassedGroups.remove(group));
+  @override
+  void initState() {
+    super.initState();
+    _loadApps();
+  }
+
+  Future<void> _loadApps() async {
+    // Only launcher (app-drawer) apps — includes preinstalled browsers like
+    // Chrome but excludes background services/overlays.
+    final apps = await InstalledAppsService.getLaunchableApps();
+    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    if (mounted) setState(() => _apps = apps);
+  }
+
+  void _toggleApp(String packageName, bool bypass) {
+    final next = Set<String>.from(widget.connectionSettings.bypassPackages);
+    if (bypass) {
+      next.add(packageName);
+    } else {
+      next.remove(packageName);
+    }
+    widget.connectionSettings.setBypassPackages(next);
   }
 
   @override
@@ -25,130 +52,104 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(context, s),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  s.appsBypassVpn,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
+        child: AnimatedBuilder(
+          animation: widget.connectionSettings,
+          builder: (context, _) {
+            final enabled = widget.connectionSettings.splitTunnelEnabled;
+            return Column(
+              children: [
+                _buildHeader(context, s, enabled),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      s.appsBypassVpn,
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: [
-                  Text(
-                    s.selectedInList,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.card,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            s.bypassingTunnel,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const Icon(
-                          Icons.chevron_right,
-                          color: AppColors.textSecondary,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  for (final group in _bypassedGroups)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.card,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              group,
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => _removeGroup(group),
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    foregroundColor: AppColors.background,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add),
-                  label: Text(
-                    s.add,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+                  child: Text(
+                    s.appliesOnNextConnection,
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
                   ),
                 ),
-              ),
-            ),
-          ],
+                if (!enabled)
+                  Expanded(child: _DisabledHint(text: s.splitTunnelDisabledHint))
+                else
+                  Expanded(child: _buildAppList(s)),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _buildHeader(BuildContext context, Strings s) {
+  Widget _buildAppList(Strings s) {
+    final apps = _apps;
+    if (apps == null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: AppColors.accent, strokeWidth: 2),
+            const SizedBox(height: 16),
+            Text(s.loadingApps, style: const TextStyle(color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+    }
+
+    final q = _query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? apps
+        : apps.where((a) => a.name.toLowerCase().contains(q)).toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+          child: TextField(
+            onChanged: (v) => setState(() => _query = v),
+            style: const TextStyle(color: AppColors.textPrimary),
+            decoration: InputDecoration(
+              hintText: s.searchApps,
+              hintStyle: const TextStyle(color: AppColors.textSecondary),
+              prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+              filled: true,
+              fillColor: AppColors.card,
+              contentPadding: EdgeInsets.zero,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            itemCount: filtered.length,
+            itemBuilder: (context, i) {
+              final app = filtered[i];
+              final bypass = widget.connectionSettings.bypassPackages.contains(app.packageName);
+              return _AppTile(
+                app: app,
+                bypass: bypass,
+                onChanged: (v) => _toggleApp(app.packageName, v),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeader(BuildContext context, Strings s, bool enabled) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
@@ -169,11 +170,73 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
             ),
           ),
           Switch(
-            value: _enabled,
+            value: enabled,
             activeTrackColor: AppColors.accent,
-            onChanged: (value) => setState(() => _enabled = value),
+            onChanged: (v) => widget.connectionSettings.setSplitTunnelEnabled(v),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AppTile extends StatelessWidget {
+  const _AppTile({required this.app, required this.bypass, required this.onChanged});
+
+  final LaunchableApp app;
+  final bool bypass;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = app.icon;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: CheckboxListTile(
+        value: bypass,
+        onChanged: (v) => onChanged(v ?? false),
+        activeColor: AppColors.accent,
+        checkColor: AppColors.background,
+        controlAffinity: ListTileControlAffinity.trailing,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        secondary: icon != null
+            ? Image.memory(icon, width: 36, height: 36)
+            : const Icon(Icons.android, color: AppColors.textSecondary, size: 36),
+        title: Text(
+          app.name,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+        ),
+      ),
+    );
+  }
+}
+
+class _DisabledHint extends StatelessWidget {
+  const _DisabledHint({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.call_split, color: AppColors.textSecondary, size: 40),
+            const SizedBox(height: 16),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
+            ),
+          ],
+        ),
       ),
     );
   }

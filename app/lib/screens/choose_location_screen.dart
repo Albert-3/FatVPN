@@ -8,15 +8,31 @@ import '../services/ping_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
 
+/// Result of picking a location: either the automatic "best server" mode, or a
+/// specific [country]. Returned via `Navigator.pop`; a plain `null` still means
+/// the user backed out without choosing.
+class LocationSelection {
+  const LocationSelection.best() : country = null;
+  const LocationSelection.country(ServerCountry this.country);
+
+  final ServerCountry? country;
+  bool get isBest => country == null;
+}
+
 class ChooseLocationScreen extends StatefulWidget {
   const ChooseLocationScreen({
     super.key,
     required this.accessToken,
     this.initialServers = const [],
+    this.selectedCountry,
   });
 
   final String accessToken;
   final List<ServerCountry> initialServers;
+
+  /// Country code currently active, or null when "best server" (auto) is active
+  /// — used to highlight the current choice.
+  final String? selectedCountry;
 
   @override
   State<ChooseLocationScreen> createState() => _ChooseLocationScreenState();
@@ -47,7 +63,7 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
       _error = null;
     });
     try {
-      final servers = await _apiClient.getServers(widget.accessToken);
+      final servers = await _apiClient.getUsableServers(widget.accessToken);
       setState(() {
         _servers = servers;
         _loading = false;
@@ -122,6 +138,8 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20),
       children: [
         const SizedBox(height: 4),
+        _buildBestTile(s),
+        const SizedBox(height: 16),
         Text(
           s.allLocations,
           style: const TextStyle(
@@ -134,6 +152,68 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
         for (final country in _servers) _buildCountryTile(s, country),
         const SizedBox(height: 20),
       ],
+    );
+  }
+
+  /// Selectable "best server" (automatic) entry — lets the user return to auto
+  /// mode after having picked a specific country.
+  Widget _buildBestTile(Strings s) {
+    final isActive = widget.selectedCountry == null;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => Navigator.of(context).pop(const LocationSelection.best()),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: isActive ? Border.all(color: AppColors.accent, width: 1.5) : null,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.bolt, color: AppColors.accent),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    s.bestServer,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    s.bestServerAuto,
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            if (isActive)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  s.activeBadge,
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+            else
+              Text(s.select, style: const TextStyle(color: AppColors.accent)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -168,18 +248,21 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
 
   Widget _buildCountryTile(Strings s, ServerCountry country) {
     final isExpanded = _expandedCountry == country.country;
+    final isSelected = widget.selectedCountry == country.country;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
+        border: isSelected ? Border.all(color: AppColors.accent, width: 1.5) : null,
       ),
       child: Column(
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: country.nodes.isEmpty ? null : () => _toggleExpanded(country),
-            onLongPress: () => Navigator.of(context).pop(country),
+            onLongPress: () =>
+                Navigator.of(context).pop(LocationSelection.country(country)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
@@ -213,7 +296,8 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => Navigator.of(context).pop(country),
+                    onPressed: () =>
+                        Navigator.of(context).pop(LocationSelection.country(country)),
                     child: Text(s.select, style: const TextStyle(color: AppColors.accent)),
                   ),
                   if (country.nodes.isNotEmpty)

@@ -31,11 +31,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AccountStatus? _accountStatus;
   bool _loading = true;
   String? _error;
+  late final TextEditingController _customDnsController;
 
   @override
   void initState() {
     super.initState();
+    _customDnsController =
+        TextEditingController(text: widget.connectionSettings.customDns);
     _loadAccountStatus();
+  }
+
+  @override
+  void dispose() {
+    _customDnsController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAccountStatus() async {
@@ -76,8 +85,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (remaining.isNegative) {
       return s.expired;
     }
-    if (remaining.inDays >= 1) {
-      return s.expiresInDays(remaining.inDays);
+    // Round to the nearest day (not floor) so a freshly granted N-day trial
+    // reads "N days", not "N-1" — expiresAt is a few seconds under N*24h.
+    if (remaining.inHours >= 24) {
+      return s.expiresInDays((remaining.inHours / 24).round());
     }
     return s.expiresInHours(remaining.inHours);
   }
@@ -103,13 +114,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     animation: widget.connectionSettings,
                     builder: (context, _) {
                       final cs = widget.connectionSettings;
+                      final isCustomDns = cs.dnsPreset == DnsProviderPreset.custom;
                       return _card(
                         children: [
                           _pickerRow(
                             s.dnsServer,
-                            _dnsLabel(cs.dnsPreset),
+                            isCustomDns && cs.customDns.isNotEmpty
+                                ? cs.customDns
+                                : _dnsLabel(cs.dnsPreset),
                             () => _showDnsPicker(s),
                           ),
+                          if (isCustomDns) ...[
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _customDnsController,
+                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              keyboardType: TextInputType.url,
+                              onChanged: cs.setCustomDns,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: s.customDnsHint,
+                                hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                filled: true,
+                                fillColor: AppColors.background,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ],
                           const Divider(color: AppColors.disabled, height: 24),
                           _pickerRow(
                             s.networkStack,
@@ -136,7 +172,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       InkWell(
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => const SplitTunnelingScreen(),
+                            builder: (_) => SplitTunnelingScreen(
+                              connectionSettings: widget.connectionSettings,
+                            ),
                           ),
                         ),
                         child: Row(
