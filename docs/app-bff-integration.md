@@ -402,6 +402,40 @@ one-tap quick-connect (тап = подключение/переключение,
   чуть меньше. Теперь округление к ближайшему дню (`(inHours/24).round()`), свежий
   N-дневный триал корректно показывает `N`.
 
+## Сессии: развязка JWT + access/refresh split (2026-07-08)
+
+Переделана модель сессии — раньше срок JWT был жёстко равен сроку подписки, из-за
+чего продление не продлевало уже выданный токен, а истечение выкидывало сразу на
+онбординг. Теперь:
+
+**Бэкенд (2 коммита):**
+1. **Развязка + живые проверки.** JWT-срок отделён от подписки; право доступа
+   проверяется в каждом запросе. `/config` и `/servers` при истёкшей подписке →
+   **402** (а не 401), `/me` → `status: expired`. Общий `SubscriptionResolver`.
+2. **Access + refresh split.** Короткий access-JWT (**30 мин**) + долгий отзываемый
+   **refresh** (90 дней, хранится хешированным, ротируется). Новые `POST /auth/refresh`
+   (ротация) и `POST /auth/logout` (отзыв); `/auth/token`, `/trial`,
+   `/pair/status` теперь отдают и `refreshToken`. Сущность `RefreshToken` + миграция
+   `AddRefreshTokens`. **Проверено локально curl-ом** (выдача, ротация: старый refresh
+   → 401; logout → 401; истечение → 402).
+
+**Приложение (1 коммит):**
+- `AuthSession`/`TokenStorage` хранят refresh; `ApiClient` прозрачно рефрешит access
+  на 401 и повторяет запрос (колбэк `onUnauthorized`, прокинут в Home/ChooseLocation/
+  Settings/VpnController); `+refreshSession()`/`+logout()`.
+- `AuthController`: гейт `isLoggedIn` vs `subscriptionActive`; refresh на холодном
+  старте и на resume; `notifyExpired()` на 402; `signOut()` отзывает refresh.
+- `main.dart` — три ветки: онбординг / **экран продления** / Home; refresh на resume
+  → продление/истечение подхватываются сами.
+- `AwaitingAuthScreen` — режим `renew` («Подписка истекла», без триала,
+  «Продлить через Telegram» + «Я продлил — обновить»). HomeScreen на 402 гасит
+  туннель и уходит на renew.
+- **Настройки:** access 30 мин, refresh 90 дней (`Jwt:AccessTokenLifetime`/
+  `Jwt:RefreshTokenLifetime` в `appsettings.json`).
+- `flutter analyze` — чисто. **Runtime e2e на устройстве/эмуляторе — ещё не прогнан.**
+
+Контракт — см. `docs/api-contract.md` (раздел «Модель токенов»).
+
 ## Состояние гита (2026-07-08)
 
 Вся описанная выше работа **закоммичена** в ветку `feat/pairing-onboarding` (рабочее

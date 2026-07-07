@@ -29,20 +29,53 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 
 ⚠️ **`Trial:DeviceKeySalt` в `appsettings.json` пустой по умолчанию.** Без него хеш device-ключа считается с пустой солью — не критично для работы (уникальность всё равно сохраняется), но снижает приватность/защиту от подбора устройства по хешу. **Задать реальное случайное значение до деплоя `/trial` на прод** — на сервере это делается либо через `dotnet user-secrets` в контейнере, либо через переменную окружения `Trial__DeviceKeySalt` (по аналогии с `Bot__Secret`, см. `docs/bot-integration-spec.md`).
 
+## Модель токенов (важно)
+
+С релиза refresh-split (2026-07-08) сессия — это **пара токенов**:
+
+- **`accessToken`** — короткоживущий JWT (**30 мин**, `Jwt:AccessTokenLifetime`).
+  Срок жизни **развязан** со сроком подписки: JWT отвечает «кто ты», а право
+  доступа проверяется **живьём** в каждом запросе. Claim — `fatvpn_account_id`
+  (pairing) или `fatvpn_token_id` (legacy/trial).
+- **`refreshToken`** — долгоживущий (**90 дней**, `Jwt:RefreshTokenLifetime`),
+  **отзываемый**, **ротируемый** непрозрачный секрет. В БД хранится только его
+  SHA-256-хеш; сырое значение отдаётся клиенту один раз. Приложение меняет его
+  на свежий access через `/auth/refresh`.
+- **Истечение подписки:** `accessToken` НЕ протухает вместе с подпиской (в отличие
+  от старой схемы). Вместо этого `/config` и `/servers` при истёкшей подписке
+  отдают **402 Payment Required**, а `/me` — `status: "expired"`. Так приложение
+  отличает «нужно продлить» (402) от «токен невалиден» (401) и ведёт на экран
+  продления, а не на онбординг.
+
 ## Публичные эндпоинты (мобильное приложение)
 
 ### `POST /auth/token`
-Обмен короткого токена (полученного из Telegram-бота) на JWT.
+Обмен короткого токена (полученного из Telegram-бота) на пару токенов.
 
 - **Запрос:** `{ "shortToken": string }`
-- **Ответ:** `{ "accessToken": string, "expiresAt": datetime }`
+- **Ответ:** `{ "accessToken": string, "refreshToken": string, "expiresAt": datetime }`
 - **Ошибки:** 404 — токен не найден/просрочен
+
+### `POST /auth/refresh`
+Обмен refresh-токена на свежий access (с ротацией refresh). Право подписки здесь
+**не** проверяется — истёкшая подписка тоже должна уметь рефрешить, чтобы дойти до
+экрана продления и подхватить будущее продление.
+
+- **Запрос:** `{ "refreshToken": string }`
+- **Ответ:** `{ "accessToken": string, "refreshToken": string, "expiresAt": datetime }`
+- **Ошибки:** 401 — refresh неизвестен / отозван / истёк (приложение выходит на онбординг)
+
+### `POST /auth/logout`
+Best-effort отзыв refresh-токена при выходе. Всегда 204 (нельзя пробить, какие токены существуют).
+
+- **Запрос:** `{ "refreshToken": string }`
+- **Ответ:** 204 No Content
 
 ### `POST /pair/start`
 Приложение начинает pairing (связывание по одноразовому коду). Показывает `pairCode`/QR и открывает бота ссылкой `t.me/<bot>?start=pair<pairCode>`.
 
 - **Запрос:** тело не требуется
-- **Ответ:** `{ "pairCode": string, "pollToken": string, "expiresAt": datetime }`
+- **Ответ:** `{ "pairCode": string, "pollToken": string, "expiresAt": datetime }` (это pairing-`expiresAt` — срок жизни кода, не подписки)
 - `pairCode` — 8 символов (base32 без похожих букв), уходит в Telegram deep link.
 - `pollToken` — секрет устройства, с которым приложение опрашивает статус. Не передаётся в чат.
 - Код живёт 15 минут.
@@ -50,15 +83,15 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 ### `GET /pair/status?pollToken=<...>`
 Приложение опрашивает, пока бот не завершит pairing.
 
-- **Ответ:** `{ "status": "pending" }` | `{ "status": "completed", "accessToken": string, "expiresAt": datetime }` | `{ "status": "expired" }`
+- **Ответ:** `{ "status": "pending" }` | `{ "status": "completed", "accessToken": string, "refreshToken": string, "expiresAt": datetime }` | `{ "status": "expired" }`
 - **Ошибки:** 404 — `pollToken` неизвестен
-- `accessToken` — JWT на **Account** (claim `fatvpn_account_id`), в отличие от deep-link-пути (claim `fatvpn_token_id`).
+- `accessToken` — JWT на **Account** (claim `fatvpn_account_id`), в отличие от deep-link-пути (claim `fatvpn_token_id`). `refreshToken` — как в `/auth/token`.
 
 ### `POST /trial`
 Выдать триал новому устройству (без ввода кода).
 
 - **Запрос:** `{ "attestationToken": string, "platform": "ios" | "android" }`
-- **Ответ:** `{ "accessToken": string, "expiresAt": datetime }`
+- **Ответ:** `{ "accessToken": string, "refreshToken": string, "expiresAt": datetime }`
 - **Ошибки:** 409 — триал для этого устройства уже был выдан; 502 — не удалось создать подписку в Remnawave
 - **Срок триала:** **2 дня** (`Trial:DurationDays` в `appsettings.json`; было 3, изменено на 2 по решению заказчика 2026-07-07).
 - **Выдача подписки — на лету (2026-07-07):** `POST /trial` **создаёт нового пользователя в Remnawave** через `POST /api/users` (squad `Remnawave:TrialSquadUuid`, по умолчанию `Default-Squad`, `NO_RESET`, срок = now + `Trial:DurationDays`) и берёт его `shortUuid` как `remnawaveSubscriptionId`. Пул (`TrialSubscriptionSlots`) больше **не используется** — это масштабируется на любое число установок из стора без ручного пополнения. Старые эндпоинты `/internal/trial-pool` оставлены как legacy (не задействованы).
@@ -83,6 +116,7 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 
 - **Авторизация:** JWT Bearer (эндпоинт закрыт с pairing-релиза)
 - **Ответ:** `[{ "country": string, "flag": string, "nodeCount": int, "nodes": [{ "id": string, "name": string, "address": string, "port": int, "usersOnline": int }] }]`
+- **Ошибки:** 401 — токен невалиден/сессия неизвестна; **402 — подписка истекла**
 
 ### `GET /config`
 Конфиг подписки для текущего пользователя (по JWT). Проксирует ответ Remnawave as-is.
@@ -91,7 +125,7 @@ dotnet user-secrets set "Trial:DeviceKeySalt" "<случайная строка>
 - **Примечание:** Remnawave на текущей инсталляции возвращает base64-кодированный список
   vless:// URI. Sing-box шаблон в панели не настроен — при необходимости JSON-формата
   нужно настроить шаблоны в Remnawave или добавить `?format=singbox` после конфигурации панели.
-- **Ошибки:** 401 — JWT истёк, 502 — Remnawave недоступен
+- **Ошибки:** 401 — токен невалиден/сессия неизвестна; **402 — подписка истекла**; 502 — Remnawave недоступен
 
 ### `GET /me`
 Статус подписки, срок действия.
