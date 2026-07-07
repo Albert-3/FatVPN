@@ -1,5 +1,6 @@
 using FatVpn.Bff.Api.Auth;
 using FatVpn.Bff.Infrastructure;
+using FatVpn.Bff.Infrastructure.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,33 +9,22 @@ namespace FatVpn.Bff.Api.Controllers;
 [ApiController]
 [Route("me")]
 [Authorize]
-public class MeController(FatVpnDbContext db) : ControllerBase
+public class MeController(FatVpnDbContext db, IJwtTokenService jwtTokenService) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetMe(CancellationToken ct)
     {
-        var expiresAt = await ResolveExpiryAsync(ct);
-        if (expiresAt is null)
+        var subscription = await db.ResolveSubscriptionAsync(User, ct);
+        if (subscription is null)
         {
             return NotFound();
         }
 
-        var status = expiresAt > DateTimeOffset.UtcNow ? "active" : "expired";
-        return Ok(new { status, expiresAt });
-    }
-
-    // Account-based sessions (pairing) resolve the current subscription through
-    // the account; legacy deep-link tokens fall back to the token row.
-    private async Task<DateTimeOffset?> ResolveExpiryAsync(CancellationToken ct)
-    {
-        var accountId = User.TryGetAccountId();
-        if (accountId is not null)
-        {
-            var account = await db.Accounts.FindAsync([accountId.Value], ct);
-            return account?.ExpiresAt;
-        }
-
-        var token = await db.Tokens.FindAsync([User.GetTokenId()], ct);
-        return token?.ExpiresAt;
+        // Rolling refresh: hand back a token with a fresh lifetime so an app that
+        // opens within the token window never gets stranded, and picks up a newly
+        // extended subscription expiry without re-pairing.
+        var accessToken = jwtTokenService.Refresh(User);
+        var status = subscription.IsActive ? "active" : "expired";
+        return Ok(new { status, expiresAt = subscription.ExpiresAt, accessToken });
     }
 }
