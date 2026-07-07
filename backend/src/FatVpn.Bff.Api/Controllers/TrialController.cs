@@ -3,6 +3,7 @@ using System.Text;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
+using FatVpn.Bff.Infrastructure.Remnawave;
 using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,12 @@ namespace FatVpn.Bff.Api.Controllers;
 
 [ApiController]
 [Route("trial")]
-public class TrialController(FatVpnDbContext db, IJwtTokenService jwtTokenService, IOptions<TrialOptions> trialOptions) : ControllerBase
+public class TrialController(
+    FatVpnDbContext db,
+    IJwtTokenService jwtTokenService,
+    IRemnawaveClient remnawaveClient,
+    IOptions<TrialOptions> trialOptions,
+    ILogger<TrialController> logger) : ControllerBase
 {
     [HttpPost]
     public async Task<IActionResult> GrantTrial([FromBody] TrialRequest request, CancellationToken ct)
@@ -25,13 +31,21 @@ public class TrialController(FatVpnDbContext db, IJwtTokenService jwtTokenServic
             return Conflict();
         }
 
-        var slot = await db.TrialSubscriptionSlots.FirstOrDefaultAsync(s => !s.IsAssigned, ct);
-        if (slot is null)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = "No trial capacity available" });
-        }
-
         var now = DateTimeOffset.UtcNow;
+        var requestedExpiry = now.AddDays(trialOptions.Value.DurationDays);
+
+        // Provision the trial subscription on demand instead of from a pool, so
+        // it scales to every store install without manual replenishment.
+        RemnawaveTrialUser created;
+        try
+        {
+            created = await remnawaveClient.CreateTrialUserAsync(requestedExpiry, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to provision trial subscription in Remnawave");
+            return StatusCode(StatusCodes.Status502BadGateway, new { message = "Could not provision a trial subscription" });
+        }
 
         if (device is null)
         {
@@ -45,18 +59,12 @@ public class TrialController(FatVpnDbContext db, IJwtTokenService jwtTokenServic
             db.Devices.Add(device);
         }
 
-        var expiresAt = now.AddDays(trialOptions.Value.DurationDays);
-
-        slot.IsAssigned = true;
-        slot.AssignedDeviceId = device.Id;
-        slot.AssignedAt = now;
-
         var token = new Token
         {
             Id = Guid.NewGuid(),
             ShortToken = $"TRIAL-{Guid.NewGuid():N}",
-            RemnawaveSubscriptionId = slot.RemnawaveSubscriptionId,
-            ExpiresAt = expiresAt,
+            RemnawaveSubscriptionId = created.ShortUuid,
+            ExpiresAt = created.ExpiresAt,
             CreatedAt = now,
         };
         db.Tokens.Add(token);
@@ -66,13 +74,13 @@ public class TrialController(FatVpnDbContext db, IJwtTokenService jwtTokenServic
             Id = Guid.NewGuid(),
             DeviceId = device.Id,
             GrantedAt = now,
-            ExpiresAt = expiresAt,
+            ExpiresAt = created.ExpiresAt,
         });
 
         await db.SaveChangesAsync(ct);
 
         var accessToken = jwtTokenService.CreateAccessToken(token);
-        return Ok(new { accessToken, expiresAt });
+        return Ok(new { accessToken, expiresAt = created.ExpiresAt });
     }
 
     private static string ComputeDeviceKeyHash(string attestationToken, string salt)

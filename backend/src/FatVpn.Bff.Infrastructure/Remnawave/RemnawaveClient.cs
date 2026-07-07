@@ -47,6 +47,45 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
         var contentType = response.Content.Headers.ContentType?.ToString() ?? "text/plain";
         return (content, contentType);
     }
+
+    public async Task<RemnawaveTrialUser> CreateTrialUserAsync(DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        // trial_ + 16 hex chars — unique, well within Remnawave's username length/charset limits.
+        var username = $"trial_{Guid.NewGuid():N}"[..22];
+        var payload = new
+        {
+            username,
+            status = "ACTIVE",
+            expireAt = expiresAt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            trafficLimitBytes = 0,
+            trafficLimitStrategy = "NO_RESET",
+            activeInternalSquads = new[] { options.Value.TrialSquadUuid },
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/users")
+        {
+            Content = JsonContent.Create(payload, options: JsonOptions),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.Value.ApiToken);
+
+        using var response = await httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadFromJsonAsync<RemnawaveUserResponse>(JsonOptions, ct);
+        var user = body?.Response ?? throw new InvalidOperationException("Empty Remnawave create-user response");
+        return new RemnawaveTrialUser(user.ShortUuid, user.ExpireAt);
+    }
+}
+
+internal sealed class RemnawaveUserResponse
+{
+    public RemnawaveUserDto Response { get; set; } = new();
+}
+
+internal sealed class RemnawaveUserDto
+{
+    public string ShortUuid { get; set; } = string.Empty;
+    public DateTimeOffset ExpireAt { get; set; }
 }
 
 internal sealed class RemnawaveNodesResponse
