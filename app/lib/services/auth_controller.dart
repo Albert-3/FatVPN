@@ -26,6 +26,9 @@ class AuthController extends ChangeNotifier {
   AuthSession? _session;
   bool _initializing = true;
   String? _error;
+  bool _subscriptionExpired = false;
+  DateTime? _lastRefresh;
+  bool _refreshInFlight = false;
 
   PairingStart? _pairing;
   Timer? _pollTimer;
@@ -37,7 +40,17 @@ class AuthController extends ChangeNotifier {
 
   AuthSession? get session => _session;
   bool get initializing => _initializing;
-  bool get isAuthenticated => _session != null && !_session!.isExpired;
+
+  /// Whether we hold a session at all (a refresh token). Drives onboarding vs
+  /// the rest of the app — independent of whether the subscription is active.
+  bool get isLoggedIn => _session != null;
+
+  /// Whether the subscription is currently usable. False routes the app to the
+  /// renew screen instead of the home screen. Combines the locally-known expiry
+  /// with a server-reported lapse (402).
+  bool get subscriptionActive =>
+      _session != null && !_session!.isExpired && !_subscriptionExpired;
+
   String? get error => _error;
 
   /// True while a trial request is in flight (for the onboarding button spinner).
@@ -69,8 +82,14 @@ class AuthController extends ChangeNotifier {
 
   Future<void> start() async {
     final stored = await _tokenStorage.read();
-    if (stored != null && !stored.isExpired) {
+    if (stored != null) {
       _session = stored;
+      // The access token is short-lived (~30 min) so a stored one is usually
+      // stale on a cold start; refresh proactively. A refresh also pulls the
+      // current subscription expiry, so a lapse is caught here too.
+      if (stored.hasRefreshToken) {
+        await _refreshNow();
+      }
     }
     // Trial button shows only for a device that hasn't used its trial yet.
     _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
@@ -84,6 +103,65 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Callback for [ApiClient]: returns a freshly-refreshed access token on 401,
+  /// or null if the session can't be renewed. Dedupes bursts so several 401s in
+  /// quick succession trigger a single refresh (and one rotation).
+  Future<String?> ensureFreshAccessToken() async {
+    if (_session == null) return null;
+    if (_lastRefresh != null &&
+        DateTime.now().difference(_lastRefresh!) < const Duration(seconds: 5)) {
+      return _session!.accessToken;
+    }
+    return _refreshNow();
+  }
+
+  /// Refreshes on app resume so an extended (or lapsed) subscription is picked
+  /// up without the user doing anything.
+  Future<void> refreshOnResume() async {
+    if (_session == null) return;
+    await _refreshNow();
+  }
+
+  /// Exchanges the stored refresh token for a fresh session. Updates expiry (so
+  /// [subscriptionActive] recomputes) and persists. Signs out on a hard 401
+  /// (revoked/unknown refresh token); leaves the session intact on a network
+  /// blip so a later call can retry.
+  Future<String?> _refreshNow() async {
+    final refreshToken = _session?.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      await signOut();
+      return null;
+    }
+    if (_refreshInFlight) return _session?.accessToken;
+    _refreshInFlight = true;
+    try {
+      final fresh = await _apiClient.refreshSession(refreshToken);
+      _session = fresh;
+      _lastRefresh = DateTime.now();
+      _subscriptionExpired = fresh.isExpired;
+      notifyListeners();
+      unawaited(_tokenStorage.save(fresh).catchError((_) {}));
+      return fresh.accessToken;
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) {
+        await signOut();
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      _refreshInFlight = false;
+    }
+  }
+
+  /// Called when a request returns 402 — the subscription has lapsed. Flips the
+  /// app to the renew screen. Cleared by a later successful refresh.
+  void notifyExpired() {
+    if (_subscriptionExpired) return;
+    _subscriptionExpired = true;
+    notifyListeners();
+  }
+
   /// Core trial grant shared by the onboarding button. Throws [ApiException]
   /// on non-200 so callers can react to 409/503. On success requests a one-off
   /// auto-connect so the user is online immediately.
@@ -93,6 +171,7 @@ class AuthController extends ChangeNotifier {
         defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
     final session = await _apiClient.startTrial(deviceKey, platform);
     _session = session;
+    _subscriptionExpired = false;
     _trialAvailable = false;
     _autoConnectRequested = true;
     notifyListeners();
@@ -116,6 +195,7 @@ class AuthController extends ChangeNotifier {
       final session = await _apiClient.exchangeToken(shortToken);
       await _tokenStorage.save(session);
       _session = session;
+      _subscriptionExpired = false;
       notifyListeners();
     } on ApiException catch (e) {
       _error = e.message;
@@ -202,6 +282,7 @@ class AuthController extends ChangeNotifier {
           _pollTimer = null;
           _pairing = null;
           _session = status.session;
+          _subscriptionExpired = false;
           // Transition the UI first; persistence is best-effort so a slow or
           // failing secure-storage write can't strand the user on this screen.
           notifyListeners();
@@ -226,8 +307,14 @@ class AuthController extends ChangeNotifier {
     _pollTimer?.cancel();
     _pollTimer = null;
     _pairing = null;
+    final refreshToken = _session?.refreshToken;
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      unawaited(_apiClient.logout(refreshToken));
+    }
     await _tokenStorage.clear();
     _session = null;
+    _subscriptionExpired = false;
+    _lastRefresh = null;
     notifyListeners();
   }
 

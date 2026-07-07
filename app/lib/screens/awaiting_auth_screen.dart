@@ -10,9 +10,14 @@ import '../theme/app_colors.dart';
 /// Onboarding / pairing screen. Fetches a pairing code, lets the user open the
 /// Telegram bot to link their account, and polls until the bot confirms.
 class AwaitingAuthScreen extends StatefulWidget {
-  const AwaitingAuthScreen({super.key, required this.auth});
+  const AwaitingAuthScreen({super.key, required this.auth, this.renew = false});
 
   final AuthController auth;
+
+  /// Renew mode: the user is logged in but the subscription has lapsed. Shows
+  /// a "subscription expired" heading, hides the trial option, and offers a
+  /// "check again" action after they renew.
+  final bool renew;
 
   @override
   State<AwaitingAuthScreen> createState() => _AwaitingAuthScreenState();
@@ -41,12 +46,20 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     );
   }
 
+  bool _checking = false;
+
+  Future<void> _checkAgain() async {
+    setState(() => _checking = true);
+    await widget.auth.refreshOnResume();
+    if (mounted) setState(() => _checking = false);
+  }
+
   /// Telegram/pairing CTA. Filled (primary) when it's the top action, outlined
   /// (secondary) when the free-trial button already sits above it.
   Widget _telegramButton(Strings s, {required bool primary}) {
     final icon = const Icon(Icons.telegram, size: 22);
     final label = Text(
-      s.connectWithTelegram,
+      widget.renew ? s.renewViaTelegram : s.connectWithTelegram,
       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
     );
     const padding = EdgeInsets.symmetric(vertical: 14);
@@ -99,7 +112,7 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     Center(child: Image.asset('assets/images/logo.png', height: 44)),
                     const SizedBox(height: 16),
                     Text(
-                      s.openBotTitle,
+                      widget.renew ? s.subscriptionExpiredTitle : s.openBotTitle,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: AppColors.textPrimary,
@@ -109,16 +122,16 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      s.openBotSubtitle,
+                      widget.renew ? s.subscriptionExpiredSubtitle : s.openBotSubtitle,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.35),
                     ),
                     const SizedBox(height: 20),
 
-                    // PRIMARY CTA for a first-time device: free 3-day trial —
-                    // the main way a store user gets online without Telegram.
-                    // Shown only while the device is still trial-eligible.
-                    if (auth.trialAvailable) ...[
+                    // PRIMARY CTA for a first-time device: free trial — the main
+                    // way a store user gets online without Telegram. Hidden in
+                    // renew mode (a lapsed subscriber isn't trial-eligible).
+                    if (!widget.renew && auth.trialAvailable) ...[
                       FilledButton.icon(
                         onPressed: auth.trialBusy ? null : () => _startTrial(s),
                         style: FilledButton.styleFrom(
@@ -161,7 +174,7 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     ] else ...[
                       // Telegram / pairing. Primary (filled) when no trial
                       // button sits above it, otherwise a secondary outline.
-                      _telegramButton(s, primary: !auth.trialAvailable),
+                      _telegramButton(s, primary: widget.renew || !auth.trialAvailable),
                       const SizedBox(height: 12),
                       _CrossDeviceBlock(code: code, uri: auth.telegramPairUri!, hint: s.pairingScanHint),
                       const SizedBox(height: 10),
@@ -179,6 +192,27 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                             style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                           ),
                         ],
+                      ),
+                    ],
+
+                    // In renew mode, let the user re-check after renewing in
+                    // Telegram (resume also auto-refreshes).
+                    if (widget.renew) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: _checking ? null : _checkAgain,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.accent,
+                          side: const BorderSide(color: AppColors.accent),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        child: _checking
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                              )
+                            : Text(s.checkAgain, style: const TextStyle(fontWeight: FontWeight.w700)),
                       ),
                     ],
 

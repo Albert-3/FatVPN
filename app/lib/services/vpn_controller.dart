@@ -16,7 +16,8 @@ class VpnController extends ChangeNotifier {
     required this.connectionSettings,
     ApiClient? apiClient,
     PingService? pingService,
-  })  : _apiClient = apiClient ?? ApiClient(),
+    Future<String?> Function()? onUnauthorized,
+  })  : _apiClient = apiClient ?? ApiClient(onUnauthorized: onUnauthorized),
         _pingService = pingService ?? PingService();
 
   final ConnectionSettingsController connectionSettings;

@@ -23,7 +23,7 @@ class FatVpnApp extends StatefulWidget {
   State<FatVpnApp> createState() => _FatVpnAppState();
 }
 
-class _FatVpnAppState extends State<FatVpnApp> {
+class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   final _auth = AuthController();
   final _locale = LocaleController();
   final _connectionSettings = ConnectionSettingsController();
@@ -31,13 +31,24 @@ class _FatVpnAppState extends State<FatVpnApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _auth.start();
     _locale.load();
     _connectionSettings.load();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // On resume, refresh the session so an extended (or lapsed) subscription is
+    // reflected — e.g. the user renewed in Telegram and came back.
+    if (state == AppLifecycleState.resumed) {
+      _auth.refreshOnResume();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _auth.dispose();
     _locale.dispose();
     _connectionSettings.dispose();
@@ -70,8 +81,13 @@ class _FatVpnAppState extends State<FatVpnApp> {
                 ),
               );
             }
-            if (!_auth.isAuthenticated) {
+            if (!_auth.isLoggedIn) {
               return AwaitingAuthScreen(auth: _auth);
+            }
+            if (!_auth.subscriptionActive) {
+              // Logged in but the subscription has lapsed — prompt to renew
+              // instead of dropping back to the trial/onboarding flow.
+              return AwaitingAuthScreen(auth: _auth, renew: true);
             }
             return HomeScreen(
               auth: _auth,

@@ -31,9 +31,12 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _apiClient = ApiClient();
+  late final _apiClient = ApiClient(
+    onUnauthorized: widget.auth.ensureFreshAccessToken,
+  );
   late final _vpn = VpnController(
     connectionSettings: widget.connectionSettings,
+    onUnauthorized: widget.auth.ensureFreshAccessToken,
   );
   final _pingService = PingService();
 
@@ -106,6 +109,13 @@ class _HomeScreenState extends State<HomeScreen> {
         unawaited(_autoConnect());
       }
     } on ApiException catch (e) {
+      // 402 = subscription lapsed. Drop the tunnel and route to the renew
+      // screen via the auth gate instead of showing a servers error.
+      if (e.statusCode == 402) {
+        unawaited(_vpn.disconnect());
+        widget.auth.notifyExpired();
+        return;
+      }
       setState(() {
         _serversError = e.message;
         _loadingServers = false;
@@ -161,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => ChooseLocationScreen(
           initialServers: _servers,
           accessToken: widget.auth.session!.accessToken,
+          onUnauthorized: widget.auth.ensureFreshAccessToken,
           selectedCountry:
               _serverExplicitlySelected ? _selectedServer?.country : null,
         ),

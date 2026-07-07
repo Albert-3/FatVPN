@@ -60,6 +60,10 @@ class Strings {
     required this.trialAlreadyUsed,
     required this.trialNoCapacity,
     required this.trialFailed,
+    required this.subscriptionExpiredTitle,
+    required this.subscriptionExpiredSubtitle,
+    required this.renewViaTelegram,
+    required this.checkAgain,
     required this.splitTunneling,
     required this.appsBypassVpn,
     required this.selectedInList,
@@ -132,6 +136,10 @@ class Strings {
   final String trialAlreadyUsed;
   final String trialNoCapacity;
   final String trialFailed;
+  final String subscriptionExpiredTitle;
+  final String subscriptionExpiredSubtitle;
+  final String renewViaTelegram;
+  final String checkAgain;
 
   final String splitTunneling;
   final String appsBypassVpn;
@@ -218,6 +226,10 @@ const Strings enStrings = Strings(
   trialAlreadyUsed: 'A trial was already used on this device.',
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
+  subscriptionExpiredTitle: 'Subscription expired',
+  subscriptionExpiredSubtitle: 'Renew in Telegram to keep using FatVPN — the app reconnects automatically once your subscription is active again.',
+  renewViaTelegram: 'Renew via Telegram',
+  checkAgain: 'I renewed — check again',
   splitTunneling: 'Split tunneling',
   appsBypassVpn: 'Apps that bypass the VPN',
   selectedInList: 'SELECTED IN LIST',
@@ -292,6 +304,10 @@ final Strings ruStrings = Strings(
   trialAlreadyUsed: 'Пробный период уже был использован на этом устройстве.',
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
+  subscriptionExpiredTitle: 'Подписка истекла',
+  subscriptionExpiredSubtitle: 'Продлите подписку в Telegram, чтобы продолжить пользоваться FatVPN — приложение переподключится автоматически, как только подписка снова станет активной.',
+  renewViaTelegram: 'Продлить через Telegram',
+  checkAgain: 'Я продлил — обновить',
   splitTunneling: 'Раздельное туннелирование',
   appsBypassVpn: 'Приложения, которые обходят VPN',
   selectedInList: 'ВЫБРАНО В СПИСКЕ',

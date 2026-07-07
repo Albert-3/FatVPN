@@ -20,12 +20,71 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient, String? baseUrl})
-      : _httpClient = httpClient ?? http.Client(),
-        _baseUrl = baseUrl ?? bffBaseUrl;
+  ApiClient({
+    http.Client? httpClient,
+    String? baseUrl,
+    Future<String?> Function()? onUnauthorized,
+  })  : _httpClient = httpClient ?? http.Client(),
+        _baseUrl = baseUrl ?? bffBaseUrl,
+        // ignore: prefer_initializing_formals -- private field, public param name
+        _onUnauthorized = onUnauthorized;
 
   final http.Client _httpClient;
   final String _baseUrl;
+
+  /// Called when an authed request gets a 401 (expired access token). Should
+  /// return a fresh access token (via `/auth/refresh`) so the request can be
+  /// retried once, or null if the session can't be renewed.
+  final Future<String?> Function()? _onUnauthorized;
+
+  /// GET with a Bearer token that transparently refreshes the access token once
+  /// on 401 and retries. 402 (lapsed subscription) is left for the caller to
+  /// surface — it is not an auth failure.
+  Future<http.Response> _authedGet(String path, String accessToken) async {
+    final uri = Uri.parse('$_baseUrl$path');
+    var response =
+        await _httpClient.get(uri, headers: {'Authorization': 'Bearer $accessToken'});
+    if (response.statusCode == 401 && _onUnauthorized != null) {
+      final fresh = await _onUnauthorized();
+      if (fresh != null) {
+        response =
+            await _httpClient.get(uri, headers: {'Authorization': 'Bearer $fresh'});
+      }
+    }
+    return response;
+  }
+
+  /// Exchanges a refresh token for a fresh session (rotating the refresh token).
+  Future<AuthSession> refreshSession(String refreshToken) async {
+    final response = await _httpClient
+        .post(
+          Uri.parse('$_baseUrl/auth/refresh'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'refreshToken': refreshToken}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to refresh session', statusCode: response.statusCode);
+    }
+
+    return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Best-effort refresh-token revocation on sign-out. Never throws.
+  Future<void> logout(String refreshToken) async {
+    try {
+      await _httpClient
+          .post(
+            Uri.parse('$_baseUrl/auth/logout'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'refreshToken': refreshToken}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Revocation is best-effort; the token still expires on its own.
+    }
+  }
 
   Future<AuthSession> exchangeToken(String shortToken) async {
     final response = await _httpClient.post(
@@ -93,10 +152,7 @@ class ApiClient {
   }
 
   Future<List<ServerCountry>> getServers(String accessToken) async {
-    final response = await _httpClient.get(
-      Uri.parse('$_baseUrl/servers'),
-      headers: {'Authorization': 'Bearer $accessToken'},
-    );
+    final response = await _authedGet('/servers', accessToken);
 
     if (response.statusCode != 200) {
       throw ApiException('Failed to load servers', statusCode: response.statusCode);
@@ -141,10 +197,7 @@ class ApiClient {
   }
 
   Future<AccountStatus> getMe(String accessToken) async {
-    final response = await _httpClient.get(
-      Uri.parse('$_baseUrl/me'),
-      headers: {'Authorization': 'Bearer $accessToken'},
-    );
+    final response = await _authedGet('/me', accessToken);
 
     if (response.statusCode != 200) {
       throw ApiException('Failed to load account status', statusCode: response.statusCode);
@@ -154,10 +207,7 @@ class ApiClient {
   }
 
   Future<(String content, String contentType)> getConfig(String accessToken) async {
-    final response = await _httpClient.get(
-      Uri.parse('$_baseUrl/config'),
-      headers: {'Authorization': 'Bearer $accessToken'},
-    );
+    final response = await _authedGet('/config', accessToken);
 
     if (response.statusCode != 200) {
       throw ApiException('Failed to load config', statusCode: response.statusCode);

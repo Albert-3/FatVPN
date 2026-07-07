@@ -26,7 +26,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _apiClient = ApiClient();
+  late final _apiClient = ApiClient(
+    onUnauthorized: widget.auth.ensureFreshAccessToken,
+  );
 
   AccountStatus? _accountStatus;
   bool _loading = true;

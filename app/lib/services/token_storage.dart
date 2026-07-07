@@ -9,6 +9,7 @@ class TokenStorage {
       : _storage = storage ?? const FlutterSecureStorage();
 
   static const _accessTokenKey = 'access_token';
+  static const _refreshTokenKey = 'refresh_token';
   static const _expiresAtKey = 'access_token_expires_at';
   static const _deviceKeyKey = 'device_attestation_key';
   static const _autoTrialKey = 'auto_trial_attempted';
@@ -42,6 +43,7 @@ class TokenStorage {
 
   Future<void> save(AuthSession session) async {
     await _storage.write(key: _accessTokenKey, value: session.accessToken);
+    await _storage.write(key: _refreshTokenKey, value: session.refreshToken);
     await _storage.write(
       key: _expiresAtKey,
       value: session.expiresAt.toIso8601String(),
@@ -56,12 +58,14 @@ class TokenStorage {
     }
     return AuthSession(
       accessToken: accessToken,
+      refreshToken: await _storage.read(key: _refreshTokenKey) ?? '',
       expiresAt: DateTime.parse(expiresAtRaw),
     );
   }
 
   Future<void> clear() async {
     await _storage.delete(key: _accessTokenKey);
+    await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _expiresAtKey);
   }
 }

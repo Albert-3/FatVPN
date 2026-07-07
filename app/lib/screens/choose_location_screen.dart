@@ -25,10 +25,14 @@ class ChooseLocationScreen extends StatefulWidget {
     required this.accessToken,
     this.initialServers = const [],
     this.selectedCountry,
+    this.onUnauthorized,
   });
 
   final String accessToken;
   final List<ServerCountry> initialServers;
+
+  /// Refreshes the access token on a 401 (passed through to [ApiClient]).
+  final Future<String?> Function()? onUnauthorized;
 
   /// Country code currently active, or null when "best server" (auto) is active
   /// — used to highlight the current choice.
@@ -39,7 +43,7 @@ class ChooseLocationScreen extends StatefulWidget {
 }
 
 class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
-  final _apiClient = ApiClient();
+  late final _apiClient = ApiClient(onUnauthorized: widget.onUnauthorized);
   final _pingService = PingService();
 
   late List<ServerCountry> _servers = widget.initialServers;
