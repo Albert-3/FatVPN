@@ -16,6 +16,7 @@ namespace FatVpn.Bff.Api.Controllers;
 public class TrialController(
     FatVpnDbContext db,
     IJwtTokenService jwtTokenService,
+    IRefreshTokenService refreshTokenService,
     IRemnawaveClient remnawaveClient,
     IOptions<TrialOptions> trialOptions,
     ILogger<TrialController> logger) : ControllerBase
@@ -77,10 +78,13 @@ public class TrialController(
             ExpiresAt = created.ExpiresAt,
         });
 
+        var accessToken = jwtTokenService.CreateAccessToken(token);
+        var (refreshRaw, refreshEntity) = refreshTokenService.Create(accountId: null, tokenId: token.Id);
+        db.RefreshTokens.Add(refreshEntity);
+
         await db.SaveChangesAsync(ct);
 
-        var accessToken = jwtTokenService.CreateAccessToken(token);
-        return Ok(new { accessToken, expiresAt = created.ExpiresAt });
+        return Ok(new { accessToken, refreshToken = refreshRaw, expiresAt = created.ExpiresAt });
     }
 
     private static string ComputeDeviceKeyHash(string attestationToken, string salt)

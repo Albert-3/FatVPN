@@ -26,6 +26,7 @@ builder.Services.Configure<BotOptions>(builder.Configuration.GetSection("Bot"));
 builder.Services.Configure<TrialOptions>(builder.Configuration.GetSection("Trial"));
 
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 builder.Services.AddHttpClient<IRemnawaveClient, RemnawaveClient>((sp, client) =>
 {
     var remnawaveOptions = sp.GetRequiredService<IOptions<RemnawaveOptions>>().Value;

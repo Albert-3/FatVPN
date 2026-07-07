@@ -11,6 +11,7 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
     public DbSet<TrialSubscriptionSlot> TrialSubscriptionSlots => Set<TrialSubscriptionSlot>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<PairingCode> PairingCodes => Set<PairingCode>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -20,5 +21,6 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
         modelBuilder.Entity<Account>().HasIndex(a => a.TelegramUserId).IsUnique();
         modelBuilder.Entity<PairingCode>().HasIndex(p => p.Code).IsUnique();
         modelBuilder.Entity<PairingCode>().HasIndex(p => p.PollToken).IsUnique();
+        modelBuilder.Entity<RefreshToken>().HasIndex(r => r.TokenHash).IsUnique();
     }
 }

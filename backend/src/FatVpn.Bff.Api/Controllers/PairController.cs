@@ -9,7 +9,10 @@ namespace FatVpn.Bff.Api.Controllers;
 
 [ApiController]
 [Route("pair")]
-public class PairController(FatVpnDbContext db, IJwtTokenService jwtTokenService) : ControllerBase
+public class PairController(
+    FatVpnDbContext db,
+    IJwtTokenService jwtTokenService,
+    IRefreshTokenService refreshTokenService) : ControllerBase
 {
     private static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(15);
 
@@ -72,7 +75,11 @@ public class PairController(FatVpnDbContext db, IJwtTokenService jwtTokenService
             }
 
             var accessToken = jwtTokenService.CreateAccessTokenForAccount(account);
-            return Ok(new { status = "completed", accessToken, expiresAt = account.ExpiresAt });
+            var (refreshRaw, refreshEntity) = refreshTokenService.Create(account.Id, tokenId: null);
+            db.RefreshTokens.Add(refreshEntity);
+            await db.SaveChangesAsync(ct);
+
+            return Ok(new { status = "completed", accessToken, refreshToken = refreshRaw, expiresAt = account.ExpiresAt });
         }
 
         if (pairing.ExpiresAt <= DateTimeOffset.UtcNow)
