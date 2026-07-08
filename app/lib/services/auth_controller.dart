@@ -68,7 +68,7 @@ class AuthController extends ChangeNotifier {
   }
 
   /// Whether this device is still eligible for a free trial (hasn't used one
-  /// yet). Drives whether the onboarding shows the "3 days free" button — a
+  /// yet). Drives whether the onboarding shows the "2 days free" button — a
   /// device that already had its trial only sees the Telegram / key options.
   bool get trialAvailable => _trialAvailable;
 
