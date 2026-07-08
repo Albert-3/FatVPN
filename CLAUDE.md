@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. The Android app is feature-complete and device-tested: pairing onboarding, on-the-fly trial, real sing-box VPN tunnel, split tunneling, live server ranking, EN/RU. Auth uses an access+refresh token split with a "subscription expired → renew" screen (e2e-verified on emulator 2026-07-08). See `docs/app-bff-integration.md` for the full status log and what's left (chiefly: trial reinstall anti-abuse, HTTPS+domain/prod migration, iOS tunnel). Work lives on branch `feat/pairing-onboarding` (not yet merged to `master`).
+FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot) fronting a **Remnawave** VPN panel. The Android app is feature-complete and device-tested: pairing onboarding, on-the-fly trial (2 days, `Trial:DurationDays`), real sing-box VPN tunnel, split tunneling, live server ranking, local expiry reminders (client-scheduled `flutter_local_notifications`, no FCM), EN/RU. Auth uses an access+refresh token split with a "subscription expired → renew" screen (e2e-verified on emulator 2026-07-08). See `docs/app-bff-integration.md` for the full status log and what's left (chiefly: trial reinstall anti-abuse, HTTPS+domain/prod migration, iOS tunnel). Work landed on branch `feat/pairing-onboarding` and is **merged into `master`** (fast-forward, 2026-07-09).
 
 ## Commands
 
