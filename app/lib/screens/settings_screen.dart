@@ -38,8 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _customDnsController =
-        TextEditingController(text: widget.connectionSettings.customDns);
+    _customDnsController = TextEditingController(
+      text: widget.connectionSettings.customDns,
+    );
     _loadAccountStatus();
   }
 
@@ -106,119 +107,209 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             _buildHeader(context, s),
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Stack(
                 children: [
-                  _sectionTitle(s.manageAccount),
-                  _card(children: [_buildAccountStatus(s)]),
-                  _sectionTitle(s.connectionSettings),
-                  AnimatedBuilder(
-                    animation: widget.connectionSettings,
-                    builder: (context, _) {
-                      final cs = widget.connectionSettings;
-                      final isCustomDns = cs.dnsPreset == DnsProviderPreset.custom;
-                      return _card(
-                        children: [
-                          _pickerRow(
-                            s.dnsServer,
-                            isCustomDns && cs.customDns.isNotEmpty
-                                ? cs.customDns
-                                : _dnsLabel(cs.dnsPreset),
-                            () => _showDnsPicker(s),
-                          ),
-                          if (isCustomDns) ...[
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _customDnsController,
-                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
-                              autocorrect: false,
-                              enableSuggestions: false,
-                              keyboardType: TextInputType.url,
-                              onChanged: cs.setCustomDns,
-                              decoration: InputDecoration(
-                                isDense: true,
-                                hintText: s.customDnsHint,
-                                hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                                filled: true,
-                                fillColor: AppColors.background,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide.none,
-                                ),
-                              ),
-                            ),
-                          ],
-                          const Divider(color: AppColors.disabled, height: 24),
-                          _pickerRow(
-                            s.networkStack,
-                            _stackLabel(cs.networkStack),
-                            () => _showStackPicker(s),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6, left: 4),
-                    child: Text(
-                      s.appliesOnNextConnection,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                  _sectionTitle(s.routing),
-                  _card(
+                  ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 96),
                     children: [
-                      InkWell(
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => SplitTunnelingScreen(
-                              connectionSettings: widget.connectionSettings,
-                            ),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    s.splitTunnelingSettings,
-                                    style: const TextStyle(
-                                      color: AppColors.textPrimary,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                      _sectionTitle(s.manageAccount),
+                      _card(children: [_buildAccountStatus(s)]),
+                      _sectionTitle(s.connectionSettings),
+                      AnimatedBuilder(
+                        animation: widget.connectionSettings,
+                        builder: (context, _) {
+                          final cs = widget.connectionSettings;
+                          final isCustomDns =
+                              cs.dnsPreset == DnsProviderPreset.custom;
+                          return _card(
+                            children: [
+                              _pickerRow(
+                                s.dnsServer,
+                                isCustomDns && cs.customDns.isNotEmpty
+                                    ? cs.customDns
+                                    : _dnsLabel(cs.dnsPreset),
+                                () => _showDnsPicker(s),
+                              ),
+                              if (isCustomDns) ...[
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _customDnsController,
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 14,
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    s.splitTunnelingSubtitle,
-                                    style: const TextStyle(
+                                  autocorrect: false,
+                                  enableSuggestions: false,
+                                  keyboardType: TextInputType.url,
+                                  onChanged: cs.setCustomDns,
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    hintText: s.customDnsHint,
+                                    hintStyle: const TextStyle(
                                       color: AppColors.textSecondary,
                                       fontSize: 12,
                                     ),
+                                    filled: true,
+                                    fillColor: AppColors.background,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                      borderSide: BorderSide.none,
+                                    ),
                                   ),
-                                ],
+                                ),
+                              ],
+                              const Divider(
+                                color: AppColors.disabled,
+                                height: 24,
+                              ),
+                              _pickerRow(
+                                s.networkStack,
+                                _stackLabel(cs.networkStack),
+                                () => _showStackPicker(s),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6, left: 4),
+                        child: Text(
+                          s.appliesOnNextConnection,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      _sectionTitle(s.routing),
+                      _card(
+                        children: [
+                          InkWell(
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => SplitTunnelingScreen(
+                                  connectionSettings: widget.connectionSettings,
+                                ),
                               ),
                             ),
-                            const Icon(
-                              Icons.chevron_right,
-                              color: AppColors.textSecondary,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        s.splitTunnelingSettings,
+                                        style: const TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        s.splitTunnelingSubtitle,
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
+                      ),
+                      _sectionTitle(s.system),
+                      _card(children: [_buildLanguageRow(s, locale)]),
+                      _sectionTitle(s.logsManagement),
+                      _card(
+                        children: [
+                          Text(
+                            s.applicationLogs,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            s.shareDiagnostics,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {},
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.textPrimary,
+                                    side: const BorderSide(
+                                      color: AppColors.disabled,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: Text(s.clear),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {},
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppColors.accent,
+                                    foregroundColor: AppColors.background,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    s.send,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  _sectionTitle(s.system),
-                  _card(children: [_buildLanguageRow(s, locale)]),
-                  _sectionTitle(s.account),
-                  _card(
-                    children: [
-                      SizedBox(
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+                      decoration: const BoxDecoration(
+                        color: AppColors.background,
+                        border: Border(
+                          top: BorderSide(color: AppColors.disabled),
+                        ),
+                      ),
+                      child: SizedBox(
                         width: double.infinity,
                         child: OutlinedButton(
                           onPressed: () async {
@@ -238,73 +329,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           child: Text(s.signOut),
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                  _sectionTitle(s.logsManagement),
-                  _card(
-                    children: [
-                      Text(
-                        s.applicationLogs,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        s.shareDiagnostics,
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () {},
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.textPrimary,
-                                side: const BorderSide(
-                                  color: AppColors.disabled,
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: Text(s.clear),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () {},
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.accent,
-                                foregroundColor: AppColors.background,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: Text(
-                                s.send,
-                                style: const TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -321,7 +347,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: SizedBox(
           height: 20,
           width: 20,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.accent,
+          ),
         ),
       );
     }
@@ -329,7 +358,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return Row(
         children: [
           Expanded(
-            child: Text(_error!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+            child: Text(
+              _error!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
           ),
           TextButton(onPressed: _loadAccountStatus, child: Text(s.retry)),
         ],
@@ -436,7 +468,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         color: AppColors.card,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
     );
   }
 
@@ -448,12 +483,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 15,
+              ),
             ),
           ),
           Text(
             value,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 14,
+            ),
           ),
           const SizedBox(width: 4),
           const Icon(

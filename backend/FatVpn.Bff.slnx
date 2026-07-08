@@ -4,4 +4,7 @@
     <Project Path="src/FatVpn.Bff.Domain/FatVpn.Bff.Domain.csproj" />
     <Project Path="src/FatVpn.Bff.Infrastructure/FatVpn.Bff.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj" />
+  </Folder>
 </Solution>

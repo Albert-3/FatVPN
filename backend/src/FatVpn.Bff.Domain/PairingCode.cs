@@ -4,6 +4,11 @@ public enum PairingStatus
 {
     Pending = 0,
     Completed = 1,
+
+    /// <summary>The app has polled once after completion and received its session
+    /// tokens. Terminal: the code is single-use, so a later poll can't re-mint a
+    /// session (which would accumulate refresh tokens and hand out parallel logins).</summary>
+    Consumed = 2,
 }
 
 /// <summary>

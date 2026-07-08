@@ -1,3 +1,4 @@
+using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
 using Microsoft.AspNetCore.Mvc;
@@ -39,8 +40,21 @@ public class AuthController(
         var now = DateTimeOffset.UtcNow;
         var hash = refreshTokenService.Hash(request.RefreshToken);
         var stored = await db.RefreshTokens.SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
-        if (stored is null || !stored.IsActive(now))
+        if (stored is null)
         {
+            return Unauthorized();
+        }
+
+        if (!stored.IsActive(now))
+        {
+            // A revoked-but-unexpired token being presented means an already-rotated
+            // (or logged-out) secret is in play — likely a stolen/replayed token.
+            // Revoke the whole session family so the thief and the victim both have
+            // to re-pair, rather than letting the attacker keep refreshing.
+            if (stored.RevokedAt is not null)
+            {
+                await RevokeFamilyAsync(stored, now, ct);
+            }
             return Unauthorized();
         }
 
@@ -95,6 +109,28 @@ public class AuthController(
         }
 
         return NoContent();
+    }
+
+    /// <summary>Revokes every still-active refresh token belonging to the same
+    /// session identity (account or legacy token) as <paramref name="member"/>.
+    /// Used on detected token reuse to invalidate a possibly-compromised family.</summary>
+    private async Task RevokeFamilyAsync(RefreshToken member, DateTimeOffset now, CancellationToken ct)
+    {
+        var family = await db.RefreshTokens
+            .Where(r => r.RevokedAt == null
+                && ((member.AccountId != null && r.AccountId == member.AccountId)
+                    || (member.TokenId != null && r.TokenId == member.TokenId)))
+            .ToListAsync(ct);
+
+        foreach (var token in family)
+        {
+            token.RevokedAt = now;
+        }
+
+        if (family.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
     }
 }
 

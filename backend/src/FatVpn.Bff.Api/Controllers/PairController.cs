@@ -24,12 +24,21 @@ public class PairController(
 
         string code;
         var attempts = 0;
+        bool collides;
         do
         {
             code = PairingCodeGenerator.NewCode();
             attempts++;
+            collides = await db.PairingCodes.AnyAsync(p => p.Code == code, ct);
         }
-        while (await db.PairingCodes.AnyAsync(p => p.Code == code, ct) && attempts < 5);
+        while (collides && attempts < 5);
+
+        if (collides)
+        {
+            // Five straight collisions is astronomically unlikely (32^8 space); if it
+            // happens, fail loudly rather than insert a dup and hit the unique index.
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
 
         var pairing = new PairingCode
         {
@@ -77,12 +86,16 @@ public class PairController(
             var accessToken = jwtTokenService.CreateAccessTokenForAccount(account);
             var (refreshRaw, refreshEntity) = refreshTokenService.Create(account.Id, tokenId: null);
             db.RefreshTokens.Add(refreshEntity);
+            // Single-use: burn the code so a repeated poll can't mint another session.
+            pairing.Status = PairingStatus.Consumed;
             await db.SaveChangesAsync(ct);
 
             return Ok(new { status = "completed", accessToken, refreshToken = refreshRaw, expiresAt = account.ExpiresAt });
         }
 
-        if (pairing.ExpiresAt <= DateTimeOffset.UtcNow)
+        // Already delivered (or expired): the app captured its tokens on the first
+        // "completed" and stopped polling; anything else must re-pair.
+        if (pairing.Status == PairingStatus.Consumed || pairing.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             return Ok(new { status = "expired" });
         }

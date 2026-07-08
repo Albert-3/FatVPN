@@ -27,12 +27,17 @@ public static class SubscriptionResolver
             var account = await db.Accounts.FindAsync([accountId.Value], ct);
             return account is null
                 ? null
-                : new SubscriptionInfo(account.ExpiresAt, account.CurrentSubscriptionId);
+                : new SubscriptionInfo(account.ExpiresAt, NullIfEmpty(account.CurrentSubscriptionId));
         }
 
         var token = await db.Tokens.FindAsync([user.GetTokenId()], ct);
         return token is null
             ? null
-            : new SubscriptionInfo(token.ExpiresAt, token.RemnawaveSubscriptionId);
+            : new SubscriptionInfo(token.ExpiresAt, NullIfEmpty(token.RemnawaveSubscriptionId));
     }
+
+    // Subscription ids default to "" on a freshly-created row; treat that as "no
+    // subscription yet" so /config returns 401 instead of proxying an empty id.
+    private static string? NullIfEmpty(string value) =>
+        string.IsNullOrEmpty(value) ? null : value;
 }

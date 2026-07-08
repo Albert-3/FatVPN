@@ -16,7 +16,10 @@ public class MeController(FatVpnDbContext db) : ControllerBase
         var subscription = await db.ResolveSubscriptionAsync(User, ct);
         if (subscription is null)
         {
-            return NotFound();
+            // Token is valid but resolves to no session (account/token row gone).
+            // Same 401 as /servers and /config so the app treats "session vanished"
+            // uniformly and re-authenticates.
+            return Unauthorized();
         }
 
         var status = subscription.IsActive ? "active" : "expired";

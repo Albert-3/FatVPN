@@ -27,8 +27,9 @@ public class InternalPairController(FatVpnDbContext db, IOptions<BotOptions> bot
             return NotFound();
         }
 
-        if (pairing.Status == PairingStatus.Completed)
+        if (pairing.Status != PairingStatus.Pending)
         {
+            // Already completed or consumed — a code binds exactly one account, once.
             return Conflict();
         }
 
