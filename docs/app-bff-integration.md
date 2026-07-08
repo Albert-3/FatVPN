@@ -432,7 +432,16 @@ one-tap quick-connect (тап = подключение/переключение,
   туннель и уходит на renew.
 - **Настройки:** access 30 мин, refresh 90 дней (`Jwt:AccessTokenLifetime`/
   `Jwt:RefreshTokenLifetime` в `appsettings.json`).
-- `flutter analyze` — чисто. **Runtime e2e на устройстве/эмуляторе — ещё не прогнан.**
+
+**✅ E2E пройден на эмуляторе (2026-07-08):** login (deep-link) → Home; cold-start →
+`/auth/refresh` с ротацией, вход сохранён без re-pairing; истечение подписки → экран
+«Подписка истекла»; продление → Home (silent renew, полный цикл); быстрый cold-start.
+**Найдены и починены 3 дефекта (коммит `6a4ffc4`):** (1) deep-link/ручной ключ крашились
+`unknown-route`-ассертом (Flutter обрабатывал deep link параллельно с app_links) →
+`flutter_deeplinking_enabled=false` в манифесте; (2) `exchangeShortToken` залипал на
+онбординге при зависшем Keystore (ждал `save()` до `notifyListeners()`) → переход
+первым, save best-effort; (3) cold-start блокировал первый кадр на refresh → refresh
+в фоне + коалесценция общим Future.
 
 Контракт — см. `docs/api-contract.md` (раздел «Модель токенов»).
 
