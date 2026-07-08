@@ -23,6 +23,13 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- Deep links are handled manually by the app_links plugin
+                 (AuthController). Disable Flutter's built-in deep-link routing so
+                 it doesn't try to pushNamed the URI path and crash with an
+                 unknown-route assertion. -->
+            <meta-data
+              android:name="flutter_deeplinking_enabled"
+              android:value="false" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

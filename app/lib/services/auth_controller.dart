@@ -27,8 +27,10 @@ class AuthController extends ChangeNotifier {
   bool _initializing = true;
   String? _error;
   bool _subscriptionExpired = false;
-  DateTime? _lastRefresh;
-  bool _refreshInFlight = false;
+  // Shared in-flight refresh so concurrent callers (cold-start refresh, a 401
+  // retry, a resume tick) coalesce into one rotation and all get the same fresh
+  // token, instead of racing and double-rotating.
+  Future<String?>? _refreshFuture;
 
   PairingStart? _pairing;
   Timer? _pollTimer;
@@ -84,17 +86,19 @@ class AuthController extends ChangeNotifier {
     final stored = await _tokenStorage.read();
     if (stored != null) {
       _session = stored;
-      // The access token is short-lived (~30 min) so a stored one is usually
-      // stale on a cold start; refresh proactively. A refresh also pulls the
-      // current subscription expiry, so a lapse is caught here too.
-      if (stored.hasRefreshToken) {
-        await _refreshNow();
-      }
     }
     // Trial button shows only for a device that hasn't used its trial yet.
     _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
     _initializing = false;
     notifyListeners();
+
+    // Refresh in the background — never block the first frame on the network.
+    // The gate shows Home/renew from the stored expiry immediately; the refresh
+    // rotates the token and corrects the expiry (extension or lapse) when it
+    // lands. A slow or unreachable BFF can no longer strand the app on a loader.
+    if (stored != null && stored.hasRefreshToken) {
+      unawaited(_refreshNow());
+    }
 
     _linkSubscription = _appLinks.uriLinkStream.listen(_handleUri);
     final initialUri = await _appLinks.getInitialLink();
@@ -104,14 +108,9 @@ class AuthController extends ChangeNotifier {
   }
 
   /// Callback for [ApiClient]: returns a freshly-refreshed access token on 401,
-  /// or null if the session can't be renewed. Dedupes bursts so several 401s in
-  /// quick succession trigger a single refresh (and one rotation).
-  Future<String?> ensureFreshAccessToken() async {
-    if (_session == null) return null;
-    if (_lastRefresh != null &&
-        DateTime.now().difference(_lastRefresh!) < const Duration(seconds: 5)) {
-      return _session!.accessToken;
-    }
+  /// or null if the session can't be renewed.
+  Future<String?> ensureFreshAccessToken() {
+    if (_session == null) return Future.value(null);
     return _refreshNow();
   }
 
@@ -122,22 +121,25 @@ class AuthController extends ChangeNotifier {
     await _refreshNow();
   }
 
+  /// Coalesces concurrent refreshes onto one in-flight call.
+  Future<String?> _refreshNow() {
+    return _refreshFuture ??=
+        _doRefresh().whenComplete(() => _refreshFuture = null);
+  }
+
   /// Exchanges the stored refresh token for a fresh session. Updates expiry (so
   /// [subscriptionActive] recomputes) and persists. Signs out on a hard 401
   /// (revoked/unknown refresh token); leaves the session intact on a network
   /// blip so a later call can retry.
-  Future<String?> _refreshNow() async {
+  Future<String?> _doRefresh() async {
     final refreshToken = _session?.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) {
       await signOut();
       return null;
     }
-    if (_refreshInFlight) return _session?.accessToken;
-    _refreshInFlight = true;
     try {
       final fresh = await _apiClient.refreshSession(refreshToken);
       _session = fresh;
-      _lastRefresh = DateTime.now();
       _subscriptionExpired = fresh.isExpired;
       notifyListeners();
       unawaited(_tokenStorage.save(fresh).catchError((_) {}));
@@ -149,8 +151,6 @@ class AuthController extends ChangeNotifier {
       return null;
     } catch (_) {
       return null;
-    } finally {
-      _refreshInFlight = false;
     }
   }
 
@@ -193,10 +193,13 @@ class AuthController extends ChangeNotifier {
     try {
       _error = null;
       final session = await _apiClient.exchangeToken(shortToken);
-      await _tokenStorage.save(session);
       _session = session;
       _subscriptionExpired = false;
+      // Transition the UI first; persistence is best-effort so a slow or hung
+      // secure-storage write (seen on emulators) can't strand the user on the
+      // onboarding screen — mirrors the pairing/trial paths.
       notifyListeners();
+      unawaited(_tokenStorage.save(session).catchError((_) {}));
     } on ApiException catch (e) {
       _error = e.message;
       notifyListeners();
@@ -314,7 +317,6 @@ class AuthController extends ChangeNotifier {
     await _tokenStorage.clear();
     _session = null;
     _subscriptionExpired = false;
-    _lastRefresh = null;
     notifyListeners();
   }
 
