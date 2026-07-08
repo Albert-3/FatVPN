@@ -7,6 +7,7 @@ import 'screens/home_screen.dart';
 import 'services/auth_controller.dart';
 import 'services/connection_settings_controller.dart';
 import 'services/locale_controller.dart';
+import 'services/notification_service.dart';
 import 'theme/app_colors.dart';
 
 void main() {
@@ -27,14 +28,29 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   final _auth = AuthController();
   final _locale = LocaleController();
   final _connectionSettings = ConnectionSettingsController();
+  final _notifications = NotificationService();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Re-plan local expiry reminders whenever the session (expiry) or the
+    // language changes. syncFor no-ops until init() completes, then the first
+    // sync runs once init resolves.
+    _auth.addListener(_syncNotifications);
+    _locale.addListener(_syncNotifications);
     _auth.start();
     _locale.load();
     _connectionSettings.load();
+    _notifications.init().then((_) => _syncNotifications());
+  }
+
+  void _syncNotifications() {
+    _notifications.syncFor(
+      _auth.session?.expiresAt,
+      _locale.strings,
+      _locale.language,
+    );
   }
 
   @override
@@ -49,6 +65,8 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _auth.removeListener(_syncNotifications);
+    _locale.removeListener(_syncNotifications);
     _auth.dispose();
     _locale.dispose();
     _connectionSettings.dispose();

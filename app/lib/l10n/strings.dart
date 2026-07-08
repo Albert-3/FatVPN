@@ -72,6 +72,10 @@ class Strings {
     required this.searchApps,
     required this.loadingApps,
     required this.splitTunnelDisabledHint,
+    required this.notifExpiringSoonTitle,
+    required this.notifExpiresInDays,
+    required this.notifExpiredTitle,
+    required this.notifExpiredBody,
   });
 
   final String notSignedIn;
@@ -149,6 +153,16 @@ class Strings {
   final String searchApps;
   final String loadingApps;
   final String splitTunnelDisabledHint;
+
+  /// Title of the "subscription ending soon" reminder notification.
+  final String notifExpiringSoonTitle;
+
+  /// Body of the reminder N days before expiry (handles pluralization).
+  final String Function(int days) notifExpiresInDays;
+
+  /// Title/body shown at the moment the subscription/trial has lapsed.
+  final String notifExpiredTitle;
+  final String notifExpiredBody;
 }
 
 String _ruPluralDays(int n) {
@@ -238,7 +252,15 @@ const Strings enStrings = Strings(
   searchApps: 'Search apps',
   loadingApps: 'Loading apps…',
   splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
+  notifExpiringSoonTitle: 'Subscription ending soon',
+  notifExpiresInDays: _enNotifExpiresInDays,
+  notifExpiredTitle: 'Subscription expired',
+  notifExpiredBody: 'Renew in Telegram to keep using FatVPN.',
 );
+
+String _enNotifExpiresInDays(int n) =>
+    'Your access expires in $n day${n == 1 ? '' : 's'}. '
+    'Renew in Telegram to stay connected.';
 
 String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
 String _enExpiresInHours(int n) => 'Expires in $n hour${n == 1 ? '' : 's'}';
@@ -316,6 +338,11 @@ final Strings ruStrings = Strings(
   searchApps: 'Поиск приложений',
   loadingApps: 'Загрузка приложений…',
   splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
+  notifExpiringSoonTitle: 'Подписка скоро закончится',
+  notifExpiresInDays: (n) =>
+      'Доступ истекает через $n ${_ruPluralDays(n)}. Продлите в Telegram, чтобы остаться на связи.',
+  notifExpiredTitle: 'Подписка истекла',
+  notifExpiredBody: 'Продлите в Telegram, чтобы продолжить пользоваться FatVPN.',
 );
 
 String _ruPluralServers(int n) {

@@ -40,6 +40,10 @@ dependencies:
   app_links: ^6.3.2
   url_launcher: ^6.3.1
   qr_flutter: ^4.1.0
+  # Local (client-scheduled) notifications for subscription/trial expiry
+  # reminders. No server/FCM — the app schedules them from the known expiry.
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
   # Git dependency (not pub.dev) to keep the x86_64 libbox.so used by the
   # Android emulator — the published pub.dev tarball ships arm64-v8a only.
   singbox_mm:
