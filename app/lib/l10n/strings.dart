@@ -20,6 +20,7 @@ class Strings {
     required this.language,
     required this.account,
     required this.signOut,
+    required this.contactSupport,
     required this.logsManagement,
     required this.applicationLogs,
     required this.shareDiagnostics,
@@ -99,6 +100,7 @@ class Strings {
   final String language;
   final String account;
   final String signOut;
+  final String contactSupport;
   final String logsManagement;
   final String applicationLogs;
   final String shareDiagnostics;
@@ -204,6 +206,7 @@ const Strings enStrings = Strings(
   language: 'Language',
   account: 'ACCOUNT',
   signOut: 'Sign out',
+  contactSupport: 'Contact support',
   logsManagement: 'LOGS MANAGEMENT',
   applicationLogs: 'Application logs',
   shareDiagnostics: 'Share diagnostics with support',
@@ -291,6 +294,7 @@ final Strings ruStrings = Strings(
   language: 'Язык',
   account: 'АККАУНТ',
   signOut: 'Выйти',
+  contactSupport: 'Написать в поддержку',
   logsManagement: 'УПРАВЛЕНИЕ ЛОГАМИ',
   applicationLogs: 'Логи приложения',
   shareDiagnostics: 'Поделиться диагностикой с поддержкой',

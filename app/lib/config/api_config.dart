@@ -15,3 +15,9 @@ const telegramBotUsername = 'testfatvpnnbot';
 /// `/start` handler as `pair<code>`.
 Uri telegramPairLink(String pairCode) =>
     Uri.parse('https://t.me/$telegramBotUsername?start=pair$pairCode');
+
+/// Telegram support handle opened from the settings screen (without `@`).
+const telegramSupportUsername = 'fatvpn_support';
+
+/// Builds the Telegram link to the support chat.
+Uri telegramSupportLink() => Uri.parse('https://t.me/$telegramSupportUsername');

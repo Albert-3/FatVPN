@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:singbox_mm/singbox_mm.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/api_config.dart';
 import '../l10n/app_localizations.dart';
@@ -86,6 +87,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   bool _sharingLogs = false;
+
+  Future<void> _openSupport() async {
+    await launchUrl(telegramSupportLink(), mode: LaunchMode.externalApplication);
+  }
 
   Future<void> _clearLogs(Strings s) async {
     await AppLogger.instance.clear();
@@ -374,25 +379,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           top: BorderSide(color: AppColors.disabled),
                         ),
                       ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          onPressed: () async {
-                            await widget.auth.signOut();
-                            if (context.mounted) {
-                              Navigator.of(context).popUntil((r) => r.isFirst);
-                            }
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.redAccent,
-                            side: const BorderSide(color: Colors.redAccent),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed: () async {
+                                await widget.auth.signOut();
+                                if (context.mounted) {
+                                  Navigator.of(context)
+                                      .popUntil((r) => r.isFirst);
+                                }
+                              },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.redAccent,
+                                side: const BorderSide(color: Colors.redAccent),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(s.signOut),
                             ),
                           ),
-                          child: Text(s.signOut),
-                        ),
+                          TextButton(
+                            onPressed: _openSupport,
+                            child: Text(
+                              '${s.contactSupport} · @$telegramSupportUsername',
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
