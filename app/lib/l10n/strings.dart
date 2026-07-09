@@ -25,6 +25,8 @@ class Strings {
     required this.shareDiagnostics,
     required this.clear,
     required this.send,
+    required this.logsCleared,
+    required this.noLogsToShare,
     required this.active,
     required this.expired,
     required this.expiresInDays,
@@ -102,6 +104,8 @@ class Strings {
   final String shareDiagnostics;
   final String clear;
   final String send;
+  final String logsCleared;
+  final String noLogsToShare;
   final String active;
   final String expired;
   final String Function(int days) expiresInDays;
@@ -205,6 +209,8 @@ const Strings enStrings = Strings(
   shareDiagnostics: 'Share diagnostics with support',
   clear: 'Clear',
   send: 'Send',
+  logsCleared: 'Logs cleared',
+  noLogsToShare: 'No logs to share yet',
   active: 'Active',
   expired: 'Expired',
   expiresInDays: _enExpiresInDays,
@@ -290,6 +296,8 @@ final Strings ruStrings = Strings(
   shareDiagnostics: 'Поделиться диагностикой с поддержкой',
   clear: 'Очистить',
   send: 'Отправить',
+  logsCleared: 'Логи очищены',
+  noLogsToShare: 'Пока нет логов для отправки',
   active: 'Активна',
   expired: 'Истекла',
   expiresInDays: (n) => 'Истекает через $n ${_ruPluralDays(n)}',

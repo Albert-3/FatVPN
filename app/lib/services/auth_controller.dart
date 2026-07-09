@@ -7,6 +7,7 @@ import '../config/api_config.dart';
 import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import 'api_client.dart';
+import 'app_logger.dart';
 import 'token_storage.dart';
 
 /// Owns the current [AuthSession] and keeps it updated from two sources:
@@ -86,6 +87,9 @@ class AuthController extends ChangeNotifier {
     final stored = await _tokenStorage.read();
     if (stored != null) {
       _session = stored;
+      log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
+    } else {
+      log.i('No stored session — starting onboarding');
     }
     // Trial button shows only for a device that hasn't used its trial yet.
     _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
@@ -146,10 +150,14 @@ class AuthController extends ChangeNotifier {
       return fresh.accessToken;
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
+        log.w('Refresh rejected (401) — signing out');
         await signOut();
+      } else {
+        log.w('Refresh failed (${e.statusCode}) — keeping session for retry');
       }
       return null;
-    } catch (_) {
+    } catch (err) {
+      log.w('Refresh network error — keeping session for retry ($err)');
       return null;
     }
   }
@@ -158,6 +166,7 @@ class AuthController extends ChangeNotifier {
   /// app to the renew screen. Cleared by a later successful refresh.
   void notifyExpired() {
     if (_subscriptionExpired) return;
+    log.w('Subscription reported lapsed (402) — routing to renew screen');
     _subscriptionExpired = true;
     notifyListeners();
   }
@@ -281,6 +290,7 @@ class AuthController extends ChangeNotifier {
       final status = await _apiClient.pollPairing(pairing.pollToken);
       switch (status.state) {
         case PairingState.completed:
+          log.i('Pairing completed — session established');
           _pollTimer?.cancel();
           _pollTimer = null;
           _pairing = null;
@@ -307,6 +317,7 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    log.i('Signing out');
     _pollTimer?.cancel();
     _pollTimer = null;
     _pairing = null;

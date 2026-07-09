@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
+import 'services/app_logger.dart';
 import 'services/auth_controller.dart';
 import 'services/connection_settings_controller.dart';
 import 'services/locale_controller.dart';
@@ -12,6 +14,22 @@ import 'theme/app_colors.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Open the on-disk log file early so the whole session is captured. Runs in
+  // the background — startup never blocks on it (lines buffer until it opens).
+  AppLogger.instance.init();
+  // Route framework and uncaught platform errors into the diagnostics log so
+  // they land in the support bundle instead of only the debug console. Both
+  // preserve default behaviour (rethrow / present the error) after logging.
+  final previousOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    log.e('FlutterError: ${details.exceptionAsString()}', null, details.stack);
+    previousOnError?.call(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    log.e('Uncaught platform error', error, stack);
+    return false;
+  };
+  log.i('App started (${kReleaseMode ? 'release' : 'debug'})');
   // Lock the app to portrait — the UI is designed for vertical phones only.
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const FatVpnApp());

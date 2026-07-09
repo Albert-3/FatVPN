@@ -5,6 +5,7 @@ import 'package:singbox_mm/singbox_mm.dart';
 
 import '../models/server_country.dart';
 import 'api_client.dart';
+import 'app_logger.dart';
 import 'connection_settings_controller.dart';
 import 'ping_service.dart';
 import 'vless_config_parser.dart';
@@ -88,6 +89,10 @@ class VpnController extends ChangeNotifier {
       final node = await _pickBestNode(usableNodes);
       final uri = findUriForNode(uris, node)!;
 
+      log.i('Connecting to node "${node.name}" '
+          '(dns=${connectionSettings.dnsPreset.name}, '
+          'stack=${connectionSettings.networkStack.name}, '
+          'split=${connectionSettings.splitTunnelEnabled})');
       // Built fresh here so DNS / network-stack preference edits in Settings
       // take effect on this (re)connect.
       await _vpn.connectManualConfigLink(
@@ -95,10 +100,12 @@ class VpnController extends ChangeNotifier {
         featureSettings: connectionSettings.buildFeatureSettings(),
       );
       _connectedNodeName = node.name;
+      log.i('Tunnel established to "${node.name}"');
       return node;
     } catch (e) {
       _state = VpnConnectionState.error;
       _errorMessage = e is SignboxVpnException ? e.message : e.toString();
+      log.e('Connect failed', _errorMessage);
       notifyListeners();
       rethrow;
     }
@@ -118,6 +125,7 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    log.i('Disconnecting tunnel');
     await _vpn.stop();
     _connectedNodeName = null;
   }

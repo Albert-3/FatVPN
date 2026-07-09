@@ -44,6 +44,13 @@ dependencies:
   # reminders. No server/FCM — the app schedules them from the known expiry.
   flutter_local_notifications: ^18.0.1
   timezone: ^0.9.4
+  # Diagnostics logging + support-bundle export (see services/app_logger.dart):
+  # path_provider locates the on-disk log directory, package_info/device_info
+  # fill the bundle header, share_plus opens the OS share sheet for the file.
+  path_provider: ^2.1.4
+  package_info_plus: ^8.0.0
+  device_info_plus: ^11.0.0
+  share_plus: ^10.1.1
   # Git dependency (not pub.dev) to keep the x86_64 libbox.so used by the
   # Android emulator — the published pub.dev tarball ships arm64-v8a only.
   singbox_mm:

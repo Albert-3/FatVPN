@@ -7,6 +7,7 @@ import '../models/account_status.dart';
 import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import '../models/server_country.dart';
+import 'app_logger.dart';
 import 'vless_config_parser.dart';
 
 class ApiException implements Exception {
@@ -42,14 +43,21 @@ class ApiClient {
   /// surface — it is not an auth failure.
   Future<http.Response> _authedGet(String path, String accessToken) async {
     final uri = Uri.parse('$_baseUrl$path');
+    log.d('GET $path');
     var response =
         await _httpClient.get(uri, headers: {'Authorization': 'Bearer $accessToken'});
     if (response.statusCode == 401 && _onUnauthorized != null) {
+      log.i('GET $path → 401, refreshing access token and retrying');
       final fresh = await _onUnauthorized();
       if (fresh != null) {
         response =
             await _httpClient.get(uri, headers: {'Authorization': 'Bearer $fresh'});
       }
+    }
+    if (response.statusCode >= 400) {
+      log.w('GET $path → ${response.statusCode}');
+    } else {
+      log.d('GET $path → ${response.statusCode}');
     }
     return response;
   }
@@ -65,9 +73,11 @@ class ApiClient {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
+      log.w('POST /auth/refresh → ${response.statusCode}');
       throw ApiException('Failed to refresh session', statusCode: response.statusCode);
     }
 
+    log.i('Session refreshed (token rotated)');
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
@@ -116,9 +126,11 @@ class ApiClient {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
+      log.w('POST /trial → ${response.statusCode}');
       throw ApiException('Failed to start trial', statusCode: response.statusCode);
     }
 
+    log.i('Trial granted for $platform');
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
@@ -129,9 +141,11 @@ class ApiClient {
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
+      log.w('POST /pair/start → ${response.statusCode}');
       throw ApiException('Failed to start pairing', statusCode: response.statusCode);
     }
 
+    log.i('Pairing started');
     return PairingStart.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 

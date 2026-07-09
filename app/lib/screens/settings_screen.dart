@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 
+import '../config/api_config.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../models/account_status.dart';
 import '../services/api_client.dart';
+import '../services/app_logger.dart';
 import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
 import '../services/locale_controller.dart';
@@ -81,6 +83,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _loading = false;
       });
     }
+  }
+
+  bool _sharingLogs = false;
+
+  Future<void> _clearLogs(Strings s) async {
+    await AppLogger.instance.clear();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(s.logsCleared)),
+    );
+  }
+
+  Future<void> _sendLogs(Strings s) async {
+    if (_sharingLogs) return;
+    if (AppLogger.instance.inMemoryCount == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s.noLogsToShare)),
+      );
+      return;
+    }
+    setState(() => _sharingLogs = true);
+    try {
+      await AppLogger.instance.shareSupportBundle(extraContext: _diagnosticsContext());
+    } finally {
+      if (mounted) setState(() => _sharingLogs = false);
+    }
+  }
+
+  /// Sanitized snapshot of the current settings/session for the bundle header.
+  /// Tokens are masked — never put a full access/refresh token in diagnostics.
+  Map<String, String> _diagnosticsContext() {
+    final cs = widget.connectionSettings;
+    final session = widget.auth.session;
+    return {
+      'api_domain': bffBaseUrl,
+      'dns_preset': cs.dnsPreset.name,
+      'custom_dns': cs.customDns.isEmpty ? '(none)' : cs.customDns,
+      'network_stack': cs.networkStack.name,
+      'split_tunnel_enabled': cs.splitTunnelEnabled.toString(),
+      'split_bypass_count': cs.bypassPackages.length.toString(),
+      'logged_in': widget.auth.isLoggedIn.toString(),
+      'subscription_active': widget.auth.subscriptionActive.toString(),
+      'session_expires_at': session?.expiresAt.toIso8601String() ?? '(none)',
+      'has_refresh_token': (session?.hasRefreshToken ?? false).toString(),
+      'access_token_masked': _mask(session?.accessToken),
+    };
+  }
+
+  static String _mask(String? token) {
+    if (token == null || token.isEmpty) return '(none)';
+    if (token.length <= 8) return '****';
+    return '${token.substring(0, 4)}…${token.substring(token.length - 4)}';
   }
 
   String _expiryLabel(Strings s, DateTime expiresAt) {
@@ -253,7 +307,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             children: [
                               Expanded(
                                 child: OutlinedButton(
-                                  onPressed: () {},
+                                  onPressed:
+                                      _sharingLogs ? null : () => _clearLogs(s),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: AppColors.textPrimary,
                                     side: const BorderSide(
@@ -272,7 +327,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               const SizedBox(width: 12),
                               Expanded(
                                 child: ElevatedButton(
-                                  onPressed: () {},
+                                  onPressed:
+                                      _sharingLogs ? null : () => _sendLogs(s),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: AppColors.accent,
                                     foregroundColor: AppColors.background,
@@ -283,12 +339,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                   ),
-                                  child: Text(
-                                    s.send,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                                  child: _sharingLogs
+                                      ? const SizedBox(
+                                          height: 18,
+                                          width: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: AppColors.background,
+                                          ),
+                                        )
+                                      : Text(
+                                          s.send,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                 ),
                               ),
                             ],

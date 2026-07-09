@@ -27,9 +27,16 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.auth.pairCode == null && widget.auth.error == null) {
-      widget.auth.startPairing();
-    }
+    // Defer to after the first frame: startPairing() notifies its listeners
+    // synchronously, and firing that during this build marks the auth-gate
+    // ListenableBuilder dirty mid-build (a "!_dirty" assertion in debug that
+    // can wedge later rebuilds).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.auth.pairCode == null && widget.auth.error == null) {
+        widget.auth.startPairing();
+      }
+    });
   }
 
   Future<void> _openBot() async {
