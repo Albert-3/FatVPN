@@ -52,6 +52,12 @@ class AuthController extends ChangeNotifier {
   AuthSession? get session => _session;
   bool get initializing => _initializing;
 
+  /// When the current session was last *replaced* (trial grant, key exchange,
+  /// pairing). Unchanged by silent refreshes, so a screen can reload subscription
+  /// data only when the underlying key actually changed. Null for a restored
+  /// session that hasn't been re-minted this run.
+  DateTime? get sessionMintedAt => _sessionMintedAt;
+
   /// Whether we hold a session at all (a refresh token). Drives onboarding vs
   /// the rest of the app — independent of whether the subscription is active.
   bool get isLoggedIn => _session != null;
@@ -230,6 +236,9 @@ class AuthController extends ChangeNotifier {
       _session = session;
       _sessionMintedAt = DateTime.now();
       _subscriptionExpired = false;
+      // Entering a key should get the user online right away, like a trial
+      // grant — HomeScreen reads this once and auto-connects.
+      _autoConnectRequested = true;
       // Transition the UI first; persistence is best-effort so a slow or hung
       // secure-storage write (seen on emulators) can't strand the user on the
       // onboarding screen — mirrors the pairing/trial paths.

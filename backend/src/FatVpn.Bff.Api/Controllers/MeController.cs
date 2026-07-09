@@ -23,6 +23,8 @@ public class MeController(FatVpnDbContext db) : ControllerBase
         }
 
         var status = subscription.IsActive ? "active" : "expired";
-        return Ok(new { status, expiresAt = subscription.ExpiresAt });
+        // subscriptionId (Remnawave shortUuid) lets the app show which key is
+        // connected — a user can hold several keys bought in the bot.
+        return Ok(new { status, expiresAt = subscription.ExpiresAt, subscriptionId = subscription.SubscriptionId });
     }
 }

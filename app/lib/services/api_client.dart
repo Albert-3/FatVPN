@@ -188,7 +188,7 @@ class ApiClient {
     List<String> uris;
     try {
       final (content, _) = await getConfig(accessToken);
-      uris = parseVlessUris(content);
+      uris = parseConfigUris(content);
     } catch (_) {
       return servers;
     }

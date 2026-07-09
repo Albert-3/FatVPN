@@ -1,13 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Native launch splash: dark background + centered logo. Automatically
-     removed once the Flutter engine draws its first frame (the animated
-     SplashScreen), so the two hand off seamlessly. -->
+<!-- Native launch splash: dark background + centered logo, sized explicitly so
+     it renders the same on every screen density (a bare drawable/ bitmap is
+     treated as mdpi and scaled up on high-DPI phones — overflowing the screen).
+     Automatically removed once the Flutter engine draws its first frame (the
+     animated SplashScreen), so the two hand off seamlessly. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@color/splash_background" />
 
-    <item>
+    <item
+        android:width="150dp"
+        android:height="134dp"
+        android:gravity="center">
         <bitmap
-            android:gravity="center"
+            android:gravity="fill"
             android:src="@drawable/splash_logo" />
     </item>
 </layer-list>

@@ -20,6 +20,11 @@ class Strings {
     required this.language,
     required this.account,
     required this.signOut,
+    required this.currentKey,
+    required this.keyCopied,
+    required this.connectKey,
+    required this.connectKeyHint,
+    required this.buySubscription,
     required this.contactSupport,
     required this.logsManagement,
     required this.applicationLogs,
@@ -100,6 +105,11 @@ class Strings {
   final String language;
   final String account;
   final String signOut;
+  final String currentKey;
+  final String keyCopied;
+  final String connectKey;
+  final String connectKeyHint;
+  final String buySubscription;
   final String contactSupport;
   final String logsManagement;
   final String applicationLogs;
@@ -206,6 +216,11 @@ const Strings enStrings = Strings(
   language: 'Language',
   account: 'ACCOUNT',
   signOut: 'Sign out',
+  currentKey: 'Current key',
+  keyCopied: 'Key copied',
+  connectKey: 'CONNECT A KEY',
+  connectKeyHint: 'Have a key from the bot? Paste it to connect.',
+  buySubscription: 'Buy via Telegram',
   contactSupport: 'Contact support',
   logsManagement: 'LOGS MANAGEMENT',
   applicationLogs: 'Application logs',
@@ -234,8 +249,8 @@ const Strings enStrings = Strings(
   allLocations: 'ALL LOCATIONS',
   serversCount: _enServersCount,
   unreachable: 'unreachable',
-  openBotTitle: 'Connect your account',
-  openBotSubtitle: 'Sign in through the FatVPN Telegram bot. Buy or activate a trial there — the app connects automatically.',
+  openBotTitle: 'Start for free',
+  openBotSubtitle: 'Get 2 days free. Buy a subscription later in the FatVPN Telegram bot and add your key in Settings.',
   connectWithTelegram: 'Connect with Telegram',
   pairingWaiting: 'Waiting for the bot to confirm…',
   pairingScanHint: 'On another device? Scan this code or open the bot and send:',
@@ -294,6 +309,11 @@ final Strings ruStrings = Strings(
   language: 'Язык',
   account: 'АККАУНТ',
   signOut: 'Выйти',
+  currentKey: 'Текущий ключ',
+  keyCopied: 'Ключ скопирован',
+  connectKey: 'ПОДКЛЮЧИТЬ КЛЮЧ',
+  connectKeyHint: 'Есть ключ из бота? Вставьте, чтобы подключиться.',
+  buySubscription: 'Купить через Telegram',
   contactSupport: 'Написать в поддержку',
   logsManagement: 'УПРАВЛЕНИЕ ЛОГАМИ',
   applicationLogs: 'Логи приложения',
@@ -322,9 +342,9 @@ final Strings ruStrings = Strings(
   allLocations: 'ВСЕ ЛОКАЦИИ',
   serversCount: (n) => '$n ${_ruPluralServers(n)}',
   unreachable: 'недоступен',
-  openBotTitle: 'Подключите аккаунт',
+  openBotTitle: 'Начните бесплатно',
   openBotSubtitle:
-      'Войдите через Telegram-бота FatVPN. Оформите подписку или пробный период там — приложение подключится автоматически.',
+      'Получите 2 дня бесплатно. Подписку купите позже в Telegram-боте FatVPN, а ключ добавите в настройках.',
   connectWithTelegram: 'Подключить через Telegram',
   pairingWaiting: 'Ожидаем подтверждения от бота…',
   pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',
