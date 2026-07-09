@@ -40,6 +40,14 @@ class AuthController extends ChangeNotifier {
   bool _trialBusy = false;
   bool _trialAvailable = false;
   bool _autoConnectRequested = false;
+  // When the current session was freshly minted (trial/pairing/exchange). Used
+  // to skip the resume-refresh right after a grant: the JWT is good for 30 min,
+  // so refreshing seconds later is pointless — and worse, it races the trial
+  // auto-connect bringing the tunnel up, which can drop the refresh response and
+  // leave a rotated-but-locally-unrotated token that trips reuse detection on
+  // the next call (whole session family revoked → forced re-pair).
+  DateTime? _sessionMintedAt;
+  static const _skipResumeRefreshWindow = Duration(seconds: 90);
 
   AuthSession? get session => _session;
   bool get initializing => _initializing;
@@ -122,6 +130,16 @@ class AuthController extends ChangeNotifier {
   /// up without the user doing anything.
   Future<void> refreshOnResume() async {
     if (_session == null) return;
+    // Skip if the session was just minted — see [_sessionMintedAt]. This is the
+    // resume that fires after the trial's auto-connect VPN-permission dialog;
+    // refreshing here needlessly races the tunnel coming up and can cost the
+    // whole session to reuse detection.
+    final mintedAt = _sessionMintedAt;
+    if (mintedAt != null &&
+        DateTime.now().difference(mintedAt) < _skipResumeRefreshWindow) {
+      log.i('Skipping resume-refresh — session freshly minted');
+      return;
+    }
     await _refreshNow();
   }
 
@@ -179,7 +197,14 @@ class AuthController extends ChangeNotifier {
     final platform =
         defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
     final session = await _apiClient.startTrial(deviceKey, platform);
+    // A trial supersedes any in-flight pairing attempt — stop its poll timer so
+    // it doesn't keep hitting /pair/status in the background after we navigate
+    // to Home (pairing-complete does the same cleanup).
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pairing = null;
     _session = session;
+    _sessionMintedAt = DateTime.now();
     _subscriptionExpired = false;
     _trialAvailable = false;
     _autoConnectRequested = true;
@@ -203,6 +228,7 @@ class AuthController extends ChangeNotifier {
       _error = null;
       final session = await _apiClient.exchangeToken(shortToken);
       _session = session;
+      _sessionMintedAt = DateTime.now();
       _subscriptionExpired = false;
       // Transition the UI first; persistence is best-effort so a slow or hung
       // secure-storage write (seen on emulators) can't strand the user on the
@@ -295,6 +321,7 @@ class AuthController extends ChangeNotifier {
           _pollTimer = null;
           _pairing = null;
           _session = status.session;
+          _sessionMintedAt = DateTime.now();
           _subscriptionExpired = false;
           // Transition the UI first; persistence is best-effort so a slow or
           // failing secure-storage write can't strand the user on this screen.
