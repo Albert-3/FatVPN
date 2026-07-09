@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/app_logger.dart';
 import 'services/auth_controller.dart';
 import 'services/connection_settings_controller.dart';
@@ -48,10 +49,18 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   final _connectionSettings = ConnectionSettingsController();
   final _notifications = NotificationService();
 
+  // Holds the animated splash for a minimum beat so it plays fully even when
+  // the stored session resolves instantly. Flips true after [_minSplashTime].
+  bool _minSplashElapsed = false;
+  static const _minSplashTime = Duration(milliseconds: 1400);
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    Future.delayed(_minSplashTime, () {
+      if (mounted) setState(() => _minSplashElapsed = true);
+    });
     // Re-plan local expiry reminders whenever the session (expiry) or the
     // language changes. syncFor no-ops until init() completes, then the first
     // sync runs once init resolves.
@@ -91,6 +100,21 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  Widget _rootScreen() {
+    if (_auth.initializing || !_minSplashElapsed) {
+      return const SplashScreen();
+    }
+    if (!_auth.isLoggedIn) {
+      return AwaitingAuthScreen(auth: _auth);
+    }
+    if (!_auth.subscriptionActive) {
+      // Logged in but the subscription has lapsed — prompt to renew instead of
+      // dropping back to the trial/onboarding flow.
+      return AwaitingAuthScreen(auth: _auth, renew: true);
+    }
+    return HomeScreen(auth: _auth, connectionSettings: _connectionSettings);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppLocalizationsScope(
@@ -109,25 +133,13 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
         home: ListenableBuilder(
           listenable: _auth,
           builder: (context, _) {
-            if (_auth.initializing) {
-              return const Scaffold(
-                backgroundColor: AppColors.background,
-                body: Center(
-                  child: CircularProgressIndicator(color: AppColors.accent),
-                ),
-              );
-            }
-            if (!_auth.isLoggedIn) {
-              return AwaitingAuthScreen(auth: _auth);
-            }
-            if (!_auth.subscriptionActive) {
-              // Logged in but the subscription has lapsed — prompt to renew
-              // instead of dropping back to the trial/onboarding flow.
-              return AwaitingAuthScreen(auth: _auth, renew: true);
-            }
-            return HomeScreen(
-              auth: _auth,
-              connectionSettings: _connectionSettings,
+            // Cross-fade the splash into the resolved screen instead of a hard
+            // cut once the session settles.
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 450),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: _rootScreen(),
             );
           },
         ),
