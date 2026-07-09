@@ -16,6 +16,10 @@ const telegramBotUsername = 'testfatvpnnbot';
 Uri telegramPairLink(String pairCode) =>
     Uri.parse('https://t.me/$telegramBotUsername?start=pair$pairCode');
 
+/// Opens the FatVPN bot (e.g. from Settings "Buy via Telegram"). The user buys
+/// a subscription there and receives a key to paste back into the app.
+Uri telegramBotLink() => Uri.parse('https://t.me/$telegramBotUsername');
+
 /// Telegram support handle opened from the settings screen (without `@`).
 const telegramSupportUsername = 'fatvpn_support';
 

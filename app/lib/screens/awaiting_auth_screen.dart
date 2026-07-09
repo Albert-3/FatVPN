@@ -31,9 +31,13 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     // synchronously, and firing that during this build marks the auth-gate
     // ListenableBuilder dirty mid-build (a "!_dirty" assertion in debug that
     // can wedge later rebuilds).
+    // Only the renew flow uses pairing (Telegram/QR). First-run onboarding is
+    // trial-only, so it never starts a pairing code.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.auth.pairCode == null && widget.auth.error == null) {
+      if (widget.renew &&
+          widget.auth.pairCode == null &&
+          widget.auth.error == null) {
         widget.auth.startPairing();
       }
     });
@@ -135,10 +139,11 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // PRIMARY CTA for a first-time device: free trial — the main
-                    // way a store user gets online without Telegram. Hidden in
-                    // renew mode (a lapsed subscriber isn't trial-eligible).
-                    if (!widget.renew && auth.trialAvailable) ...[
+                    // First run (non-renew): the only path is the free trial.
+                    // The user buys a subscription in Telegram afterwards and
+                    // enters/pastes the key from Settings — so there is no
+                    // Telegram / QR / manual-key option on this screen.
+                    if (!widget.renew) ...[
                       FilledButton.icon(
                         onPressed: auth.trialBusy ? null : () => _startTrial(s),
                         style: FilledButton.styleFrom(
@@ -158,53 +163,51 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
                         ),
                       ),
-                      const SizedBox(height: 14),
-                    ],
-
-                    if (auth.error != null) ...[
-                      _ErrorBlock(message: auth.error!),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: auth.startPairing,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.accent,
-                          side: const BorderSide(color: AppColors.accent),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                        ),
-                        child: Text(s.getNewCode, style: const TextStyle(fontWeight: FontWeight.w700)),
-                      ),
-                    ] else if (code == null) ...[
-                      const SizedBox(height: 8),
-                      const Center(
-                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
-                      ),
+                      if (auth.error != null) ...[
+                        const SizedBox(height: 14),
+                        _ErrorBlock(message: auth.error!),
+                      ],
                     ] else ...[
-                      // Telegram / pairing. Primary (filled) when no trial
-                      // button sits above it, otherwise a secondary outline.
-                      _telegramButton(s, primary: widget.renew || !auth.trialAvailable),
-                      const SizedBox(height: 12),
-                      _CrossDeviceBlock(code: code, uri: auth.telegramPairUri!, hint: s.pairingScanHint),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                      // Renew mode: a lapsed subscriber renews via Telegram or
+                      // pastes a new key, then re-checks.
+                      if (auth.error != null) ...[
+                        _ErrorBlock(message: auth.error!),
+                        const SizedBox(height: 12),
+                        OutlinedButton(
+                          onPressed: auth.startPairing,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.accent,
+                            side: const BorderSide(color: AppColors.accent),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            s.pairingWaiting,
-                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ],
-
-                    // In renew mode, let the user re-check after renewing in
-                    // Telegram (resume also auto-refreshes).
-                    if (widget.renew) ...[
+                          child: Text(s.getNewCode, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        ),
+                      ] else if (code == null) ...[
+                        const SizedBox(height: 8),
+                        const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                        ),
+                      ] else ...[
+                        _telegramButton(s, primary: true),
+                        const SizedBox(height: 12),
+                        _CrossDeviceBlock(code: code, uri: auth.telegramPairUri!, hint: s.pairingScanHint),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              s.pairingWaiting,
+                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       OutlinedButton(
                         onPressed: _checking ? null : _checkAgain,
@@ -221,11 +224,10 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                               )
                             : Text(s.checkAgain, style: const TextStyle(fontWeight: FontWeight.w700)),
                       ),
+                      const SizedBox(height: 14),
+                      const Divider(color: AppColors.disabled, height: 1),
+                      _ManualKeyEntry(auth: auth),
                     ],
-
-                    const SizedBox(height: 14),
-                    const Divider(color: AppColors.disabled, height: 1),
-                    _ManualKeyEntry(auth: auth),
             ],
           ),
         ),

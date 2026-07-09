@@ -53,14 +53,34 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<String, int?> _bestPingByCountry = {};
   bool _measuringPings = false;
 
+  // Tracks the session-replacement marker so a key change (e.g. entered from
+  // Settings) reloads the server list and triggers the one-off auto-connect,
+  // while silent token refreshes do not.
+  DateTime? _lastMintedAt;
+
   bool get _connected => _vpn.isConnected;
+
+  /// True when a concrete country is chosen or connected (vs "Best server"
+  /// auto mode) — drives showing that country's flag in the location card.
+  bool get _hasSpecificLocation =>
+      (_connected || _serverExplicitlySelected) && _selectedServer != null;
 
   @override
   void initState() {
     super.initState();
     _vpn.addListener(_handleVpnChange);
     widget.connectionSettings.addListener(_onConnSettingsChanged);
+    _lastMintedAt = widget.auth.sessionMintedAt;
+    widget.auth.addListener(_onAuthChanged);
     _loadServers();
+  }
+
+  /// Reloads servers when the session is replaced by a new key/subscription
+  /// (the marker changes only on trial/exchange/pairing, not on refresh).
+  void _onAuthChanged() {
+    if (widget.auth.sessionMintedAt == _lastMintedAt) return;
+    _lastMintedAt = widget.auth.sessionMintedAt;
+    if (mounted) _loadServers();
   }
 
   /// Re-applies connection settings (DNS / network stack / split-tunnel) on the
@@ -280,6 +300,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _timer?.cancel();
     _connSettingsDebounce?.cancel();
     widget.connectionSettings.removeListener(_onConnSettingsChanged);
+    widget.auth.removeListener(_onAuthChanged);
     _vpn.removeListener(_handleVpnChange);
     _vpn.dispose();
     super.dispose();
@@ -380,10 +401,16 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Row(
         children: [
-          Icon(
-            _connected ? Icons.public : Icons.public_outlined,
-            color: _connected ? AppColors.accent : AppColors.textSecondary,
-          ),
+          if (_hasSpecificLocation)
+            Text(
+              countryCodeToFlagEmoji(_selectedServer!.flag),
+              style: const TextStyle(fontSize: 22),
+            )
+          else
+            Icon(
+              _connected ? Icons.public : Icons.public_outlined,
+              color: _connected ? AppColors.accent : AppColors.textSecondary,
+            ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -398,9 +425,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  (_connected || _serverExplicitlySelected) && _selectedServer != null
-                      ? _selectedServer!.country
-                      : s.bestServer,
+                  _hasSpecificLocation ? _selectedServer!.country : s.bestServer,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 15,

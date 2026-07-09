@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -37,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loading = true;
   String? _error;
   late final TextEditingController _customDnsController;
+  final _keyController = TextEditingController();
+  bool _submittingKey = false;
 
   @override
   void initState() {
@@ -50,6 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _customDnsController.dispose();
+    _keyController.dispose();
     super.dispose();
   }
 
@@ -89,28 +93,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _sharingLogs = false;
 
   Future<void> _openSupport() async {
-    await launchUrl(telegramSupportLink(), mode: LaunchMode.externalApplication);
+    await launchUrl(
+      telegramSupportLink(),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
+  Future<void> _buySubscription() async {
+    await launchUrl(telegramBotLink(), mode: LaunchMode.externalApplication);
+  }
+
+  /// Exchanges a pasted key for a new session. On success we pop back to Home,
+  /// which reloads its server list and auto-connects to the new subscription.
+  Future<void> _submitKey(Strings s) async {
+    final code = _keyController.text.trim();
+    if (code.isEmpty || _submittingKey) return;
+    setState(() => _submittingKey = true);
+    await widget.auth.exchangeShortToken(code);
+    if (!mounted) return;
+    setState(() => _submittingKey = false);
+    if (widget.auth.error == null) {
+      Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(widget.auth.error!)));
+    }
   }
 
   Future<void> _clearLogs(Strings s) async {
     await AppLogger.instance.clear();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(s.logsCleared)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(s.logsCleared)));
   }
 
   Future<void> _sendLogs(Strings s) async {
     if (_sharingLogs) return;
     if (AppLogger.instance.inMemoryCount == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s.noLogsToShare)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(s.noLogsToShare)));
       return;
     }
     setState(() => _sharingLogs = true);
     try {
-      await AppLogger.instance.shareSupportBundle(extraContext: _diagnosticsContext());
+      await AppLogger.instance.shareSupportBundle(
+        extraContext: _diagnosticsContext(),
+      );
     } finally {
       if (mounted) setState(() => _sharingLogs = false);
     }
@@ -166,255 +197,231 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             _buildHeader(context, s),
             Expanded(
-              child: Stack(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                 children: [
-                  ListView(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 96),
-                    children: [
-                      _sectionTitle(s.manageAccount),
-                      _card(children: [_buildAccountStatus(s)]),
-                      _sectionTitle(s.connectionSettings),
-                      AnimatedBuilder(
-                        animation: widget.connectionSettings,
-                        builder: (context, _) {
-                          final cs = widget.connectionSettings;
-                          final isCustomDns =
-                              cs.dnsPreset == DnsProviderPreset.custom;
-                          return _card(
-                            children: [
-                              _pickerRow(
-                                s.dnsServer,
-                                isCustomDns && cs.customDns.isNotEmpty
-                                    ? cs.customDns
-                                    : _dnsLabel(cs.dnsPreset),
-                                () => _showDnsPicker(s),
+                  _sectionTitle(s.manageAccount),
+                  _card(children: [_buildAccountStatus(s)]),
+                  _sectionTitle(s.connectionSettings),
+                  AnimatedBuilder(
+                    animation: widget.connectionSettings,
+                    builder: (context, _) {
+                      final cs = widget.connectionSettings;
+                      final isCustomDns =
+                          cs.dnsPreset == DnsProviderPreset.custom;
+                      return _card(
+                        children: [
+                          _pickerRow(
+                            s.dnsServer,
+                            isCustomDns && cs.customDns.isNotEmpty
+                                ? cs.customDns
+                                : _dnsLabel(cs.dnsPreset),
+                            () => _showDnsPicker(s),
+                          ),
+                          if (isCustomDns) ...[
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _customDnsController,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 14,
                               ),
-                              if (isCustomDns) ...[
-                                const SizedBox(height: 10),
-                                TextField(
-                                  controller: _customDnsController,
-                                  style: const TextStyle(
-                                    color: AppColors.textPrimary,
-                                    fontSize: 14,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              keyboardType: TextInputType.url,
+                              onChanged: cs.setCustomDns,
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: s.customDnsHint,
+                                hintStyle: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 12,
+                                ),
+                                filled: true,
+                                fillColor: AppColors.background,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const Divider(color: AppColors.disabled, height: 24),
+                          _pickerRow(
+                            s.networkStack,
+                            _stackLabel(cs.networkStack),
+                            () => _showStackPicker(s),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, left: 4),
+                    child: Text(
+                      s.appliesOnNextConnection,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                  _sectionTitle(s.routing),
+                  _card(
+                    children: [
+                      InkWell(
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => SplitTunnelingScreen(
+                              connectionSettings: widget.connectionSettings,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    s.splitTunnelingSettings,
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
-                                  autocorrect: false,
-                                  enableSuggestions: false,
-                                  keyboardType: TextInputType.url,
-                                  onChanged: cs.setCustomDns,
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    hintText: s.customDnsHint,
-                                    hintStyle: const TextStyle(
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    s.splitTunnelingSubtitle,
+                                    style: const TextStyle(
                                       color: AppColors.textSecondary,
                                       fontSize: 12,
                                     ),
-                                    filled: true,
-                                    fillColor: AppColors.background,
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                      borderSide: BorderSide.none,
-                                    ),
                                   ),
-                                ),
-                              ],
-                              const Divider(
-                                color: AppColors.disabled,
-                                height: 24,
+                                ],
                               ),
-                              _pickerRow(
-                                s.networkStack,
-                                _stackLabel(cs.networkStack),
-                                () => _showStackPicker(s),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6, left: 4),
-                        child: Text(
-                          s.appliesOnNextConnection,
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 11,
-                          ),
+                            ),
+                            const Icon(
+                              Icons.chevron_right,
+                              color: AppColors.textSecondary,
+                            ),
+                          ],
                         ),
                       ),
-                      _sectionTitle(s.routing),
-                      _card(
-                        children: [
-                          InkWell(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => SplitTunnelingScreen(
-                                  connectionSettings: widget.connectionSettings,
-                                ),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.splitTunnelingSettings,
-                                        style: const TextStyle(
-                                          color: AppColors.textPrimary,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        s.splitTunnelingSubtitle,
-                                        style: const TextStyle(
-                                          color: AppColors.textSecondary,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const Icon(
-                                  Icons.chevron_right,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                    ],
+                  ),
+                  _sectionTitle(s.system),
+                  _card(children: [_buildLanguageRow(s, locale)]),
+                  _sectionTitle(s.connectKey),
+                  _buildConnectKeyCard(s),
+                  _sectionTitle(s.logsManagement),
+                  _card(
+                    children: [
+                      Text(
+                        s.applicationLogs,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                      _sectionTitle(s.system),
-                      _card(children: [_buildLanguageRow(s, locale)]),
-                      _sectionTitle(s.logsManagement),
-                      _card(
+                      const SizedBox(height: 2),
+                      Text(
+                        s.shareDiagnostics,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
                         children: [
-                          Text(
-                            s.applicationLogs,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            s.shareDiagnostics,
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed:
-                                      _sharingLogs ? null : () => _clearLogs(s),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: AppColors.textPrimary,
-                                    side: const BorderSide(
-                                      color: AppColors.disabled,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: Text(s.clear),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: _sharingLogs
+                                  ? null
+                                  : () => _clearLogs(s),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.textPrimary,
+                                side: const BorderSide(
+                                  color: AppColors.disabled,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed:
-                                      _sharingLogs ? null : () => _sendLogs(s),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.accent,
-                                    foregroundColor: AppColors.background,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: _sharingLogs
-                                      ? const SizedBox(
-                                          height: 18,
-                                          width: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: AppColors.background,
-                                          ),
-                                        )
-                                      : Text(
-                                          s.send,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
+                              child: Text(s.clear),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _sharingLogs
+                                  ? null
+                                  : () => _sendLogs(s),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.accent,
+                                foregroundColor: AppColors.background,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
-                            ],
+                              child: _sharingLogs
+                                  ? const SizedBox(
+                                      height: 18,
+                                      width: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.background,
+                                      ),
+                                    )
+                                  : Text(
+                                      s.send,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                            ),
                           ),
                         ],
                       ),
                     ],
                   ),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                      decoration: const BoxDecoration(
-                        color: AppColors.background,
-                        border: Border(
-                          top: BorderSide(color: AppColors.disabled),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        await widget.auth.signOut();
+                        if (context.mounted) {
+                          Navigator.of(context).popUntil((r) => r.isFirst);
+                        }
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.redAccent,
+                        side: const BorderSide(color: Colors.redAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton(
-                              onPressed: () async {
-                                await widget.auth.signOut();
-                                if (context.mounted) {
-                                  Navigator.of(context)
-                                      .popUntil((r) => r.isFirst);
-                                }
-                              },
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.redAccent,
-                                side: const BorderSide(color: Colors.redAccent),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: Text(s.signOut),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: _openSupport,
-                            child: Text(
-                              '${s.contactSupport} · @$telegramSupportUsername',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                        ],
+                      child: Text(s.signOut),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _openSupport,
+                    child: Text(
+                      '${s.contactSupport} · @$telegramSupportUsername',
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
                       ),
                     ),
                   ),
@@ -480,6 +487,139 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Text(
           _expiryLabel(s, status.expiresAt),
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+        if (status.subscriptionId != null) ...[
+          const Divider(color: AppColors.disabled, height: 24),
+          _currentKeyRow(s, status.subscriptionId!),
+        ],
+      ],
+    );
+  }
+
+  /// Shows the connected subscription id (key) with a copy action, so a user
+  /// holding several keys can tell which one is active.
+  Widget _currentKeyRow(Strings s, String subscriptionId) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                s.currentKey,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subscriptionId,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: subscriptionId));
+            if (!mounted) return;
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(s.keyCopied)));
+          },
+          icon: const Icon(
+            Icons.copy,
+            size: 18,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConnectKeyCard(Strings s) {
+    return _card(
+      children: [
+        Text(
+          s.connectKeyHint,
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _keyController,
+          autocorrect: false,
+          enableSuggestions: false,
+          textCapitalization: TextCapitalization.characters,
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            letterSpacing: 1.2,
+          ),
+          onSubmitted: (_) => _submitKey(s),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: s.enterKeyHint,
+            hintStyle: const TextStyle(color: AppColors.textSecondary),
+            filled: true,
+            fillColor: AppColors.background,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _submittingKey ? null : () => _submitKey(s),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: _submittingKey
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.black,
+                    ),
+                  )
+                : Text(
+                    s.submitKey,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _buySubscription,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              side: const BorderSide(color: AppColors.accent),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.telegram, size: 20),
+            label: Text(
+              s.buySubscription,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
         ),
       ],
     );
