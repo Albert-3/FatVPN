@@ -76,11 +76,11 @@ class VpnController extends ChangeNotifier {
       await _ensureInitialized();
 
       // `/servers` lists every Remnawave node regardless of squad, but
-      // `/config` only contains vless entries for nodes in this user's
-      // subscription — narrow to the intersection before picking by ping,
-      // otherwise the "best" node can be one this subscription can't use.
+      // `/config` only contains entries for nodes in this user's subscription —
+      // narrow to the intersection before picking by ping, otherwise the "best"
+      // node can be one this subscription can't use.
       final (content, _) = await _apiClient.getConfig(accessToken);
-      final uris = parseVlessUris(content);
+      final uris = parseConfigUris(content);
       final usableNodes = candidates.where((n) => findUriForNode(uris, n) != null).toList();
       if (usableNodes.isEmpty) {
         throw StateError('No available node in this subscription');
