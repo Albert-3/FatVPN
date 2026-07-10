@@ -55,6 +55,8 @@ class Strings {
     required this.unreachable,
     required this.openBotTitle,
     required this.openBotSubtitle,
+    required this.trialUsedTitle,
+    required this.trialUsedSubtitle,
     required this.connectWithTelegram,
     required this.pairingWaiting,
     required this.pairingScanHint,
@@ -143,6 +145,8 @@ class Strings {
 
   final String openBotTitle;
   final String openBotSubtitle;
+  final String trialUsedTitle;
+  final String trialUsedSubtitle;
   final String connectWithTelegram;
   final String pairingWaiting;
   final String pairingScanHint;
@@ -251,6 +255,8 @@ const Strings enStrings = Strings(
   unreachable: 'unreachable',
   openBotTitle: 'Start for free',
   openBotSubtitle: 'Get 2 days free. Buy a subscription later in the FatVPN Telegram bot and add your key in Settings.',
+  trialUsedTitle: 'Connect a subscription',
+  trialUsedSubtitle: 'Your free trial has ended. Buy a subscription in the FatVPN Telegram bot, or enter your key if you already have one.',
   connectWithTelegram: 'Connect with Telegram',
   pairingWaiting: 'Waiting for the bot to confirm…',
   pairingScanHint: 'On another device? Scan this code or open the bot and send:',
@@ -345,6 +351,9 @@ final Strings ruStrings = Strings(
   openBotTitle: 'Начните бесплатно',
   openBotSubtitle:
       'Получите 2 дня бесплатно. Подписку купите позже в Telegram-боте FatVPN, а ключ добавите в настройках.',
+  trialUsedTitle: 'Подключите подписку',
+  trialUsedSubtitle:
+      'Ваш бесплатный период закончился. Купите подписку в Telegram-боте FatVPN или введите ключ, если он у вас уже есть.',
   connectWithTelegram: 'Подключить через Telegram',
   pairingWaiting: 'Ожидаем подтверждения от бота…',
   pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',

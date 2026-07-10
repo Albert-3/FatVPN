@@ -202,6 +202,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _sectionTitle(s.manageAccount),
                   _card(children: [_buildAccountStatus(s)]),
+                  _sectionTitle(s.connectKey),
+                  _buildConnectKeyCard(s),
                   _sectionTitle(s.connectionSettings),
                   AnimatedBuilder(
                     animation: widget.connectionSettings,
@@ -313,8 +315,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   _sectionTitle(s.system),
                   _card(children: [_buildLanguageRow(s, locale)]),
-                  _sectionTitle(s.connectKey),
-                  _buildConnectKeyCard(s),
                   _sectionTitle(s.logsManagement),
                   _card(
                     children: [
@@ -415,13 +415,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Text(s.signOut),
                     ),
                   ),
-                  TextButton(
-                    onPressed: _openSupport,
-                    child: Text(
-                      '${s.contactSupport} · @$telegramSupportUsername',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 13,
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                      onPressed: _openSupport,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.accent,
+                        backgroundColor: AppColors.accent.withValues(alpha: 0.08),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.support_agent, size: 18),
+                      label: Text(
+                        '${s.contactSupport} · @$telegramSupportUsername',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
