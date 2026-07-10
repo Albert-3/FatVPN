@@ -106,6 +106,10 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     final s = S.of(context);
     final auth = widget.auth;
     final code = auth.pairCode;
+    // Trial-used recovery: logged out on a device that already spent its trial.
+    // Shows the Telegram/key path with its own heading (not the "2 days free"
+    // onboarding copy, which would be a promise the app can't keep).
+    final recovery = !widget.renew && !auth.trialAvailable;
 
     // Compact layout tuned to fit the whole onboarding on one screen without
     // needing to scroll. SingleChildScrollView stays only as an overflow safety
@@ -126,7 +130,11 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     Center(child: Image.asset('assets/images/logo.png', height: 44)),
                     const SizedBox(height: 16),
                     Text(
-                      widget.renew ? s.subscriptionExpiredTitle : s.openBotTitle,
+                      widget.renew
+                          ? s.subscriptionExpiredTitle
+                          : recovery
+                              ? s.trialUsedTitle
+                              : s.openBotTitle,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: AppColors.textPrimary,
@@ -136,7 +144,11 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      widget.renew ? s.subscriptionExpiredSubtitle : s.openBotSubtitle,
+                      widget.renew
+                          ? s.subscriptionExpiredSubtitle
+                          : recovery
+                              ? s.trialUsedSubtitle
+                              : s.openBotSubtitle,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.35),
                     ),

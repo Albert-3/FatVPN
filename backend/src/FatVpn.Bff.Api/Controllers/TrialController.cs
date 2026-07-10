@@ -33,7 +33,11 @@ public class TrialController(
         }
 
         var now = DateTimeOffset.UtcNow;
-        var requestedExpiry = now.AddDays(trialOptions.Value.DurationDays);
+        // DurationMinutes (when set) wins over DurationDays — used for short test
+        // trials without changing the day-based production default.
+        var requestedExpiry = trialOptions.Value.DurationMinutes > 0
+            ? now.AddMinutes(trialOptions.Value.DurationMinutes)
+            : now.AddDays(trialOptions.Value.DurationDays);
 
         // Provision the trial subscription on demand instead of from a pool, so
         // it scales to every store install without manual replenishment.
