@@ -31,6 +31,10 @@ public class ConfigController(FatVpnDbContext db, IRemnawaveClient remnawaveClie
         try
         {
             var (content, contentType) = await remnawaveClient.GetSubscriptionConfigAsync(subscription.SubscriptionId, ct);
+            // PoC: Remnawave doesn't render our Hysteria2 (FR/US/FI "H2") nodes into
+            // the subscription, so splice them in for the app. Safe no-op if the
+            // content isn't the expected base64 v2ray blob.
+            content = SubscriptionAugmenter.AppendHysteriaHosts(content);
             return Content(content, contentType);
         }
         catch (HttpRequestException)
