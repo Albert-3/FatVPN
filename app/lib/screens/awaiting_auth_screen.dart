@@ -31,11 +31,14 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     // synchronously, and firing that during this build marks the auth-gate
     // ListenableBuilder dirty mid-build (a "!_dirty" assertion in debug that
     // can wedge later rebuilds).
-    // Only the renew flow uses pairing (Telegram/QR). First-run onboarding is
-    // trial-only, so it never starts a pairing code.
+    // Pairing (Telegram deep link) is used by the renew flow and by the
+    // trial-used recovery flow (a device that already spent its trial and is
+    // logged out — no trial button, so it needs the Telegram/key path). A
+    // first-run device that still has its trial is trial-only and starts no code.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (widget.renew &&
+      final needsPairing = widget.renew || !widget.auth.trialAvailable;
+      if (needsPairing &&
           widget.auth.pairCode == null &&
           widget.auth.error == null) {
         widget.auth.startPairing();
@@ -139,11 +142,10 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // First run (non-renew): the only path is the free trial.
-                    // The user buys a subscription in Telegram afterwards and
-                    // enters/pastes the key from Settings — so there is no
-                    // Telegram / QR / manual-key option on this screen.
-                    if (!widget.renew) ...[
+                    // First run with an unused trial: the only path is the free
+                    // trial. The user buys a subscription in Telegram afterwards
+                    // and enters/pastes the key from Settings.
+                    if (!widget.renew && auth.trialAvailable) ...[
                       FilledButton.icon(
                         onPressed: auth.trialBusy ? null : () => _startTrial(s),
                         style: FilledButton.styleFrom(
@@ -167,6 +169,25 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                         const SizedBox(height: 14),
                         _ErrorBlock(message: auth.error!),
                       ],
+                    ] else if (!widget.renew) ...[
+                      // Trial-used recovery: the device already spent its free
+                      // trial but has no session (e.g. left the app right after
+                      // the grant). Never show the trial button here — it can
+                      // only 409. Offer the Telegram bot + manual key entry so
+                      // the user can get back in.
+                      if (auth.error != null) ...[
+                        _ErrorBlock(message: auth.error!),
+                        const SizedBox(height: 12),
+                      ],
+                      if (code == null)
+                        const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                        )
+                      else
+                        _telegramButton(s, primary: true),
+                      const SizedBox(height: 14),
+                      const Divider(color: AppColors.disabled, height: 1),
+                      _ManualKeyEntry(auth: auth),
                     ] else ...[
                       // Renew mode: a lapsed subscriber renews via Telegram or
                       // pastes a new key, then re-checks.

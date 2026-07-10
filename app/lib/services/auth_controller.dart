@@ -214,8 +214,13 @@ class AuthController extends ChangeNotifier {
     _subscriptionExpired = false;
     _trialAvailable = false;
     _autoConnectRequested = true;
+    // The gate flips to Home on notifyListeners; persist afterwards but *await*
+    // it so a quick back-out (which finishes the Activity) → reopen restores the
+    // session from disk instead of dropping back to the trial onboarding.
     notifyListeners();
-    unawaited(_tokenStorage.save(session).catchError((_) {}));
+    try {
+      await _tokenStorage.save(session);
+    } catch (_) {/* UI already advanced; a later refresh re-persists */}
   }
 
   Future<void> _handleUri(Uri uri) async {
@@ -239,11 +244,13 @@ class AuthController extends ChangeNotifier {
       // Entering a key should get the user online right away, like a trial
       // grant — HomeScreen reads this once and auto-connects.
       _autoConnectRequested = true;
-      // Transition the UI first; persistence is best-effort so a slow or hung
-      // secure-storage write (seen on emulators) can't strand the user on the
-      // onboarding screen — mirrors the pairing/trial paths.
+      // Transition the UI first (the gate flips to Home on notifyListeners),
+      // then await persistence so a quick back-out → reopen restores the session
+      // from disk instead of dropping back to onboarding — mirrors the trial path.
       notifyListeners();
-      unawaited(_tokenStorage.save(session).catchError((_) {}));
+      try {
+        await _tokenStorage.save(session);
+      } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
       _error = e.message;
       notifyListeners();
@@ -332,10 +339,13 @@ class AuthController extends ChangeNotifier {
           _session = status.session;
           _sessionMintedAt = DateTime.now();
           _subscriptionExpired = false;
-          // Transition the UI first; persistence is best-effort so a slow or
-          // failing secure-storage write can't strand the user on this screen.
+          // Transition the UI first (gate flips to Home), then await persistence
+          // so a quick back-out → reopen restores the session from disk instead
+          // of dropping back to onboarding — mirrors the trial path.
           notifyListeners();
-          unawaited(_tokenStorage.save(status.session!).catchError((_) {}));
+          try {
+            await _tokenStorage.save(status.session!);
+          } catch (_) {/* UI already advanced; a later refresh re-persists */}
         case PairingState.expired:
           _pollTimer?.cancel();
           _pollTimer = null;
