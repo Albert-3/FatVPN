@@ -13,6 +13,7 @@ class TokenStorage {
   static const _expiresAtKey = 'access_token_expires_at';
   static const _deviceKeyKey = 'device_attestation_key';
   static const _autoTrialKey = 'auto_trial_attempted';
+  static const _keyCodeKey = 'active_key_code';
 
   final FlutterSecureStorage _storage;
 
@@ -50,6 +51,17 @@ class TokenStorage {
     );
   }
 
+  /// The key code the user pasted to connect (the "код ключа" from the bot),
+  /// so Settings can show which key is active. Only set for the paste-key /
+  /// deep-link path — pairing/trial sessions have no user-entered code.
+  /// Cleared by [clear] so signing out or switching sessions drops the label.
+  Future<void> saveKeyCode(String code) =>
+      _storage.write(key: _keyCodeKey, value: code);
+
+  Future<void> clearKeyCode() => _storage.delete(key: _keyCodeKey);
+
+  Future<String?> readKeyCode() => _storage.read(key: _keyCodeKey);
+
   Future<AuthSession?> read() async {
     final accessToken = await _storage.read(key: _accessTokenKey);
     final expiresAtRaw = await _storage.read(key: _expiresAtKey);
@@ -67,5 +79,6 @@ class TokenStorage {
     await _storage.delete(key: _accessTokenKey);
     await _storage.delete(key: _refreshTokenKey);
     await _storage.delete(key: _expiresAtKey);
+    await _storage.delete(key: _keyCodeKey);
   }
 }

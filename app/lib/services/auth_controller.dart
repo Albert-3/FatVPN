@@ -49,8 +49,17 @@ class AuthController extends ChangeNotifier {
   DateTime? _sessionMintedAt;
   static const _skipResumeRefreshWindow = Duration(seconds: 90);
 
+  // The key code the user pasted to connect (the "код ключа" from the bot).
+  // Shown in Settings so a user holding several keys can see which is active.
+  // Null for pairing/trial sessions, which have no user-entered code.
+  String? _keyCode;
+
   AuthSession? get session => _session;
   bool get initializing => _initializing;
+
+  /// The pasted key code backing the current session, or null when the session
+  /// came from pairing/trial (no user-entered code). Restored across restarts.
+  String? get keyCode => _keyCode;
 
   /// When the current session was last *replaced* (trial grant, key exchange,
   /// pairing). Unchanged by silent refreshes, so a screen can reload subscription
@@ -101,6 +110,7 @@ class AuthController extends ChangeNotifier {
     final stored = await _tokenStorage.read();
     if (stored != null) {
       _session = stored;
+      _keyCode = await _tokenStorage.readKeyCode();
       log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
     } else {
       log.i('No stored session — starting onboarding');
@@ -210,6 +220,9 @@ class AuthController extends ChangeNotifier {
     _pollTimer = null;
     _pairing = null;
     _session = session;
+    // A trial has no user-entered key code — drop any stale one from storage.
+    _keyCode = null;
+    unawaited(_tokenStorage.clearKeyCode());
     _sessionMintedAt = DateTime.now();
     _subscriptionExpired = false;
     _trialAvailable = false;
@@ -239,6 +252,7 @@ class AuthController extends ChangeNotifier {
       _error = null;
       final session = await _apiClient.exchangeToken(shortToken);
       _session = session;
+      _keyCode = shortToken;
       _sessionMintedAt = DateTime.now();
       _subscriptionExpired = false;
       // Entering a key should get the user online right away, like a trial
@@ -250,6 +264,7 @@ class AuthController extends ChangeNotifier {
       notifyListeners();
       try {
         await _tokenStorage.save(session);
+        await _tokenStorage.saveKeyCode(shortToken);
       } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
       _error = e.message;
@@ -337,6 +352,9 @@ class AuthController extends ChangeNotifier {
           _pollTimer = null;
           _pairing = null;
           _session = status.session;
+          // Pairing has no user-entered key code — drop any stale one.
+          _keyCode = null;
+          unawaited(_tokenStorage.clearKeyCode());
           _sessionMintedAt = DateTime.now();
           _subscriptionExpired = false;
           // Transition the UI first (gate flips to Home), then await persistence
@@ -373,6 +391,7 @@ class AuthController extends ChangeNotifier {
     }
     await _tokenStorage.clear();
     _session = null;
+    _keyCode = null;
     _subscriptionExpired = false;
     notifyListeners();
   }

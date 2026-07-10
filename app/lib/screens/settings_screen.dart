@@ -501,16 +501,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _expiryLabel(s, status.expiresAt),
           style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
         ),
-        if (status.subscriptionId != null) ...[
+        if (_activeKey(status) case final activeKey?) ...[
           const Divider(color: AppColors.disabled, height: 24),
-          _currentKeyRow(s, status.subscriptionId!),
+          _currentKeyRow(s, activeKey),
         ],
       ],
     );
   }
 
-  /// Shows the connected subscription id (key) with a copy action, so a user
-  /// holding several keys can tell which one is active.
+  /// Which identifier to show as the active key: the code the user pasted from
+  /// the bot (what they recognize), falling back to the Remnawave subscription
+  /// id for pairing/trial sessions that have no user-entered code.
+  String? _activeKey(AccountStatus status) =>
+      widget.auth.keyCode ?? status.subscriptionId;
+
+  /// Shows the active key (pasted code or subscription id) with a copy action,
+  /// so a user holding several keys can tell which one is active.
   Widget _currentKeyRow(Strings s, String subscriptionId) {
     return Row(
       children: [
