@@ -8,9 +8,11 @@ import '../l10n/strings.dart';
 /// expires — no server or FCM involved. The app knows the expiry from
 /// `AuthSession.expiresAt` and re-plans reminders whenever that changes.
 ///
-/// Reminders fire at 3 days before, 1 day before, and at the moment of expiry
-/// (only those still in the future). Since the session only carries `expiresAt`
-/// (not whether it's a trial or a paid plan), the copy is intentionally generic.
+/// Reminders fire at 3 days before, 1 day before, 30 minutes before, 15 minutes
+/// before, and at the moment of expiry (only those still in the future). The
+/// two short-notice (minute) reminders use an exact alarm so they aren't delayed
+/// past expiry by Doze. Since the session only carries `expiresAt` (not whether
+/// it's a trial or a paid plan), the copy is intentionally generic.
 class NotificationService {
   NotificationService({FlutterLocalNotificationsPlugin? plugin})
       : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
@@ -31,6 +33,8 @@ class NotificationService {
   static const _idExpiry3d = 2001;
   static const _idExpiry1d = 2002;
   static const _idExpired = 2003;
+  static const _idExpiry30m = 2004;
+  static const _idExpiry15m = 2005;
 
   /// Initializes the plugin, the timezone database, and requests the OS
   /// notification permission (Android 13+ / iOS). Safe to call once at startup.
@@ -55,6 +59,9 @@ class NotificationService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
+    // Needed for the exact short-notice (30/15-min) reminders on Android 12+;
+    // no-op on older APIs. Best-effort — ignore if the user declines.
+    await android?.requestExactAlarmsPermission();
 
     final ios = _plugin.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
@@ -95,6 +102,23 @@ class NotificationService {
       strings.notifExpiringSoonTitle,
       strings.notifExpiresInDays(1),
     );
+    // Short-notice reminders — exact so Doze can't push them past expiry.
+    await _scheduleIfFuture(
+      _idExpiry30m,
+      expiresAt.subtract(const Duration(minutes: 30)),
+      now,
+      strings.notifExpiringSoonTitle,
+      strings.notifExpiresInMinutes(30),
+      exact: true,
+    );
+    await _scheduleIfFuture(
+      _idExpiry15m,
+      expiresAt.subtract(const Duration(minutes: 15)),
+      now,
+      strings.notifExpiringSoonTitle,
+      strings.notifExpiresInMinutes(15),
+      exact: true,
+    );
     await _scheduleIfFuture(
       _idExpired,
       expiresAt,
@@ -107,6 +131,8 @@ class NotificationService {
   Future<void> _cancelAll() async {
     await _plugin.cancel(_idExpiry3d);
     await _plugin.cancel(_idExpiry1d);
+    await _plugin.cancel(_idExpiry30m);
+    await _plugin.cancel(_idExpiry15m);
     await _plugin.cancel(_idExpired);
   }
 
@@ -115,8 +141,9 @@ class NotificationService {
     DateTime when,
     DateTime now,
     String title,
-    String body,
-  ) async {
+    String body, {
+    bool exact = false,
+  }) async {
     if (!when.isAfter(now)) return;
     try {
       await _plugin.zonedSchedule(
@@ -134,9 +161,12 @@ class NotificationService {
           ),
           iOS: DarwinNotificationDetails(),
         ),
-        // Reminders don't need alarm-clock precision — inexact avoids the
-        // SCHEDULE_EXACT_ALARM permission and still fires within the window.
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        // Day-scale reminders don't need alarm-clock precision (inexact avoids
+        // SCHEDULE_EXACT_ALARM); the minute-scale ones must be exact or Doze can
+        // delay them past expiry.
+        androidScheduleMode: exact
+            ? AndroidScheduleMode.exactAllowWhileIdle
+            : AndroidScheduleMode.inexactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
       );

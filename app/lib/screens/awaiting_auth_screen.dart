@@ -368,8 +368,9 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
   Future<void> _submit() async {
     final code = _controller.text.trim();
     if (code.isEmpty || _submitting) return;
+    final s = S.of(context);
     setState(() => _submitting = true);
-    await widget.auth.exchangeShortToken(code);
+    await widget.auth.exchangeShortToken(code, conflictMessage: s.keyBoundToOtherDevice);
     if (mounted) setState(() => _submitting = false);
   }
 

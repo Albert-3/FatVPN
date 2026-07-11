@@ -109,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final code = _keyController.text.trim();
     if (code.isEmpty || _submittingKey) return;
     setState(() => _submittingKey = true);
-    await widget.auth.exchangeShortToken(code);
+    await widget.auth.exchangeShortToken(code, conflictMessage: s.keyBoundToOtherDevice);
     if (!mounted) return;
     setState(() => _submittingKey = false);
     if (widget.auth.error == null) {

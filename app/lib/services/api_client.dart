@@ -96,11 +96,14 @@ class ApiClient {
     }
   }
 
-  Future<AuthSession> exchangeToken(String shortToken) async {
+  /// Exchanges a subscription key for a session. [attestationToken] is the
+  /// stable per-install device key; the BFF binds the key to the first device
+  /// (one key = one phone) and returns 409 if a different device presents it.
+  Future<AuthSession> exchangeToken(String shortToken, String attestationToken) async {
     final response = await _httpClient.post(
       Uri.parse('$_baseUrl/auth/token'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'shortToken': shortToken}),
+      body: jsonEncode({'shortToken': shortToken, 'attestationToken': attestationToken}),
     );
 
     if (response.statusCode != 200) {

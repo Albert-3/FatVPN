@@ -247,10 +247,11 @@ class AuthController extends ChangeNotifier {
     await exchangeShortToken(shortToken);
   }
 
-  Future<void> exchangeShortToken(String shortToken) async {
+  Future<void> exchangeShortToken(String shortToken, {String? conflictMessage}) async {
     try {
       _error = null;
-      final session = await _apiClient.exchangeToken(shortToken);
+      final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
+      final session = await _apiClient.exchangeToken(shortToken, deviceKey);
       _session = session;
       _keyCode = shortToken;
       _sessionMintedAt = DateTime.now();
@@ -267,7 +268,9 @@ class AuthController extends ChangeNotifier {
         await _tokenStorage.saveKeyCode(shortToken);
       } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
-      _error = e.message;
+      _error = (e.statusCode == 409 && conflictMessage != null)
+          ? conflictMessage
+          : e.message;
       notifyListeners();
     } catch (_) {
       _error = 'Could not reach the server. Check your connection and try again.';

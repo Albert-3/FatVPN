@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Re-schedule pending reminders after a device reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Exact short-notice (30/15-min-before-expiry) reminders on Android 12+.
+         Requested at runtime; on API < 31 exact alarms need no permission.
+         Using SCHEDULE_EXACT_ALARM (not USE_EXACT_ALARM) to stay within Google
+         Play policy for a non-alarm app. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <application
         android:label="fatvpn_app"
         android:name="${applicationName}"

@@ -70,6 +70,7 @@ class Strings {
     required this.trialAlreadyUsed,
     required this.trialNoCapacity,
     required this.trialFailed,
+    required this.keyBoundToOtherDevice,
     required this.subscriptionExpiredTitle,
     required this.subscriptionExpiredSubtitle,
     required this.renewViaTelegram,
@@ -84,6 +85,7 @@ class Strings {
     required this.splitTunnelDisabledHint,
     required this.notifExpiringSoonTitle,
     required this.notifExpiresInDays,
+    required this.notifExpiresInMinutes,
     required this.notifExpiredTitle,
     required this.notifExpiredBody,
   });
@@ -160,6 +162,7 @@ class Strings {
   final String trialAlreadyUsed;
   final String trialNoCapacity;
   final String trialFailed;
+  final String keyBoundToOtherDevice;
   final String subscriptionExpiredTitle;
   final String subscriptionExpiredSubtitle;
   final String renewViaTelegram;
@@ -180,6 +183,10 @@ class Strings {
   /// Body of the reminder N days before expiry (handles pluralization).
   final String Function(int days) notifExpiresInDays;
 
+  /// Short-notice reminder body ("… expires in N minutes") fired shortly before
+  /// the subscription/trial lapses.
+  final String Function(int minutes) notifExpiresInMinutes;
+
   /// Title/body shown at the moment the subscription/trial has lapsed.
   final String notifExpiredTitle;
   final String notifExpiredBody;
@@ -199,6 +206,14 @@ String _ruPluralHours(int n) {
   if (mod10 == 1 && mod100 != 11) return 'час';
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'часа';
   return 'часов';
+}
+
+String _ruPluralMinutes(int n) {
+  final mod10 = n % 10;
+  final mod100 = n % 100;
+  if (mod10 == 1 && mod100 != 11) return 'минуту';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'минуты';
+  return 'минут';
 }
 
 const Strings enStrings = Strings(
@@ -270,6 +285,7 @@ const Strings enStrings = Strings(
   trialAlreadyUsed: 'A trial was already used on this device.',
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
+  keyBoundToOtherDevice: 'This key is already linked to another phone. Change your key in the bot to move it to this device.',
   subscriptionExpiredTitle: 'Subscription expired',
   subscriptionExpiredSubtitle: 'Renew in Telegram to keep using FatVPN — the app reconnects automatically once your subscription is active again.',
   renewViaTelegram: 'Renew via Telegram',
@@ -284,12 +300,17 @@ const Strings enStrings = Strings(
   splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
   notifExpiringSoonTitle: 'Subscription ending soon',
   notifExpiresInDays: _enNotifExpiresInDays,
+  notifExpiresInMinutes: _enNotifExpiresInMinutes,
   notifExpiredTitle: 'Subscription expired',
   notifExpiredBody: 'Renew in Telegram to keep using FatVPN.',
 );
 
 String _enNotifExpiresInDays(int n) =>
     'Your access expires in $n day${n == 1 ? '' : 's'}. '
+    'Renew in Telegram to stay connected.';
+
+String _enNotifExpiresInMinutes(int n) =>
+    'Your access expires in $n minute${n == 1 ? '' : 's'}. '
     'Renew in Telegram to stay connected.';
 
 String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
@@ -367,6 +388,7 @@ final Strings ruStrings = Strings(
   trialAlreadyUsed: 'Пробный период уже был использован на этом устройстве.',
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
+  keyBoundToOtherDevice: 'Этот ключ уже привязан к другому телефону. Смените ключ в боте, чтобы перенести его на это устройство.',
   subscriptionExpiredTitle: 'Подписка истекла',
   subscriptionExpiredSubtitle: 'Продлите подписку в Telegram, чтобы продолжить пользоваться FatVPN — приложение переподключится автоматически, как только подписка снова станет активной.',
   renewViaTelegram: 'Продлить через Telegram',
@@ -382,6 +404,8 @@ final Strings ruStrings = Strings(
   notifExpiringSoonTitle: 'Подписка скоро закончится',
   notifExpiresInDays: (n) =>
       'Доступ истекает через $n ${_ruPluralDays(n)}. Продлите в Telegram, чтобы остаться на связи.',
+  notifExpiresInMinutes: (n) =>
+      'Доступ истекает через $n ${_ruPluralMinutes(n)}. Продлите в Telegram, чтобы остаться на связи.',
   notifExpiredTitle: 'Подписка истекла',
   notifExpiredBody: 'Продлите в Telegram, чтобы продолжить пользоваться FatVPN.',
 );
