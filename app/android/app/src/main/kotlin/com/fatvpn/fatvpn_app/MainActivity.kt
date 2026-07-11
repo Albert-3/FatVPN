@@ -3,7 +3,6 @@ package com.fatvpn.fatvpn_app
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -18,7 +17,13 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "getLaunchableApps" -> result.success(getLaunchableApps())
+                    // Runs off the main thread: enumerating launcher apps and
+                    // decoding/compressing every icon takes seconds and would
+                    // otherwise freeze the UI (including the screen transition).
+                    "getLaunchableApps" -> Thread {
+                        val apps = getLaunchableApps()
+                        runOnUiThread { result.success(apps) }
+                    }.start()
                     else -> result.notImplemented()
                 }
             }
@@ -48,22 +53,21 @@ class MainActivity : FlutterActivity() {
     private fun drawableToPng(drawable: Drawable?): ByteArray? {
         if (drawable == null) return null
         return try {
-            val bitmap = if (drawable is BitmapDrawable && drawable.bitmap != null) {
-                drawable.bitmap
-            } else {
-                val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
-                val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
-                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bmp)
-                drawable.setBounds(0, 0, canvas.width, canvas.height)
-                drawable.draw(canvas)
-                bmp
-            }
+            // Cap icon size — the picker renders them at 36dp, so full-res
+            // adaptive icons (often 288px+) just waste decode/compress time.
+            val bmp = Bitmap.createBitmap(ICON_SIZE_PX, ICON_SIZE_PX, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
             val stream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)
             stream.toByteArray()
         } catch (e: Exception) {
             null
         }
+    }
+
+    private companion object {
+        const val ICON_SIZE_PX = 96
     }
 }

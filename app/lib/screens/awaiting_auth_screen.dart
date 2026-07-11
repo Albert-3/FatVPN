@@ -117,151 +117,225 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+            child: ConstrainedBox(
+              // Fill the viewport (minus the 12+12 vertical padding) so the
+              // content can be vertically centered, while still scrolling when
+              // the taller renew/recovery layouts overflow.
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight - 24,
+              ),
+              child: IntrinsicHeight(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                     Align(
                       alignment: Alignment.centerRight,
                       child: _LanguageToggle(),
                     ),
-                    const SizedBox(height: 4),
-                    Center(child: Image.asset('assets/images/logo.png', height: 44)),
-                    const SizedBox(height: 16),
-                    Text(
-                      widget.renew
-                          ? s.subscriptionExpiredTitle
-                          : recovery
-                              ? s.trialUsedTitle
-                              : s.openBotTitle,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.renew
-                          ? s.subscriptionExpiredSubtitle
-                          : recovery
-                              ? s.trialUsedSubtitle
-                              : s.openBotSubtitle,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.35),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // First run with an unused trial: the only path is the free
-                    // trial. The user buys a subscription in Telegram afterwards
-                    // and enters/pastes the key from Settings.
-                    if (!widget.renew && auth.trialAvailable) ...[
-                      FilledButton.icon(
-                        onPressed: auth.trialBusy ? null : () => _startTrial(s),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.accent,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        icon: auth.trialBusy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                              )
-                            : const Icon(Icons.bolt, size: 22),
-                        label: Text(
-                          s.tryFreeTrial,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                        ),
-                      ),
-                      if (auth.error != null) ...[
-                        const SizedBox(height: 14),
-                        _ErrorBlock(message: auth.error!),
-                      ],
-                    ] else if (!widget.renew) ...[
-                      // Trial-used recovery: the device already spent its free
-                      // trial but has no session (e.g. left the app right after
-                      // the grant). Never show the trial button here — it can
-                      // only 409. Offer the Telegram bot + manual key entry so
-                      // the user can get back in.
-                      if (auth.error != null) ...[
-                        _ErrorBlock(message: auth.error!),
-                        const SizedBox(height: 12),
-                      ],
-                      if (code == null)
-                        const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
-                        )
-                      else
-                        _telegramButton(s, primary: true),
-                      const SizedBox(height: 14),
-                      const Divider(color: AppColors.disabled, height: 1),
-                      _ManualKeyEntry(auth: auth),
-                    ] else ...[
-                      // Renew mode: a lapsed subscriber renews via Telegram or
-                      // pastes a new key, then re-checks.
-                      if (auth.error != null) ...[
-                        _ErrorBlock(message: auth.error!),
-                        const SizedBox(height: 12),
-                        OutlinedButton(
-                          onPressed: auth.startPairing,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AppColors.accent,
-                            side: const BorderSide(color: AppColors.accent),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 4),
+                          Center(
+                            child: Image.asset(
+                              'assets/images/logo.png',
+                              height: 44,
+                            ),
                           ),
-                          child: Text(s.getNewCode, style: const TextStyle(fontWeight: FontWeight.w700)),
-                        ),
-                      ] else if (code == null) ...[
-                        const SizedBox(height: 8),
-                        const Center(
-                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
-                        ),
-                      ] else ...[
-                        _telegramButton(s, primary: true),
-                        const SizedBox(height: 12),
-                        _CrossDeviceBlock(code: code, uri: auth.telegramPairUri!, hint: s.pairingScanHint),
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                          const SizedBox(height: 16),
+                          Text(
+                            widget.renew
+                                ? s.subscriptionExpiredTitle
+                                : recovery
+                                ? s.trialUsedTitle
+                                : s.openBotTitle,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
                             ),
-                            const SizedBox(width: 10),
-                            Text(
-                              s.pairingWaiting,
-                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            widget.renew
+                                ? s.subscriptionExpiredSubtitle
+                                : recovery
+                                ? s.trialUsedSubtitle
+                                : s.openBotSubtitle,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 13,
+                              height: 1.35,
                             ),
-                          ],
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: _checking ? null : _checkAgain,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.accent,
-                          side: const BorderSide(color: AppColors.accent),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                        ),
-                        child: _checking
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+                          ),
+                          const SizedBox(height: 20),
+
+                          // First run with an unused trial: the only path is the free
+                          // trial. The user buys a subscription in Telegram afterwards
+                          // and enters/pastes the key from Settings.
+                          if (!widget.renew && auth.trialAvailable) ...[
+                            FilledButton.icon(
+                              onPressed: auth.trialBusy
+                                  ? null
+                                  : () => _startTrial(s),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.accent,
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                              ),
+                              icon: auth.trialBusy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.black,
+                                      ),
+                                    )
+                                  : const Icon(Icons.bolt, size: 22),
+                              label: Text(
+                                s.tryFreeTrial,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                            if (auth.error != null) ...[
+                              const SizedBox(height: 14),
+                              _ErrorBlock(message: auth.error!),
+                            ],
+                          ] else if (!widget.renew) ...[
+                            // Trial-used recovery: the device already spent its free
+                            // trial but has no session (e.g. left the app right after
+                            // the grant). Never show the trial button here — it can
+                            // only 409. Offer the Telegram bot + manual key entry so
+                            // the user can get back in.
+                            if (auth.error != null) ...[
+                              _ErrorBlock(message: auth.error!),
+                              const SizedBox(height: 12),
+                            ],
+                            if (code == null)
+                              const Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.accent,
+                                ),
                               )
-                            : Text(s.checkAgain, style: const TextStyle(fontWeight: FontWeight.w700)),
+                            else
+                              _telegramButton(s, primary: true),
+                            const SizedBox(height: 14),
+                            const Divider(color: AppColors.disabled, height: 1),
+                            _ManualKeyEntry(auth: auth),
+                          ] else ...[
+                            // Renew mode: a lapsed subscriber renews via Telegram or
+                            // pastes a new key, then re-checks.
+                            if (auth.error != null) ...[
+                              _ErrorBlock(message: auth.error!),
+                              const SizedBox(height: 12),
+                              OutlinedButton(
+                                onPressed: auth.startPairing,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppColors.accent,
+                                  side: const BorderSide(
+                                    color: AppColors.accent,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
+                                ),
+                                child: Text(
+                                  s.getNewCode,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ] else if (code == null) ...[
+                              const SizedBox(height: 8),
+                              const Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.accent,
+                                ),
+                              ),
+                            ] else ...[
+                              _telegramButton(s, primary: true),
+                              const SizedBox(height: 12),
+                              _CrossDeviceBlock(
+                                code: code,
+                                uri: auth.telegramPairUri!,
+                                hint: s.pairingScanHint,
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppColors.accent,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    s.pairingWaiting,
+                                    style: const TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            OutlinedButton(
+                              onPressed: _checking ? null : _checkAgain,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.accent,
+                                side: const BorderSide(color: AppColors.accent),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
+                              ),
+                              child: _checking
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.accent,
+                                      ),
+                                    )
+                                  : Text(
+                                      s.checkAgain,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                            ),
+                            const SizedBox(height: 14),
+                            const Divider(color: AppColors.disabled, height: 1),
+                            _ManualKeyEntry(auth: auth),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 14),
-                      const Divider(color: AppColors.disabled, height: 1),
-                      _ManualKeyEntry(auth: auth),
-                    ],
-            ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -314,7 +388,10 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
           ),
           label: Text(
             s.haveKeyTitle,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 13,
+            ),
           ),
         ),
         if (_expanded) ...[
@@ -324,7 +401,10 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
             autocorrect: false,
             enableSuggestions: false,
             textCapitalization: TextCapitalization.characters,
-            style: const TextStyle(color: AppColors.textPrimary, letterSpacing: 1.5),
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              letterSpacing: 1.5,
+            ),
             onSubmitted: (_) => _submit(),
             decoration: InputDecoration(
               hintText: s.enterKeyHint,
@@ -349,9 +429,15 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.black,
+                    ),
                   )
-                : Text(s.submitKey, style: const TextStyle(fontWeight: FontWeight.w700)),
+                : Text(
+                    s.submitKey,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
           ),
         ],
       ],
@@ -377,15 +463,22 @@ class _LanguageToggle extends StatelessWidget {
               onTap: () => locale.setLanguage(lang),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
-                  color: locale.language == lang ? AppColors.accent : Colors.transparent,
+                  color: locale.language == lang
+                      ? AppColors.accent
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Text(
                   lang == AppLanguage.ru ? 'RU' : 'EN',
                   style: TextStyle(
-                    color: locale.language == lang ? Colors.black : AppColors.textSecondary,
+                    color: locale.language == lang
+                        ? Colors.black
+                        : AppColors.textSecondary,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -421,7 +514,11 @@ class _ErrorBlock extends StatelessWidget {
 }
 
 class _CrossDeviceBlock extends StatelessWidget {
-  const _CrossDeviceBlock({required this.code, required this.uri, required this.hint});
+  const _CrossDeviceBlock({
+    required this.code,
+    required this.uri,
+    required this.hint,
+  });
 
   final String code;
   final Uri uri;
@@ -434,7 +531,11 @@ class _CrossDeviceBlock extends StatelessWidget {
         Text(
           hint,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.3),
+          style: const TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            height: 1.3,
+          ),
         ),
         const SizedBox(height: 10),
         Container(
