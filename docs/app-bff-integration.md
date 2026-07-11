@@ -550,3 +550,28 @@ pairing, trial, разрешение подписки, гейтинг защищ
   (`origin/master`); в неё также вошли рабочее дерево бэкенда (pairing/subscription
   hardening), тест-проект `backend/tests/` и доки. Пункт «merge в master» из списка
   выше **закрыт**.
+
+## Диагностика «в приложении меньше нод, чем в панели» + PoC Hysteria (2026-07-11)
+
+**Симптом:** в панели Remnawave много нод, а в «Выборе локации» — 6 стран (DE, FI, ES, NO, TR, AM).
+
+**Разбор (по живому Remnawave API, `z.fatvdsnvv.space`):** приложение показывает **пересечение**
+`/servers` (все ноды `isConnected && !isDisabled`) ∩ `/config` (ноды подписки), матч по адресу
+`host == node.address` (`getUsableServers`, `api_client.dart`). Это by design — предлагать ноды не
+из подписки бессмысленно (при коннекте «No available node in this subscription»). Причины пропажи:
+- **PL, NL** — их vless-хосты **есть** в подписке, но ноды (`pol_take` 87.239.135.53,
+  `neth_play2` 31.77.157.229) `isConnected=false` → фильтр `/servers` их убирает. Фикс — поднять ноды (инфра).
+- **FR, US, FI-H2** — Hysteria2-ноды (`FAT-France-HY`/`FAT-Usa-HY`/`FAT-Finland-HY`). Всё
+  сконфигурировано верно (host включён, inbound активен на онлайн-ноде, в Default-Squad, UUID
+  совпадают), но Remnawave **не рендерит Hysteria ни в один формат подписки** (base64/sing-box/clash) —
+  они на Xray-hysteria-плагине, генератор их пропускает. Это сторона панели.
+- **«Авто» (`web.max.ru`), «Белые списки» (`81.222.127.189`)** — нет ноды в `/api/nodes` → скрыты.
+
+**PoC (реализован):** т.к. правки Remnawave вне нашей зоны, обходим на стороне BFF —
+`SubscriptionAugmenter` дописывает синтезированные `hysteria2://`-ссылки в `/config` (auth = `vlessUuid`
+из vless-строк подписки; params — из Happ/xray-json рендера). См. `docs/api-contract.md` → `GET /config`.
+Задеплоено на прод (ветка прода `feat/pairing-onboarding`: файл взят `git checkout origin/master -- …`,
+строка вызова в `ConfigController` добавлена вручную — cherry-pick конфликтовал). Прод `/config` теперь
+отдаёт 13 vless + 3 hysteria2. **Осталось:** проверить на устройстве, что sing-box реально поднимает
+тоннель к Xray-hysteria-серверу; если да — тянуть хосты из `/api/hosts` вместо хардкода и оформить в код
+(коммит `77624b2` на `master`).
