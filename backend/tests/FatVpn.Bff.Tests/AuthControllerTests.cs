@@ -1,5 +1,6 @@
 using FatVpn.Bff.Api.Controllers;
 using FatVpn.Bff.Domain;
+using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -9,7 +10,7 @@ namespace FatVpn.Bff.Tests;
 public class AuthControllerTests
 {
     private static AuthController NewController(Infrastructure.FatVpnDbContext db)
-        => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService());
+        => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(), TestHelpers.Opt(new TrialOptions()));
 
     [Fact]
     public async Task ExchangeToken_ValidShortToken_ReturnsAccessAndRefresh()
@@ -54,6 +55,82 @@ public class AuthControllerTests
 
         var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("OLD"), default);
         Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_FirstDevice_BindsKeyToThatDevice()
+    {
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+
+        Assert.IsType<OkObjectResult>(result);
+        var token = await db.Tokens.SingleAsync(t => t.ShortToken == "K");
+        Assert.NotNull(token.BoundDeviceKeyHash);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_SameDeviceReentersKey_Succeeds()
+    {
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+
+        Assert.IsType<OkObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_DifferentDevice_ReturnsConflict()
+    {
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-B"), default);
+
+        Assert.IsType<ConflictResult>(result);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_NoAttestation_IssuesWithoutBinding()
+    {
+        // Older app builds send no attestation; the session is still issued and
+        // the key stays unbound so a real device can claim it later.
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K"), default);
+
+        Assert.IsType<OkObjectResult>(result);
+        var token = await db.Tokens.SingleAsync(t => t.ShortToken == "K");
+        Assert.Null(token.BoundDeviceKeyHash);
     }
 
     [Fact]

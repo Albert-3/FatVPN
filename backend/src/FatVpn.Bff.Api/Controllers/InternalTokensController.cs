@@ -34,6 +34,9 @@ public class InternalTokensController(FatVpnDbContext db, IOptions<BotOptions> b
 
         token.RemnawaveSubscriptionId = request.RemnawaveSubscriptionId;
         token.ExpiresAt = request.ExpiresAt;
+        // Reissuing a key unbinds it, so a user who changed/reinstalled their
+        // phone can re-activate on the new device ("Поменять ключ" in the bot).
+        token.BoundDeviceKeyHash = null;
 
         await db.SaveChangesAsync(ct);
         return StatusCode(StatusCodes.Status201Created);

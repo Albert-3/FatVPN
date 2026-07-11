@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
@@ -24,7 +22,7 @@ public class TrialController(
     [HttpPost]
     public async Task<IActionResult> GrantTrial([FromBody] TrialRequest request, CancellationToken ct)
     {
-        var deviceKeyHash = ComputeDeviceKeyHash(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
+        var deviceKeyHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
 
         var device = await db.Devices.SingleOrDefaultAsync(d => d.DeviceKeyHash == deviceKeyHash, ct);
         if (device is not null && await db.Trials.AnyAsync(t => t.DeviceId == device.Id, ct))
@@ -89,12 +87,6 @@ public class TrialController(
         await db.SaveChangesAsync(ct);
 
         return Ok(new { accessToken, refreshToken = refreshRaw, expiresAt = created.ExpiresAt });
-    }
-
-    private static string ComputeDeviceKeyHash(string attestationToken, string salt)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(salt + attestationToken));
-        return Convert.ToHexString(hash);
     }
 }
 

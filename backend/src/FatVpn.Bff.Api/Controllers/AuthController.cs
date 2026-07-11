@@ -1,8 +1,10 @@
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
+using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace FatVpn.Bff.Api.Controllers;
 
@@ -11,7 +13,8 @@ namespace FatVpn.Bff.Api.Controllers;
 public class AuthController(
     FatVpnDbContext db,
     IJwtTokenService jwtTokenService,
-    IRefreshTokenService refreshTokenService) : ControllerBase
+    IRefreshTokenService refreshTokenService,
+    IOptions<TrialOptions> trialOptions) : ControllerBase
 {
     [HttpPost("token")]
     public async Task<IActionResult> ExchangeToken([FromBody] ExchangeTokenRequest request, CancellationToken ct)
@@ -20,6 +23,23 @@ public class AuthController(
         if (token is null || token.ExpiresAt <= DateTimeOffset.UtcNow)
         {
             return NotFound();
+        }
+
+        // One key = one phone: the first device to redeem a key binds it; a
+        // different device presenting the same key is refused (409). A missing/
+        // empty attestation (older app builds) issues a session without binding
+        // so existing clients keep working during rollout.
+        if (!string.IsNullOrEmpty(request.AttestationToken))
+        {
+            var deviceHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
+            if (token.BoundDeviceKeyHash is null)
+            {
+                token.BoundDeviceKeyHash = deviceHash;
+            }
+            else if (!string.Equals(token.BoundDeviceKeyHash, deviceHash, StringComparison.Ordinal))
+            {
+                return Conflict();
+            }
         }
 
         var accessToken = jwtTokenService.CreateAccessToken(token);
@@ -134,6 +154,6 @@ public class AuthController(
     }
 }
 
-public sealed record ExchangeTokenRequest(string ShortToken);
+public sealed record ExchangeTokenRequest(string ShortToken, string? AttestationToken = null);
 
 public sealed record RefreshRequest(string RefreshToken);
