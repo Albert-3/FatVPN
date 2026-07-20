@@ -21,11 +21,6 @@ workflows:
         script: |
           cd app/ios
           pod install
-      - name: Fetch signing files
-        script: |
-          app-store-connect fetch-signing-files com.fatvpn.fatvpnApp \
-            --type IOS_APP_STORE \
-            --create
       - name: Set up code signing settings on Xcode project
         script: |
           cd app
