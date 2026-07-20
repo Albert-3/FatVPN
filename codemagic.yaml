@@ -1,4 +1,47 @@
 workflows:
+  ios-release:
+    name: iOS release (TestFlight)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: Codemagic
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.fatvpn.fatvpnApp
+    scripts:
+      - name: Flutter pub get
+        script: |
+          cd app
+          flutter pub get
+      - name: Pod install
+        script: |
+          cd app/ios
+          pod install
+      - name: Fetch signing files
+        script: |
+          app-store-connect fetch-signing-files com.fatvpn.fatvpnApp \
+            --type IOS_APP_STORE \
+            --create
+      - name: Set up code signing settings on Xcode project
+        script: |
+          cd app
+          xcode-project use-profiles
+      - name: Build ipa
+        script: |
+          cd app
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - app/build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+
   ios-unsigned:
     name: iOS build (unsigned validation)
     instance_type: mac_mini_m2
