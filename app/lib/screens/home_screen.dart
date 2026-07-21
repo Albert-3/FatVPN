@@ -259,7 +259,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;
     try {
-      final picked = await _vpn.connectToBestOverall(_servers, session.accessToken);
+      final picked = await _vpn.connectToBestOverall(
+        _servers,
+        session.accessToken,
+        networkErrorMessage: S.of(context).couldNotReachServer,
+      );
       if (picked != null && mounted) {
         setState(() => _selectedServer = picked);
       }
@@ -281,11 +285,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _connectCurrentSelection() async {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;
+    final networkErrorMessage = S.of(context).couldNotReachServer;
     try {
       if (_serverExplicitlySelected && _selectedServer != null) {
-        await _vpn.connectToBestNode(_selectedServer!, session.accessToken);
+        await _vpn.connectToBestNode(
+          _selectedServer!,
+          session.accessToken,
+          networkErrorMessage: networkErrorMessage,
+        );
       } else {
-        final picked = await _vpn.connectToBestOverall(_servers, session.accessToken);
+        final picked = await _vpn.connectToBestOverall(
+          _servers,
+          session.accessToken,
+          networkErrorMessage: networkErrorMessage,
+        );
         if (picked != null && mounted) {
           setState(() => _selectedServer = picked);
         }

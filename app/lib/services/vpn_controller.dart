@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:singbox_mm/singbox_mm.dart';
 
 import '../models/server_country.dart';
@@ -47,8 +49,12 @@ class VpnController extends ChangeNotifier {
     _initialized = true;
   }
 
-  Future<void> connectToBestNode(ServerCountry country, String accessToken) async {
-    await _connect(country.nodes, accessToken);
+  Future<void> connectToBestNode(
+    ServerCountry country,
+    String accessToken, {
+    required String networkErrorMessage,
+  }) async {
+    await _connect(country.nodes, accessToken, networkErrorMessage: networkErrorMessage);
   }
 
   /// Connects to the fastest node across *all* countries — used when the
@@ -59,15 +65,25 @@ class VpnController extends ChangeNotifier {
   /// reflect the auto-picked location in the UI.
   Future<ServerCountry?> connectToBestOverall(
     List<ServerCountry> countries,
-    String accessToken,
-  ) async {
+    String accessToken, {
+    required String networkErrorMessage,
+  }) async {
     final allNodes = countries.expand((c) => c.nodes).toList();
-    final node = await _connect(allNodes, accessToken);
+    final node = await _connect(allNodes, accessToken, networkErrorMessage: networkErrorMessage);
     if (node == null) return null;
     return countries.firstWhere((c) => c.nodes.contains(node));
   }
 
-  Future<ServerNode?> _connect(List<ServerNode> candidates, String accessToken) async {
+  /// True for low-level connectivity failures (no signal, airplane mode,
+  /// DNS unreachable) reaching the BFF — as opposed to app/server-level
+  /// errors, which already carry a user-facing message.
+  bool _isNetworkError(Object e) => e is SocketException || e is http.ClientException;
+
+  Future<ServerNode?> _connect(
+    List<ServerNode> candidates,
+    String accessToken, {
+    required String networkErrorMessage,
+  }) async {
     _errorMessage = null;
     _state = VpnConnectionState.connecting;
     notifyListeners();
@@ -104,8 +120,12 @@ class VpnController extends ChangeNotifier {
       return node;
     } catch (e) {
       _state = VpnConnectionState.error;
-      _errorMessage = e is SignboxVpnException ? e.message : e.toString();
-      log.e('Connect failed', _errorMessage);
+      _errorMessage = e is SignboxVpnException
+          ? e.message
+          : _isNetworkError(e)
+          ? networkErrorMessage
+          : e.toString();
+      log.e('Connect failed', e.toString());
       notifyListeners();
       rethrow;
     }
