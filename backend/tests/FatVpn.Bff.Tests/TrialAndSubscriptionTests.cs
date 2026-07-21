@@ -40,13 +40,35 @@ public class TrialControllerTests
     }
 
     [Fact]
-    public async Task GrantTrial_SameDeviceTwice_Conflict()
+    public async Task GrantTrial_SameDeviceTwice_StillRunning_ResumesSession()
     {
+        // e.g. the device signed out and lost its refresh token while its trial
+        // was still running — a repeat request should hand back a fresh session
+        // for the same trial instead of a bare 409 that strands the client.
         using var db = TestHelpers.NewDb();
         var remna = OkRemna();
         await NewController(db, remna).GrantTrial(new TrialRequest("dup-device", "android"), default);
 
         var second = await NewController(db, remna).GrantTrial(new TrialRequest("dup-device", "android"), default);
+
+        Assert.IsType<OkObjectResult>(second);
+        Assert.Equal(1, await db.Trials.CountAsync()); // no second trial granted
+        Assert.Equal(1, await db.Tokens.CountAsync()); // same underlying token reused
+        Assert.Equal(2, await db.RefreshTokens.CountAsync()); // a fresh refresh token was issued
+    }
+
+    [Fact]
+    public async Task GrantTrial_SameDeviceTwice_TrialExpired_Conflict()
+    {
+        using var db = TestHelpers.NewDb();
+        // Panel-reported expiry already in the past, regardless of what was requested.
+        var remna = new FakeRemnawaveClient
+        {
+            OnCreateTrial = _ => new RemnawaveTrialUser("short-uuid", DateTimeOffset.UtcNow.AddMinutes(-5)),
+        };
+        await NewController(db, remna).GrantTrial(new TrialRequest("dup-device-expired", "android"), default);
+
+        var second = await NewController(db, remna).GrantTrial(new TrialRequest("dup-device-expired", "android"), default);
 
         Assert.IsType<ConflictResult>(second);
         Assert.Equal(1, await db.Trials.CountAsync()); // no second trial granted

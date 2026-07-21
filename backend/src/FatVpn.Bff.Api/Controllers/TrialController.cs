@@ -23,14 +23,40 @@ public class TrialController(
     public async Task<IActionResult> GrantTrial([FromBody] TrialRequest request, CancellationToken ct)
     {
         var deviceKeyHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
+        var now = DateTimeOffset.UtcNow;
 
         var device = await db.Devices.SingleOrDefaultAsync(d => d.DeviceKeyHash == deviceKeyHash, ct);
-        if (device is not null && await db.Trials.AnyAsync(t => t.DeviceId == device.Id, ct))
+        if (device is not null)
         {
-            return Conflict();
+            var existingTrial = await db.Trials.SingleOrDefaultAsync(t => t.DeviceId == device.Id, ct);
+            if (existingTrial is not null)
+            {
+                // Same device asking again (e.g. it signed out and lost its refresh
+                // token). If the trial it already has is still running, reissue a
+                // session for it instead of stranding the client with a bare 409 and
+                // no way to know its remaining time. Only a genuinely exhausted trial
+                // is refused.
+                var existingToken = await db.Tokens.SingleOrDefaultAsync(t => t.Id == existingTrial.TokenId, ct);
+                if (existingToken is null || existingToken.ExpiresAt <= now)
+                {
+                    return Conflict();
+                }
+
+                var resumedAccessToken = jwtTokenService.CreateAccessToken(existingToken);
+                var (resumedRefreshRaw, resumedRefreshEntity) =
+                    refreshTokenService.Create(accountId: null, tokenId: existingToken.Id);
+                db.RefreshTokens.Add(resumedRefreshEntity);
+                await db.SaveChangesAsync(ct);
+
+                return Ok(new
+                {
+                    accessToken = resumedAccessToken,
+                    refreshToken = resumedRefreshRaw,
+                    expiresAt = existingToken.ExpiresAt,
+                });
+            }
         }
 
-        var now = DateTimeOffset.UtcNow;
         // DurationMinutes (when set) wins over DurationDays — used for short test
         // trials without changing the day-based production default.
         var requestedExpiry = trialOptions.Value.DurationMinutes > 0
@@ -78,6 +104,7 @@ public class TrialController(
             DeviceId = device.Id,
             GrantedAt = now,
             ExpiresAt = created.ExpiresAt,
+            TokenId = token.Id,
         });
 
         var accessToken = jwtTokenService.CreateAccessToken(token);

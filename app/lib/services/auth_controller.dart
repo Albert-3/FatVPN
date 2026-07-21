@@ -114,6 +114,13 @@ class AuthController extends ChangeNotifier {
       log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
     } else {
       log.i('No stored session — starting onboarding');
+      final hasAttemptedTrial = await _tokenStorage.hasAttemptedAutoTrial();
+      // No local session, but this device already had a trial (e.g. it signed
+      // out) — the trial's own expiry lives server-side, not in local storage,
+      // so the only way to find out whether it's still running is to ask.
+      if (hasAttemptedTrial) {
+        await _tryRecoverTrialSession();
+      }
     }
     // Trial button shows only for a device that hasn't used its trial yet.
     _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
@@ -234,6 +241,28 @@ class AuthController extends ChangeNotifier {
     try {
       await _tokenStorage.save(session);
     } catch (_) {/* UI already advanced; a later refresh re-persists */}
+  }
+
+  /// Silently retries `POST /trial` for a device that already used its trial
+  /// and has no local session (e.g. right after sign-out). The BFF treats a
+  /// repeat request from a known device as a resume: it reissues a session for
+  /// the still-running trial, or 409s if it has actually expired. Failures
+  /// (409 or network) just fall through to the normal onboarding/pairing UI.
+  Future<void> _tryRecoverTrialSession() async {
+    try {
+      final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
+      final platform =
+          defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+      final session = await _apiClient.startTrial(deviceKey, platform);
+      _session = session;
+      _sessionMintedAt = DateTime.now();
+      log.i('Recovered still-active trial session after sign-out');
+      unawaited(_tokenStorage.save(session).catchError((_) {}));
+    } on ApiException catch (e) {
+      log.i('No trial to recover (${e.statusCode})');
+    } catch (err) {
+      log.i('Trial recovery skipped — network error ($err)');
+    }
   }
 
   Future<void> _handleUri(Uri uri) async {
