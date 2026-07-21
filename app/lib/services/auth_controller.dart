@@ -39,6 +39,8 @@ class AuthController extends ChangeNotifier {
   bool _pollInFlight = false;
   bool _trialBusy = false;
   bool _trialAvailable = false;
+  bool _trialResumable = false;
+  bool _trialResumeBusy = false;
   bool _autoConnectRequested = false;
   // When the current session was freshly minted (trial/pairing/exchange). Used
   // to skip the resume-refresh right after a grant: the JWT is good for 30 min,
@@ -96,6 +98,16 @@ class AuthController extends ChangeNotifier {
   /// device that already had its trial only sees the Telegram / key options.
   bool get trialAvailable => _trialAvailable;
 
+  /// Whether the "continue trial period" button should appear on the sign-out
+  /// screen: this device has taken a trial before and hasn't since moved to a
+  /// real subscription (paired via Telegram or a pasted key). Doesn't
+  /// guarantee the trial is still within its window — [resumeTrial] finds
+  /// that out from the server.
+  bool get trialResumable => _trialResumable;
+
+  /// True while [resumeTrial] is in flight (button spinner).
+  bool get trialResumeBusy => _trialResumeBusy;
+
   /// Pairing code to show/QR-encode, or null while none is active.
   String? get pairCode => _pairing?.pairCode;
 
@@ -114,11 +126,13 @@ class AuthController extends ChangeNotifier {
       log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
     } else {
       log.i('No stored session — starting onboarding');
-      final hasAttemptedTrial = await _tokenStorage.hasAttemptedAutoTrial();
-      // No local session, but this device already had a trial (e.g. it signed
-      // out) — the trial's own expiry lives server-side, not in local storage,
-      // so the only way to find out whether it's still running is to ask.
-      if (hasAttemptedTrial) {
+      await _refreshTrialResumable();
+      // No local session, but this device already had a trial (e.g. it
+      // signed out) — the trial's own expiry lives server-side, not in local
+      // storage, so the only way to find out whether it's still running is
+      // to ask. This cold-start check is silent; the sign-out screen instead
+      // shows an explicit "continue trial" button (see [resumeTrial]).
+      if (_trialResumable) {
         await _tryRecoverTrialSession();
       }
     }
@@ -240,28 +254,84 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
     try {
       await _tokenStorage.save(session);
+      await _tokenStorage.saveSessionKind('trial');
     } catch (_) {/* UI already advanced; a later refresh re-persists */}
   }
 
-  /// Silently retries `POST /trial` for a device that already used its trial
-  /// and has no local session (e.g. right after sign-out). The BFF treats a
-  /// repeat request from a known device as a resume: it reissues a session for
-  /// the still-running trial, or 409s if it has actually expired. Failures
+  /// Refreshes [trialResumable] from local storage: true only if this device
+  /// has used a trial before and hasn't since moved on to a real subscription
+  /// (paired via Telegram or a pasted key) — otherwise a paying customer who
+  /// once tried the free trial could get silently stuck back in their old,
+  /// soon-to-expire trial instead of reaching the pairing screen.
+  Future<void> _refreshTrialResumable() async {
+    final hasAttemptedTrial = await _tokenStorage.hasAttemptedAutoTrial();
+    if (!hasAttemptedTrial) {
+      _trialResumable = false;
+      return;
+    }
+    final lastKind = await _tokenStorage.readSessionKind();
+    _trialResumable = lastKind != 'key' && lastKind != 'pairing';
+  }
+
+  /// Calls `POST /trial` for a device that's used one before and applies the
+  /// resulting session. The BFF treats a repeat request from a known device
+  /// as a resume: it reissues a session for the still-running trial, or 409s
+  /// if it's genuinely used up — callers react to the thrown [ApiException]
+  /// (or don't, for the silent cold-start attempt).
+  Future<void> _resumeTrialSession() async {
+    final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
+    final platform =
+        defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+    final session = await _apiClient.startTrial(deviceKey, platform);
+    _session = session;
+    _sessionMintedAt = DateTime.now();
+    try {
+      await _tokenStorage.save(session);
+      await _tokenStorage.saveSessionKind('trial');
+    } catch (_) {/* session is live in memory; a later refresh re-persists */}
+  }
+
+  /// Silently retries the trial for a device that already used one and has no
+  /// local session (cold start only — right after sign-out the recovery/sign-
+  /// out screen instead shows an explicit "continue trial" button). Failures
   /// (409 or network) just fall through to the normal onboarding/pairing UI.
   Future<void> _tryRecoverTrialSession() async {
     try {
-      final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
-      final platform =
-          defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
-      final session = await _apiClient.startTrial(deviceKey, platform);
-      _session = session;
-      _sessionMintedAt = DateTime.now();
+      await _resumeTrialSession();
       log.i('Recovered still-active trial session after sign-out');
-      unawaited(_tokenStorage.save(session).catchError((_) {}));
     } on ApiException catch (e) {
+      if (e.statusCode == 409) _trialResumable = false;
       log.i('No trial to recover (${e.statusCode})');
     } catch (err) {
       log.i('Trial recovery skipped — network error ($err)');
+    }
+  }
+
+  /// Explicit "continue trial period" action from the sign-out/recovery
+  /// screen. 409 means the trial is genuinely used up — hides the button
+  /// going forward.
+  Future<void> resumeTrial({
+    required String expiredMessage,
+    required String genericMessage,
+  }) async {
+    if (_trialResumeBusy) return;
+    _trialResumeBusy = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _resumeTrialSession();
+      notifyListeners();
+    } on ApiException catch (e) {
+      if (e.statusCode == 409) _trialResumable = false;
+      _error = e.statusCode == 409 ? expiredMessage : genericMessage;
+      notifyListeners();
+    } catch (_) {
+      _error = genericMessage;
+      notifyListeners();
+    } finally {
+      _trialResumeBusy = false;
+      notifyListeners();
     }
   }
 
@@ -295,6 +365,7 @@ class AuthController extends ChangeNotifier {
       try {
         await _tokenStorage.save(session);
         await _tokenStorage.saveKeyCode(shortToken);
+        await _tokenStorage.saveSessionKind('key');
       } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
       _error = (e.statusCode == 409 && conflictMessage != null)
@@ -395,6 +466,7 @@ class AuthController extends ChangeNotifier {
           notifyListeners();
           try {
             await _tokenStorage.save(status.session!);
+            await _tokenStorage.saveSessionKind('pairing');
           } catch (_) {/* UI already advanced; a later refresh re-persists */}
         case PairingState.expired:
           _pollTimer?.cancel();
@@ -425,6 +497,11 @@ class AuthController extends ChangeNotifier {
     _session = null;
     _keyCode = null;
     _subscriptionExpired = false;
+    // Signing out only drops the local session — a still-running trial is
+    // bound to the device server-side and isn't actually over. Refresh
+    // [trialResumable] so the sign-out screen can offer an explicit
+    // "continue trial" button instead of only Telegram/key entry.
+    await _refreshTrialResumable();
     notifyListeners();
   }
 

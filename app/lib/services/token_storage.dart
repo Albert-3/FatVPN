@@ -14,6 +14,7 @@ class TokenStorage {
   static const _deviceKeyKey = 'device_attestation_key';
   static const _autoTrialKey = 'auto_trial_attempted';
   static const _keyCodeKey = 'active_key_code';
+  static const _sessionKindKey = 'last_session_kind';
 
   final FlutterSecureStorage _storage;
 
@@ -41,6 +42,16 @@ class TokenStorage {
     await _storage.write(key: _deviceKeyKey, value: key);
     return key;
   }
+
+  /// Which kind of session was last established: `'trial'`, `'key'` (pasted
+  /// code), or `'pairing'` (Telegram). Deliberately survives [clear] — after
+  /// sign-out this is the only way to tell whether a leftover trial is safe to
+  /// silently resume, or whether the device has since moved on to a real
+  /// subscription (in which case a stale trial must NOT be resurrected).
+  Future<void> saveSessionKind(String kind) =>
+      _storage.write(key: _sessionKindKey, value: kind);
+
+  Future<String?> readSessionKind() => _storage.read(key: _sessionKindKey);
 
   Future<void> save(AuthSession session) async {
     await _storage.write(key: _accessTokenKey, value: session.accessToken);

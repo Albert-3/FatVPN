@@ -57,6 +57,8 @@ class Strings {
     required this.openBotSubtitle,
     required this.trialUsedTitle,
     required this.trialUsedSubtitle,
+    required this.trialResumableTitle,
+    required this.trialResumableSubtitle,
     required this.connectWithTelegram,
     required this.pairingWaiting,
     required this.pairingScanHint,
@@ -66,6 +68,7 @@ class Strings {
     required this.enterKeyHint,
     required this.submitKey,
     required this.tryFreeTrial,
+    required this.continueTrial,
     required this.settingUpFreeAccess,
     required this.trialAlreadyUsed,
     required this.trialNoCapacity,
@@ -149,6 +152,8 @@ class Strings {
   final String openBotSubtitle;
   final String trialUsedTitle;
   final String trialUsedSubtitle;
+  final String trialResumableTitle;
+  final String trialResumableSubtitle;
   final String connectWithTelegram;
   final String pairingWaiting;
   final String pairingScanHint;
@@ -158,6 +163,11 @@ class Strings {
   final String enterKeyHint;
   final String submitKey;
   final String tryFreeTrial;
+
+  /// Button on the sign-out/recovery screen for a device whose earlier trial
+  /// may still be running — asks the BFF to resume it instead of requiring
+  /// Telegram/a key.
+  final String continueTrial;
   final String settingUpFreeAccess;
   final String trialAlreadyUsed;
   final String trialNoCapacity;
@@ -272,6 +282,8 @@ const Strings enStrings = Strings(
   openBotSubtitle: 'Get 2 days free. Buy a subscription later in the FatVPN Telegram bot and add your key in Settings.',
   trialUsedTitle: 'Connect a subscription',
   trialUsedSubtitle: 'Your free trial has ended. Buy a subscription in the FatVPN Telegram bot, or enter your key if you already have one.',
+  trialResumableTitle: 'Session interrupted',
+  trialResumableSubtitle: 'You signed out, but your free trial may still be running. Continue it, buy a subscription in the FatVPN Telegram bot, or enter your key.',
   connectWithTelegram: 'Connect with Telegram',
   pairingWaiting: 'Waiting for the bot to confirm…',
   pairingScanHint: 'On another device? Scan this code or open the bot and send:',
@@ -281,6 +293,7 @@ const Strings enStrings = Strings(
   enterKeyHint: 'Paste your key code',
   submitKey: 'Connect',
   tryFreeTrial: 'Try 2 days free',
+  continueTrial: 'Continue trial',
   settingUpFreeAccess: 'Setting up your free access…',
   trialAlreadyUsed: 'A trial was already used on this device.',
   trialNoCapacity: 'No trial slots available right now. Please try later.',
@@ -375,6 +388,9 @@ final Strings ruStrings = Strings(
   trialUsedTitle: 'Подключите подписку',
   trialUsedSubtitle:
       'Ваш бесплатный период закончился. Купите подписку в Telegram-боте FatVPN или введите ключ, если он у вас уже есть.',
+  trialResumableTitle: 'Сессия прервана',
+  trialResumableSubtitle:
+      'Вы вышли из аккаунта, но пробный период может быть ещё активен. Продолжите его, подключите подписку в Telegram-боте FatVPN или введите ключ.',
   connectWithTelegram: 'Подключить через Telegram',
   pairingWaiting: 'Ожидаем подтверждения от бота…',
   pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',
@@ -384,6 +400,7 @@ final Strings ruStrings = Strings(
   enterKeyHint: 'Вставьте код ключа',
   submitKey: 'Подключить',
   tryFreeTrial: 'Попробовать 2 дня бесплатно',
+  continueTrial: 'Продолжить пробный период',
   settingUpFreeAccess: 'Настраиваем бесплатный доступ…',
   trialAlreadyUsed: 'Пробный период уже был использован на этом устройстве.',
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',

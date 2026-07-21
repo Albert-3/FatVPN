@@ -60,6 +60,13 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     );
   }
 
+  Future<void> _continueTrial(Strings s) async {
+    await widget.auth.resumeTrial(
+      expiredMessage: s.trialAlreadyUsed,
+      genericMessage: s.trialFailed,
+    );
+  }
+
   bool _checking = false;
 
   Future<void> _checkAgain() async {
@@ -152,7 +159,9 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                             widget.renew
                                 ? s.subscriptionExpiredTitle
                                 : recovery
-                                ? s.trialUsedTitle
+                                ? (auth.trialResumable
+                                      ? s.trialResumableTitle
+                                      : s.trialUsedTitle)
                                 : s.openBotTitle,
                             textAlign: TextAlign.center,
                             style: const TextStyle(
@@ -166,7 +175,9 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                             widget.renew
                                 ? s.subscriptionExpiredSubtitle
                                 : recovery
-                                ? s.trialUsedSubtitle
+                                ? (auth.trialResumable
+                                      ? s.trialResumableSubtitle
+                                      : s.trialUsedSubtitle)
                                 : s.openBotSubtitle,
                             textAlign: TextAlign.center,
                             style: const TextStyle(
@@ -216,10 +227,45 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                             ],
                           ] else if (!widget.renew) ...[
                             // Trial-used recovery: the device already spent its free
-                            // trial but has no session (e.g. left the app right after
-                            // the grant). Never show the trial button here — it can
-                            // only 409. Offer the Telegram bot + manual key entry so
-                            // the user can get back in.
+                            // trial but has no session (e.g. it signed out, or left
+                            // the app right after the grant). If the trial it had
+                            // might still be running, offer to resume it directly;
+                            // Telegram bot + manual key entry are always available
+                            // below as the way to move past the trial for good.
+                            if (auth.trialResumable) ...[
+                              FilledButton.icon(
+                                onPressed: auth.trialResumeBusy
+                                    ? null
+                                    : () => _continueTrial(s),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppColors.accent,
+                                  foregroundColor: Colors.black,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
+                                ),
+                                icon: auth.trialResumeBusy
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.black,
+                                        ),
+                                      )
+                                    : const Icon(Icons.bolt, size: 22),
+                                label: Text(
+                                  s.continueTrial,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const Divider(color: AppColors.disabled, height: 1),
+                              const SizedBox(height: 14),
+                            ],
                             if (auth.error != null) ...[
                               _ErrorBlock(message: auth.error!),
                               const SizedBox(height: 12),
@@ -232,7 +278,7 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                                 ),
                               )
                             else
-                              _telegramButton(s, primary: true),
+                              _telegramButton(s, primary: !auth.trialResumable),
                             const SizedBox(height: 14),
                             const Divider(color: AppColors.disabled, height: 1),
                             _ManualKeyEntry(auth: auth),
