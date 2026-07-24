@@ -77,6 +77,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.connectionSettings.addListener(_onConnSettingsChanged);
     _lastMintedAt = widget.auth.sessionMintedAt;
     widget.auth.addListener(_onAuthChanged);
+    // Reflect a tunnel that's still running from a previous app session (the
+    // app was swiped away without disconnecting) instead of showing the toggle
+    // as off while the system VPN is active.
+    unawaited(_vpn.syncFromRuntime());
     _loadServers();
   }
 
@@ -127,7 +131,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _tickSession();
+    if (state == AppLifecycleState.resumed) {
+      _tickSession();
+      // The tunnel may have dropped or (re)connected while we were backgrounded;
+      // re-read the real state so the toggle matches the system VPN.
+      unawaited(_vpn.syncFromRuntime());
+    }
   }
 
   Future<void> _loadServers() async {

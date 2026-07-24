@@ -71,6 +71,24 @@ class VpnController extends ChangeNotifier {
     _initialized = true;
   }
 
+  /// Reconciles the UI state with a tunnel that may already be running — e.g.
+  /// after the app was swiped away and relaunched while the VPN stayed up (the
+  /// tunnel lives in the OS extension/service, not the app process). Without
+  /// this a fresh launch shows the toggle as "disconnected" even though the
+  /// system VPN is active. Safe to call on startup and on app resume.
+  Future<void> syncFromRuntime() async {
+    try {
+      await _ensureInitialized();
+      final actual = await _vpn.getState();
+      if (actual != _state) {
+        _state = actual;
+        notifyListeners();
+      }
+    } catch (_) {
+      // Best-effort: if the platform query fails, leave the state untouched.
+    }
+  }
+
   Future<void> connectToBestNode(
     ServerCountry country,
     String accessToken, {
