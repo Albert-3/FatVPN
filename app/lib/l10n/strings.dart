@@ -86,6 +86,14 @@ class Strings {
     required this.searchApps,
     required this.loadingApps,
     required this.splitTunnelDisabledHint,
+    required this.splitTunnelingSubtitleHosts,
+    required this.hostsBypassVpn,
+    required this.addBypassHost,
+    required this.bypassHostHint,
+    required this.invalidBypassHost,
+    required this.bypassHostExists,
+    required this.splitTunnelHostsDisabledHint,
+    required this.noBypassHosts,
     required this.notifExpiringSoonTitle,
     required this.notifExpiresInDays,
     required this.notifExpiresInMinutes,
@@ -186,6 +194,16 @@ class Strings {
   final String searchApps;
   final String loadingApps;
   final String splitTunnelDisabledHint;
+
+  // Host-based split tunneling (iOS): bypass by domain / IP instead of per-app.
+  final String splitTunnelingSubtitleHosts;
+  final String hostsBypassVpn;
+  final String addBypassHost;
+  final String bypassHostHint;
+  final String invalidBypassHost;
+  final String bypassHostExists;
+  final String splitTunnelHostsDisabledHint;
+  final String noBypassHosts;
 
   /// Title of the "subscription ending soon" reminder notification.
   final String notifExpiringSoonTitle;
@@ -311,6 +329,14 @@ const Strings enStrings = Strings(
   searchApps: 'Search apps',
   loadingApps: 'Loading apps…',
   splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
+  splitTunnelingSubtitleHosts: 'Choose domains and IPs that bypass the VPN',
+  hostsBypassVpn: 'Domains and IP ranges that bypass the VPN',
+  addBypassHost: 'Add domain or IP',
+  bypassHostHint: 'example.com, *.ru or 10.0.0.0/8',
+  invalidBypassHost: 'Enter a domain (example.com) or an IP/CIDR (10.0.0.0/8).',
+  bypassHostExists: 'This rule is already in the list.',
+  splitTunnelHostsDisabledHint: 'Turn on the switch above to add domains and IPs that bypass the VPN.',
+  noBypassHosts: 'No rules yet. Tap “Add domain or IP” to create one.',
   notifExpiringSoonTitle: 'Subscription ending soon',
   notifExpiresInDays: _enNotifExpiresInDays,
   notifExpiresInMinutes: _enNotifExpiresInMinutes,
@@ -418,6 +444,14 @@ final Strings ruStrings = Strings(
   searchApps: 'Поиск приложений',
   loadingApps: 'Загрузка приложений…',
   splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
+  splitTunnelingSubtitleHosts: 'Выберите домены и IP, которые обходят VPN',
+  hostsBypassVpn: 'Домены и подсети, которые обходят VPN',
+  addBypassHost: 'Добавить домен или IP',
+  bypassHostHint: 'example.com, *.ru или 10.0.0.0/8',
+  invalidBypassHost: 'Введите домен (example.com) или IP/подсеть (10.0.0.0/8).',
+  bypassHostExists: 'Это правило уже в списке.',
+  splitTunnelHostsDisabledHint: 'Включите переключатель выше, чтобы добавить домены и IP в обход VPN.',
+  noBypassHosts: 'Пока нет правил. Нажмите «Добавить домен или IP».',
   notifExpiringSoonTitle: 'Подписка скоро закончится',
   notifExpiresInDays: (n) =>
       'Доступ истекает через $n ${_ruPluralDays(n)}. Продлите в Telegram, чтобы остаться на связи.',

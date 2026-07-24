@@ -1,0 +1,2 @@
+app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework/ios-arm64/Libbox.framework/Versions/A/Libbox filter=lfs diff=lfs merge=lfs -text
+app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework/ios-arm64_x86_64-simulator/Libbox.framework/Versions/A/Libbox filter=lfs diff=lfs merge=lfs -text

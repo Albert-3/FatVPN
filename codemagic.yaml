@@ -1,4 +1,26 @@
 workflows:
+  ios-libbox-xcframework:
+    name: iOS Libbox.xcframework build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+    scripts:
+      - name: Build Libbox.xcframework via gomobile
+        script: |
+          bash app/packages/singbox_mm/tool/fetch_singbox_libbox_ios.sh
+      - name: Zip xcframework for download
+        script: |
+          cd app/packages/singbox_mm/ios/Frameworks
+          # -y preserves symlinks instead of dereferencing them — umbrella
+          # framework bundles have Versions/Current -> Versions/A (and
+          # Libbox.framework/Libbox -> Versions/Current/Libbox), so a plain
+          # `zip -r` stores the ~150MB binary 3 times (once real, twice
+          # dereferenced) and roughly triples the artifact for nothing.
+          zip -ry Libbox.xcframework.zip Libbox.xcframework
+    artifacts:
+      - app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework.zip
+
   ios-release:
     name: iOS release (TestFlight)
     instance_type: mac_mini_m2
@@ -13,10 +35,26 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.fatvpn.fatvpnApp
     scripts:
+      - name: Pull Git LFS files (Libbox.xcframework binaries)
+        script: |
+          git lfs install
+          git lfs pull
       - name: Flutter pub get
         script: |
           cd app
           flutter pub get
+      - name: Add PacketTunnel (Network Extension) target
+        script: |
+          gem install xcodeproj --no-document
+          ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Diagnose PacketTunnel target build settings
+        script: |
+          cd app/ios
+          for t in Runner PacketTunnel; do
+            echo "--- $t ---"
+            xcodebuild -showBuildSettings -project Runner.xcodeproj -target "$t" -configuration Debug 2>&1 \
+              | grep -E "PRODUCT_NAME|WRAPPER_EXTENSION|TARGET_NAME|CONFIGURATION_BUILD_DIR|WRAPPER_NAME|ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES" || true
+          done
       - name: Pod install
         script: |
           cd app/ios
@@ -46,10 +84,26 @@ workflows:
       xcode: latest
       cocoapods: default
     scripts:
+      - name: Pull Git LFS files (Libbox.xcframework binaries)
+        script: |
+          git lfs install
+          git lfs pull
       - name: Flutter pub get
         script: |
           cd app
           flutter pub get
+      - name: Add PacketTunnel (Network Extension) target
+        script: |
+          gem install xcodeproj --no-document
+          ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Diagnose PacketTunnel target build settings
+        script: |
+          cd app/ios
+          for t in Runner PacketTunnel; do
+            echo "--- $t ---"
+            xcodebuild -showBuildSettings -project Runner.xcodeproj -target "$t" -configuration Debug 2>&1 \
+              | grep -E "PRODUCT_NAME|WRAPPER_EXTENSION|TARGET_NAME|CONFIGURATION_BUILD_DIR|WRAPPER_NAME|ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES" || true
+          done
       - name: Pod install
         script: |
           cd app/ios

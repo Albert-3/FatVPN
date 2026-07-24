@@ -77,5 +77,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- The app uses only standard encryption (TLS + sing-box's standard
+	     ciphers), which is exempt, so App Store Connect / TestFlight never needs
+	     a manual export-compliance answer per build. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:singbox_mm/singbox_mm.dart';
@@ -13,6 +14,7 @@ import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
 import '../services/locale_controller.dart';
 import '../theme/app_colors.dart';
+import 'split_tunnel_hosts_screen.dart';
 import 'split_tunneling_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -159,6 +161,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'network_stack': cs.networkStack.name,
       'split_tunnel_enabled': cs.splitTunnelEnabled.toString(),
       'split_bypass_count': cs.bypassPackages.length.toString(),
+      'split_bypass_hosts': cs.bypassHosts.length.toString(),
       'logged_in': widget.auth.isLoggedIn.toString(),
       'subscription_active': widget.auth.subscriptionActive.toString(),
       'session_expires_at': session?.expiresAt.toIso8601String() ?? '(none)',
@@ -268,15 +271,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
+                  // Split tunneling differs by platform. Android bypasses
+                  // per-app (sing-box include_package/exclude_package, sourced
+                  // from the fatvpn/apps channel that only MainActivity
+                  // implements). iOS has no per-app VPN for non-MDM apps, so
+                  // there we bypass by host (domain/IP → `direct` route rule)
+                  // via the SplitTunnelHostsScreen instead.
+                  if (defaultTargetPlatform == TargetPlatform.android ||
+                      defaultTargetPlatform == TargetPlatform.iOS) ...<Widget>[
                   _sectionTitle(s.routing),
                   _card(
                     children: [
                       InkWell(
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => SplitTunnelingScreen(
-                              connectionSettings: widget.connectionSettings,
-                            ),
+                            builder: (_) =>
+                                defaultTargetPlatform == TargetPlatform.iOS
+                                    ? SplitTunnelHostsScreen(
+                                        connectionSettings:
+                                            widget.connectionSettings,
+                                      )
+                                    : SplitTunnelingScreen(
+                                        connectionSettings:
+                                            widget.connectionSettings,
+                                      ),
                           ),
                         ),
                         child: Row(
@@ -295,7 +313,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    s.splitTunnelingSubtitle,
+                                    defaultTargetPlatform == TargetPlatform.iOS
+                                        ? s.splitTunnelingSubtitleHosts
+                                        : s.splitTunnelingSubtitle,
                                     style: const TextStyle(
                                       color: AppColors.textSecondary,
                                       fontSize: 12,
@@ -313,6 +333,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+                  ],
                   _sectionTitle(s.system),
                   _card(children: [_buildLanguageRow(s, locale)]),
                   _sectionTitle(s.logsManagement),

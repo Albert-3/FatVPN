@@ -30,6 +30,10 @@ class VpnController extends ChangeNotifier {
   StreamSubscription<VpnConnectionState>? _stateSubscription;
 
   bool _initialized = false;
+  // Set while a user-requested disconnect is in flight, so the
+  // connected→disconnected transition it causes isn't misread as a runtime
+  // tunnel failure by the diagnostics watcher below.
+  bool _userDisconnecting = false;
   VpnConnectionState _state = VpnConnectionState.disconnected;
   String? _errorMessage;
   String? _connectedNodeName;
@@ -43,8 +47,26 @@ class VpnController extends ChangeNotifier {
     if (_initialized) return;
     await _vpn.initialize(const SingboxRuntimeOptions(logLevel: 'warn'));
     _stateSubscription = _vpn.stateStream.listen((state) {
+      final previous = _state;
       _state = state;
       notifyListeners();
+      // An unexpected drop to disconnected means the tunnel failed at runtime:
+      // either it never established (connecting→disconnected) or it came up and
+      // died shortly after (connected→disconnected, e.g. an NE memory jetsam
+      // kill). Both leave the real reason only in sing-box's stderr, which the
+      // NE can't stream to us — so pull the persisted diagnostics into the
+      // support bundle (see PacketTunnelProvider.writeDiagnostics + getLastError).
+      // A user-requested disconnect also lands here; skip it so it isn't logged
+      // as a failure.
+      if (state == VpnConnectionState.disconnected &&
+          !_userDisconnecting &&
+          (previous == VpnConnectionState.connecting ||
+              previous == VpnConnectionState.connected)) {
+        unawaited(_captureTunnelFailure());
+      }
+      if (state == VpnConnectionState.disconnected) {
+        _userDisconnecting = false;
+      }
     });
     _initialized = true;
   }
@@ -85,6 +107,7 @@ class VpnController extends ChangeNotifier {
     required String networkErrorMessage,
   }) async {
     _errorMessage = null;
+    _userDisconnecting = false;
     _state = VpnConnectionState.connecting;
     notifyListeners();
 
@@ -144,8 +167,27 @@ class VpnController extends ChangeNotifier {
     return best ?? nodes.first;
   }
 
+  /// Pulls the tunnel's last-failure report (on iOS, the PacketTunnel
+  /// extension's persisted reason + sing-box stderr tail) into the app log so it
+  /// lands in the shareable support bundle, and surfaces it to the UI.
+  Future<void> _captureTunnelFailure() async {
+    try {
+      final err = await _vpn.getLastError();
+      if (err != null && err.trim().isNotEmpty) {
+        _errorMessage = err;
+        log.e('Tunnel failed at runtime', err);
+        notifyListeners();
+      } else {
+        log.w('Tunnel dropped during connect but reported no diagnostics');
+      }
+    } catch (e) {
+      log.w('Failed to read tunnel diagnostics: $e');
+    }
+  }
+
   Future<void> disconnect() async {
     log.i('Disconnecting tunnel');
+    _userDisconnecting = true;
     await _vpn.stop();
     _connectedNodeName = null;
   }
