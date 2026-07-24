@@ -73,7 +73,11 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        # Upload the build to App Store Connect only. Internal testers receive
+        # processed builds automatically, so we don't submit to external
+        # TestFlight beta review — that step requires Beta App Review test info
+        # (feedback email + reviewer contact) and otherwise red-fails the build.
+        submit_to_testflight: false
 
   ios-unsigned:
     name: iOS build (unsigned validation)
