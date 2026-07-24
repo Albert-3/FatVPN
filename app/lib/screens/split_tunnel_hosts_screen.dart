@@ -10,16 +10,46 @@ import '../theme/app_colors.dart';
 /// (`10.0.0.0/8`); each becomes a sing-box `direct` route rule so its traffic
 /// bypasses the tunnel. Persisted in [ConnectionSettingsController] and applied
 /// on the next connect.
-class SplitTunnelHostsScreen extends StatefulWidget {
+///
+/// The editor body is factored out into [HostBypassEditor] so Android can embed
+/// it as a tab alongside the per-app picker.
+class SplitTunnelHostsScreen extends StatelessWidget {
   const SplitTunnelHostsScreen({super.key, required this.connectionSettings});
 
   final ConnectionSettingsController connectionSettings;
 
   @override
-  State<SplitTunnelHostsScreen> createState() => _SplitTunnelHostsScreenState();
+  Widget build(BuildContext context) {
+    final s = S.of(context);
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            SplitTunnelHeader(
+              title: s.splitTunneling,
+              connectionSettings: connectionSettings,
+            ),
+            Expanded(child: HostBypassEditor(connectionSettings: connectionSettings)),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _SplitTunnelHostsScreenState extends State<SplitTunnelHostsScreen> {
+/// Reusable body that lets the user manage the domain/IP bypass list. Shown on
+/// iOS as a full screen and on Android as a tab.
+class HostBypassEditor extends StatefulWidget {
+  const HostBypassEditor({super.key, required this.connectionSettings});
+
+  final ConnectionSettingsController connectionSettings;
+
+  @override
+  State<HostBypassEditor> createState() => _HostBypassEditorState();
+}
+
+class _HostBypassEditorState extends State<HostBypassEditor> {
   Future<void> _showAddDialog(Strings s) async {
     final controller = TextEditingController();
     String? error;
@@ -101,72 +131,60 @@ class _SplitTunnelHostsScreenState extends State<SplitTunnelHostsScreen> {
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      floatingActionButton: AnimatedBuilder(
-        animation: widget.connectionSettings,
-        builder: (context, _) {
-          if (!widget.connectionSettings.splitTunnelEnabled) {
-            return const SizedBox.shrink();
-          }
-          return FloatingActionButton.extended(
-            backgroundColor: AppColors.accent,
-            foregroundColor: AppColors.background,
-            onPressed: () => _showAddDialog(s),
-            icon: const Icon(Icons.add),
-            label: Text(s.addBypassHost),
-          );
-        },
-      ),
-      body: SafeArea(
-        child: AnimatedBuilder(
-          animation: widget.connectionSettings,
-          builder: (context, _) {
-            final enabled = widget.connectionSettings.splitTunnelEnabled;
-            final hosts = widget.connectionSettings.bypassHosts;
-            return Column(
-              children: [
-                _buildHeader(context, s, enabled),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      s.hostsBypassVpn,
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 13),
-                    ),
+    return AnimatedBuilder(
+      animation: widget.connectionSettings,
+      builder: (context, _) {
+        final enabled = widget.connectionSettings.splitTunnelEnabled;
+        final hosts = widget.connectionSettings.bypassHosts;
+        if (!enabled) {
+          return SplitTunnelHint(text: s.splitTunnelHostsDisabledHint);
+        }
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  s.hostsBypassVpn,
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showAddDialog(s),
+                  icon: const Icon(Icons.add, color: AppColors.accent),
+                  label: Text(
+                    s.addBypassHost,
+                    style: const TextStyle(color: AppColors.accent),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppColors.accent),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      s.appliesOnNextConnection,
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 11),
-                    ),
-                  ),
-                ),
-                if (!enabled)
-                  Expanded(child: _Hint(text: s.splitTunnelHostsDisabledHint))
-                else if (hosts.isEmpty)
-                  Expanded(child: _Hint(text: s.noBypassHosts))
-                else
-                  Expanded(child: _buildHostList(hosts)),
-              ],
-            );
-          },
-        ),
-      ),
+              ),
+            ),
+            if (hosts.isEmpty)
+              Expanded(child: SplitTunnelHint(text: s.noBypassHosts))
+            else
+              Expanded(child: _buildHostList(hosts)),
+          ],
+        );
+      },
     );
   }
 
   Widget _buildHostList(List<String> hosts) {
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 96),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
       itemCount: hosts.length,
       itemBuilder: (context, i) {
         final host = hosts[i];
@@ -182,8 +200,8 @@ class _SplitTunnelHostsScreenState extends State<SplitTunnelHostsScreen> {
             leading: const Icon(Icons.public, color: AppColors.textSecondary),
             title: Text(
               host,
-              style: const TextStyle(
-                  color: AppColors.textPrimary, fontSize: 15),
+              style:
+                  const TextStyle(color: AppColors.textPrimary, fontSize: 15),
             ),
             trailing: IconButton(
               icon: const Icon(Icons.close, color: AppColors.textSecondary),
@@ -195,41 +213,61 @@ class _SplitTunnelHostsScreenState extends State<SplitTunnelHostsScreen> {
       },
     );
   }
+}
 
-  Widget _buildHeader(BuildContext context, Strings s, bool enabled) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          ),
-          Expanded(
-            child: Text(
-              s.splitTunneling,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
+/// Shared header (back arrow, centered title, master split-tunnel switch) used
+/// by the split-tunneling screens.
+class SplitTunnelHeader extends StatelessWidget {
+  const SplitTunnelHeader({
+    super.key,
+    required this.title,
+    required this.connectionSettings,
+  });
+
+  final String title;
+  final ConnectionSettingsController connectionSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: connectionSettings,
+      builder: (context, _) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon:
+                    const Icon(Icons.arrow_back, color: AppColors.textPrimary),
               ),
-            ),
+              Expanded(
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Switch(
+                value: connectionSettings.splitTunnelEnabled,
+                activeTrackColor: AppColors.accent,
+                onChanged: connectionSettings.setSplitTunnelEnabled,
+              ),
+            ],
           ),
-          Switch(
-            value: enabled,
-            activeTrackColor: AppColors.accent,
-            onChanged: (v) =>
-                widget.connectionSettings.setSplitTunnelEnabled(v),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
-class _Hint extends StatelessWidget {
-  const _Hint({required this.text});
+/// Centered hint shown when a split-tunnel list is empty or disabled.
+class SplitTunnelHint extends StatelessWidget {
+  const SplitTunnelHint({super.key, required this.text});
 
   final String text;
 

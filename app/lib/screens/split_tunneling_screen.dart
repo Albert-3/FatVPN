@@ -5,20 +5,68 @@ import '../l10n/strings.dart';
 import '../services/connection_settings_controller.dart';
 import '../services/installed_apps_service.dart';
 import '../theme/app_colors.dart';
+import 'split_tunnel_hosts_screen.dart';
 
-/// Lets the user pick installed apps that bypass the VPN tunnel
-/// (sing-box `exclude_package`). Android-only; the selection is persisted in
-/// [ConnectionSettingsController] and applied on the next connect.
-class SplitTunnelingScreen extends StatefulWidget {
+/// Android split tunneling: one screen with two tabs — "Apps" (per-app bypass
+/// via sing-box `exclude_package`) and "Domains/IP" (host bypass via
+/// `route.rules` direct, the same model iOS uses). Both feed
+/// [ConnectionSettingsController] and apply on the next connect.
+class SplitTunnelingScreen extends StatelessWidget {
   const SplitTunnelingScreen({super.key, required this.connectionSettings});
 
   final ConnectionSettingsController connectionSettings;
 
   @override
-  State<SplitTunnelingScreen> createState() => _SplitTunnelingScreenState();
+  Widget build(BuildContext context) {
+    final s = S.of(context);
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              SplitTunnelHeader(
+                title: s.splitTunneling,
+                connectionSettings: connectionSettings,
+              ),
+              TabBar(
+                labelColor: AppColors.textPrimary,
+                unselectedLabelColor: AppColors.textSecondary,
+                indicatorColor: AppColors.accent,
+                tabs: [
+                  Tab(text: s.splitTunnelAppsTab),
+                  Tab(text: s.splitTunnelHostsTab),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    AppBypassPicker(connectionSettings: connectionSettings),
+                    HostBypassEditor(connectionSettings: connectionSettings),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
+/// Lets the user pick installed apps that bypass the VPN tunnel (sing-box
+/// `exclude_package`). Android-only; embedded as a tab in [SplitTunnelingScreen].
+class AppBypassPicker extends StatefulWidget {
+  const AppBypassPicker({super.key, required this.connectionSettings});
+
+  final ConnectionSettingsController connectionSettings;
+
+  @override
+  State<AppBypassPicker> createState() => _AppBypassPickerState();
+}
+
+class _AppBypassPickerState extends State<AppBypassPicker> {
   List<LaunchableApp>? _apps;
   String _query = '';
 
@@ -49,43 +97,29 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
   @override
   Widget build(BuildContext context) {
     final s = S.of(context);
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: AnimatedBuilder(
-          animation: widget.connectionSettings,
-          builder: (context, _) {
-            final enabled = widget.connectionSettings.splitTunnelEnabled;
-            return Column(
-              children: [
-                _buildHeader(context, s, enabled),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      s.appsBypassVpn,
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-                    ),
-                  ),
+    return AnimatedBuilder(
+      animation: widget.connectionSettings,
+      builder: (context, _) {
+        if (!widget.connectionSettings.splitTunnelEnabled) {
+          return SplitTunnelHint(text: s.splitTunnelDisabledHint);
+        }
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  s.appsBypassVpn,
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
                 ),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-                  child: Text(
-                    s.appliesOnNextConnection,
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
-                  ),
-                ),
-                if (!enabled)
-                  Expanded(child: _DisabledHint(text: s.splitTunnelDisabledHint))
-                else
-                  Expanded(child: _buildAppList(s)),
-              ],
-            );
-          },
-        ),
-      ),
+              ),
+            ),
+            Expanded(child: _buildAppList(s)),
+          ],
+        );
+      },
     );
   }
 
@@ -112,7 +146,7 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: TextField(
             onChanged: (v) => setState(() => _query = v),
             style: const TextStyle(color: AppColors.textPrimary),
@@ -148,36 +182,6 @@ class _SplitTunnelingScreenState extends State<SplitTunnelingScreen> {
       ],
     );
   }
-
-  Widget _buildHeader(BuildContext context, Strings s, bool enabled) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          ),
-          Expanded(
-            child: Text(
-              s.splitTunneling,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Switch(
-            value: enabled,
-            activeTrackColor: AppColors.accent,
-            onChanged: (v) => widget.connectionSettings.setSplitTunnelEnabled(v),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _AppTile extends StatelessWidget {
@@ -209,33 +213,6 @@ class _AppTile extends StatelessWidget {
         title: Text(
           app.name,
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
-        ),
-      ),
-    );
-  }
-}
-
-class _DisabledHint extends StatelessWidget {
-  const _DisabledHint({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.call_split, color: AppColors.textSecondary, size: 40),
-            const SizedBox(height: 16),
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 14, height: 1.4),
-            ),
-          ],
         ),
       ),
     );

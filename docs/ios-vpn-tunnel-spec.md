@@ -196,22 +196,24 @@ Dart-логики под iOS нет.
   `NEPacketTunnelNetworkSettings` (адреса, маршруты, `NEDNSSettings`, MTU,
   excluded routes). Отдельно прокидывать ничего не нужно — работает через
   общий конфиг. Останется подтвердить на устройстве в Фазе 7.
-- **Split tunneling — разные модели под платформу.**
-  - **Android** — по приложениям: sing-box `include_package`/`exclude_package`
-    (имена Android-пакетов из канала `fatvpn/apps`, который реализует только
-    `MainActivity`). Экран `split_tunneling_screen.dart` (список приложений).
-  - **iOS** — по хостам: per-app VPN для не-MDM приложений невозможен и sing-box
-    эти ключи там игнорирует, поэтому bypass задаётся доменами/IP. Экран
-    `split_tunnel_hosts_screen.dart`: пользователь добавляет `example.com`,
-    `*.ru`, `10.0.0.0/8` и т.п. `ConnectionSettingsController` классифицирует
-    каждую запись (`InternetAddress.tryParse` → CIDR, иначе домен) и кладёт в
+- **Split tunneling — две модели, разбивка по платформе.**
+  - **По приложениям** (per-app): sing-box `include_package`/`exclude_package`
+    (имена Android-пакетов из канала `fatvpn/apps`, только в `MainActivity`).
+    **Только Android** — iOS не даёт per-app VPN без MDM.
+  - **По хостам** (домены/IP): пользователь добавляет `example.com`, `*.ru`,
+    `10.0.0.0/8`; `ConnectionSettingsController` классифицирует каждую запись
+    (`InternetAddress.tryParse` → CIDR, иначе домен) и кладёт в
     `RouteOptions.regionDirectDomains`/`regionDirectCidrs`, откуда
-    `SingboxRouteRulesBuilder` строит правило `{domain_suffix|ip_cidr →
-    outbound: direct}`. Это чистая маршрутизация внутри TUN — работает на iOS
-    через общий конфиг, без нативного кода.
-  - `settings_screen.dart` показывает секцию «Маршрутизация» на обеих
-    платформах (`android || iOS`) и ведёт на нужный экран по
-    `defaultTargetPlatform`.
+    `SingboxRouteRulesBuilder` строит `{domain_suffix|ip_cidr → outbound:
+    direct}`. Чистая маршрутизация внутри TUN — **работает на обеих
+    платформах** через общий конфиг, без нативного кода. Для доменных правил
+    нужен sniffing (`route.resolveDestination`, см. Фазу 7).
+  - **UI:** на **iOS** — только хосты (`SplitTunnelHostsScreen`). На
+    **Android** — единый экран `SplitTunnelingScreen` с двумя вкладками
+    «Приложения» (`AppBypassPicker`) и «Домены/IP» (`HostBypassEditor`) под
+    общим переключателем; тела вкладок вынесены в переиспользуемые виджеты.
+  - `settings_screen.dart` показывает секцию «Маршрутизация» на `android ||
+    iOS` и ведёт на нужный экран по `defaultTargetPlatform`.
 
 ### Фаза 6 — Codemagic CI
 
