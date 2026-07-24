@@ -43,10 +43,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? _timer;
   Timer? _connSettingsDebounce;
   Duration _sessionTime = Duration.zero;
-  // Wall-clock start of the current session. The session label is derived from
-  // this rather than by incrementing a counter each tick, so it survives the
-  // app being frozen in the background on iOS (where the periodic timer stops).
-  DateTime? _sessionStart;
 
   List<ServerCountry> _servers = [];
   ServerCountry? _selectedServer;
@@ -109,22 +105,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _handleVpnChange() {
     if (_vpn.isConnected && _timer == null) {
-      _sessionStart = DateTime.now();
-      _sessionTime = Duration.zero;
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tickSession());
+      _tickSession();
     } else if (!_vpn.isConnected && _timer != null) {
       _timer?.cancel();
       _timer = null;
-      _sessionStart = null;
+      _sessionTime = Duration.zero;
     }
     if (mounted) setState(() {});
   }
 
-  /// Refreshes the session label from the wall-clock start time. Used both by
-  /// the periodic timer and on app resume, so the clock shows real elapsed time
-  /// even after the app was frozen in the background (where the timer pauses).
+  /// Refreshes the session label from the tunnel's persisted start time
+  /// ([VpnController.sessionStartedAt]). Deriving it from a wall-clock start
+  /// (rather than a per-second counter) keeps the clock correct after the app
+  /// was frozen in the background or killed and relaunched mid-session.
   void _tickSession() {
-    final start = _sessionStart;
+    final start = _vpn.sessionStartedAt;
     if (start == null || !mounted) return;
     setState(() => _sessionTime = DateTime.now().difference(start));
   }

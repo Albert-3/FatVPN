@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:singbox_mm/singbox_mm.dart';
 
@@ -27,7 +28,14 @@ class VpnController extends ChangeNotifier {
   final ApiClient _apiClient;
   final PingService _pingService;
   final SignboxVpn _vpn = SignboxVpn();
+  final _storage = const FlutterSecureStorage();
   StreamSubscription<VpnConnectionState>? _stateSubscription;
+
+  // Wall-clock start of the current tunnel session, persisted so it survives
+  // the app being killed while the tunnel keeps running. Lets the UI show the
+  // real elapsed time on relaunch instead of restarting the clock from zero.
+  static const _sessionStartKey = 'vpn_session_started_at';
+  DateTime? _sessionStartedAt;
 
   bool _initialized = false;
   // Set while a user-requested disconnect is in flight, so the
@@ -43,12 +51,18 @@ class VpnController extends ChangeNotifier {
   String? get connectedNodeName => _connectedNodeName;
   bool get isConnected => _state == VpnConnectionState.connected;
 
+  /// When the current session started (persisted across app restarts). Null
+  /// when not connected. Used to render the session timer from real elapsed
+  /// time rather than a per-second counter.
+  DateTime? get sessionStartedAt => _sessionStartedAt;
+
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
     await _vpn.initialize(const SingboxRuntimeOptions(logLevel: 'warn'));
     _stateSubscription = _vpn.stateStream.listen((state) {
       final previous = _state;
       _state = state;
+      _trackSessionStart(state);
       notifyListeners();
       // An unexpected drop to disconnected means the tunnel failed at runtime:
       // either it never established (connecting→disconnected) or it came up and
@@ -80,12 +94,37 @@ class VpnController extends ChangeNotifier {
     try {
       await _ensureInitialized();
       final actual = await _vpn.getState();
+      if (actual == VpnConnectionState.connected && _sessionStartedAt == null) {
+        // Restore the persisted start so the session timer resumes from real
+        // elapsed time rather than restarting at zero on relaunch.
+        final stored = await _storage.read(key: _sessionStartKey);
+        _sessionStartedAt =
+            (stored != null ? DateTime.tryParse(stored) : null) ??
+                DateTime.now();
+      }
       if (actual != _state) {
         _state = actual;
         notifyListeners();
       }
     } catch (_) {
       // Best-effort: if the platform query fails, leave the state untouched.
+    }
+  }
+
+  /// Records the session start on connect and clears it on disconnect, keeping
+  /// a persisted copy so [sessionStartedAt] survives an app restart.
+  void _trackSessionStart(VpnConnectionState state) {
+    if (state == VpnConnectionState.connected) {
+      if (_sessionStartedAt == null) {
+        _sessionStartedAt = DateTime.now();
+        unawaited(_storage.write(
+          key: _sessionStartKey,
+          value: _sessionStartedAt!.toIso8601String(),
+        ));
+      }
+    } else if (state == VpnConnectionState.disconnected) {
+      _sessionStartedAt = null;
+      unawaited(_storage.delete(key: _sessionStartKey));
     }
   }
 
