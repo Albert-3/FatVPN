@@ -37,6 +37,10 @@ class VpnController extends ChangeNotifier {
   static const _sessionStartKey = 'vpn_session_started_at';
   DateTime? _sessionStartedAt;
 
+  // Guards against overlapping runtime-state reconciliation polls (launch +
+  // resume can both fire syncFromRuntime in quick succession).
+  bool _reconciling = false;
+
   bool _initialized = false;
   // Set while a user-requested disconnect is in flight, so the
   // connected→disconnected transition it causes isn't misread as a runtime
@@ -104,20 +108,62 @@ class VpnController extends ChangeNotifier {
     try {
       await _ensureInitialized();
       final actual = await _vpn.getState();
-      if (actual == VpnConnectionState.connected && _sessionStartedAt == null) {
-        // Restore the persisted start so the session timer resumes from real
-        // elapsed time rather than restarting at zero on relaunch.
-        final stored = await _storage.read(key: _sessionStartKey);
-        _sessionStartedAt =
-            (stored != null ? DateTime.tryParse(stored) : null) ??
-                DateTime.now();
-      }
-      if (actual != _state) {
-        _state = actual;
-        notifyListeners();
+      await _applyRuntimeState(actual);
+      // A tunnel that's still finishing its handshake when we relaunch reports
+      // `connecting`/`preparing`. The `connected` transition may have been
+      // published by the plugin *before* we subscribed to the state stream, so
+      // the stream never delivers it — leaving the toggle stuck on
+      // "Connecting..." until the user manually closed and reopened the app
+      // (by which time the plugin had settled). Poll getState until it settles
+      // so the UI self-heals instead.
+      if (_isTransientState(actual)) {
+        unawaited(_pollRuntimeStateUntilSettled());
       }
     } catch (_) {
       // Best-effort: if the platform query fails, leave the state untouched.
+    }
+  }
+
+  static bool _isTransientState(VpnConnectionState state) =>
+      state == VpnConnectionState.connecting ||
+      state == VpnConnectionState.preparing;
+
+  /// Mirrors a state read from the plugin into the UI, restoring the persisted
+  /// session start when we discover a live tunnel.
+  Future<void> _applyRuntimeState(VpnConnectionState actual) async {
+    if (actual == VpnConnectionState.connected && _sessionStartedAt == null) {
+      // Restore the persisted start so the session timer resumes from real
+      // elapsed time rather than restarting at zero on relaunch.
+      final stored = await _storage.read(key: _sessionStartKey);
+      _sessionStartedAt =
+          (stored != null ? DateTime.tryParse(stored) : null) ?? DateTime.now();
+    }
+    if (actual != _state) {
+      _state = actual;
+      notifyListeners();
+    }
+  }
+
+  /// Re-queries the plugin's connection state until it leaves the transient
+  /// `connecting`/`preparing` band (or a timeout elapses), so a handshake that
+  /// completed while we weren't listening still surfaces in the UI. Bails early
+  /// if a stream event or user action already moved us off a transient state.
+  Future<void> _pollRuntimeStateUntilSettled() async {
+    if (_reconciling) return;
+    _reconciling = true;
+    try {
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(seconds: 1));
+        if (!_isTransientState(_state)) return;
+        final actual = await _vpn.getState();
+        await _applyRuntimeState(actual);
+        if (!_isTransientState(actual)) return;
+      }
+    } catch (_) {
+      // Best-effort reconciliation; ignore transient platform errors.
+    } finally {
+      _reconciling = false;
     }
   }
 
