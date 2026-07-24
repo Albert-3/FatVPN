@@ -108,9 +108,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tickSession());
       _tickSession();
     } else if (!_vpn.isConnected && _timer != null) {
+      // Freeze the label (don't zero it) so a brief auto-reconnect blip doesn't
+      // flash 00:00:00; _tickSession resumes it from the preserved session
+      // start once connected again. The timer section is hidden while
+      // disconnected anyway, and a fresh user connect re-derives from the new
+      // start.
       _timer?.cancel();
       _timer = null;
-      _sessionTime = Duration.zero;
     }
     if (mounted) setState(() {});
   }
@@ -268,7 +272,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// the plugin (symptom: you pick a new country but stay on the old node), so
   /// we block until the state machine reports disconnected.
   Future<void> _switchOff() async {
-    await _vpn.disconnect();
+    // Part of a reconnect (server/location switch or settings re-apply), not a
+    // user power-off — keep the session timer running across the swap.
+    await _vpn.disconnect(endSession: false);
     final deadline = DateTime.now().add(const Duration(seconds: 4));
     while (_vpn.state != VpnConnectionState.disconnected &&
         _vpn.state != VpnConnectionState.error &&

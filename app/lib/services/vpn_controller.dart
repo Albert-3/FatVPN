@@ -78,6 +78,13 @@ class VpnController extends ChangeNotifier {
       _state = state;
       _trackSessionStart(state);
       notifyListeners();
+      // A stream event can land us back on a transient state — e.g. a stale
+      // `connecting` that arrives *after* getState already settled us on
+      // `connected` (both sample the same on-disk snapshot at slightly
+      // different instants). Re-arm the self-heal poll so the UI doesn't get
+      // stuck on "Connecting..."; the poll is a no-op if one is already
+      // running or if we've already left the transient band.
+      _maybeSelfHeal();
       // An unexpected drop to disconnected means the tunnel failed at runtime:
       // either it never established (connecting→disconnected) or it came up and
       // died shortly after (connected→disconnected, e.g. an NE memory jetsam
@@ -116,11 +123,20 @@ class VpnController extends ChangeNotifier {
       // "Connecting..." until the user manually closed and reopened the app
       // (by which time the plugin had settled). Poll getState until it settles
       // so the UI self-heals instead.
-      if (_isTransientState(actual)) {
-        unawaited(_pollRuntimeStateUntilSettled());
-      }
-    } catch (_) {
+      _maybeSelfHeal();
+    } catch (e) {
       // Best-effort: if the platform query fails, leave the state untouched.
+      log.w('syncFromRuntime failed: $e');
+    }
+  }
+
+  /// Arms the runtime-state reconciliation poll when the UI is sitting on a
+  /// transient (`connecting`/`preparing`) state, so a handshake that settled
+  /// while we weren't listening still surfaces. No-op when already settled or
+  /// when a poll is already in flight (guarded by [_reconciling]).
+  void _maybeSelfHeal() {
+    if (_isTransientState(_state)) {
+      unawaited(_pollRuntimeStateUntilSettled());
     }
   }
 
@@ -152,36 +168,61 @@ class VpnController extends ChangeNotifier {
     if (_reconciling) return;
     _reconciling = true;
     try {
-      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      // Generous window: a slow first handshake, or an OS-restarted tunnel
+      // service re-establishing its connection, can stay transient well past
+      // the old 20s budget.
+      final deadline = DateTime.now().add(const Duration(seconds: 60));
       while (DateTime.now().isBefore(deadline)) {
         await Future.delayed(const Duration(seconds: 1));
         if (!_isTransientState(_state)) return;
-        final actual = await _vpn.getState();
-        await _applyRuntimeState(actual);
-        if (!_isTransientState(actual)) return;
+        try {
+          final actual = await _vpn.getState();
+          await _applyRuntimeState(actual);
+          if (!_isTransientState(actual)) return;
+        } catch (e) {
+          // A single failed query (channel momentarily busy) shouldn't abort the
+          // whole poll — keep trying until the deadline.
+          log.w('Runtime-state poll query failed: $e');
+        }
       }
-    } catch (_) {
-      // Best-effort reconciliation; ignore transient platform errors.
+      // Still transient after the deadline: the tunnel almost certainly failed
+      // to come up (e.g. the service died mid-handshake leaving a stale
+      // `connecting` snapshot that never advances). Fall back to `disconnected`
+      // so the UI shows a retriable state instead of an eternal spinner — the
+      // user can just tap Connect rather than force-closing the app.
+      if (_isTransientState(_state)) {
+        log.w('Tunnel state never settled; treating as disconnected');
+        _state = VpnConnectionState.disconnected;
+        notifyListeners();
+      }
     } finally {
       _reconciling = false;
     }
   }
 
-  /// Records the session start on connect and clears it on disconnect, keeping
-  /// a persisted copy so [sessionStartedAt] survives an app restart.
+  /// Records the session start the first time the tunnel comes up, keeping a
+  /// persisted copy so [sessionStartedAt] survives an app restart.
+  ///
+  /// Deliberately does **not** clear the start on `disconnected`: automatic
+  /// drops, reconnects, and OS-driven service restarts all pass through
+  /// `disconnected`, and clearing here would restart the session clock from
+  /// zero on every blip. The session timer must keep accumulating total time
+  /// until the *user* turns the VPN off — see [disconnect]'s `endSession`.
   void _trackSessionStart(VpnConnectionState state) {
-    if (state == VpnConnectionState.connected) {
-      if (_sessionStartedAt == null) {
-        _sessionStartedAt = DateTime.now();
-        unawaited(_storage.write(
-          key: _sessionStartKey,
-          value: _sessionStartedAt!.toIso8601String(),
-        ));
-      }
-    } else if (state == VpnConnectionState.disconnected) {
-      _sessionStartedAt = null;
-      unawaited(_storage.delete(key: _sessionStartKey));
+    if (state == VpnConnectionState.connected && _sessionStartedAt == null) {
+      _sessionStartedAt = DateTime.now();
+      unawaited(_storage.write(
+        key: _sessionStartKey,
+        value: _sessionStartedAt!.toIso8601String(),
+      ));
     }
+  }
+
+  /// Clears the persisted session start so the next connection's timer starts
+  /// from zero. Invoked only when the user fully turns the VPN off.
+  void _clearSessionStart() {
+    _sessionStartedAt = null;
+    unawaited(_storage.delete(key: _sessionStartKey));
   }
 
   Future<void> connectToBestNode(
@@ -298,9 +339,16 @@ class VpnController extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async {
-    log.i('Disconnecting tunnel');
+  /// Stops the tunnel. [endSession] distinguishes a full user-initiated
+  /// power-off (resets the session timer) from an internal teardown that's part
+  /// of a reconnect — e.g. switching server/location or re-applying connection
+  /// settings — which keeps the VPN "on" and so must preserve the timer.
+  Future<void> disconnect({bool endSession = true}) async {
+    log.i('Disconnecting tunnel (endSession=$endSession)');
     _userDisconnecting = true;
+    if (endSession) {
+      _clearSessionStart();
+    }
     await _vpn.stop();
     _connectedNodeName = null;
   }
