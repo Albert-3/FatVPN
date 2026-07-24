@@ -30,7 +30,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final _apiClient = ApiClient(
     onUnauthorized: widget.auth.ensureFreshAccessToken,
   );
@@ -43,6 +43,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _timer;
   Timer? _connSettingsDebounce;
   Duration _sessionTime = Duration.zero;
+  // Wall-clock start of the current session. The session label is derived from
+  // this rather than by incrementing a counter each tick, so it survives the
+  // app being frozen in the background on iOS (where the periodic timer stops).
+  DateTime? _sessionStart;
 
   List<ServerCountry> _servers = [];
   ServerCountry? _selectedServer;
@@ -68,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _vpn.addListener(_handleVpnChange);
     widget.connectionSettings.addListener(_onConnSettingsChanged);
     _lastMintedAt = widget.auth.sessionMintedAt;
@@ -100,15 +105,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _handleVpnChange() {
     if (_vpn.isConnected && _timer == null) {
+      _sessionStart = DateTime.now();
       _sessionTime = Duration.zero;
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        setState(() => _sessionTime += const Duration(seconds: 1));
-      });
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tickSession());
     } else if (!_vpn.isConnected && _timer != null) {
       _timer?.cancel();
       _timer = null;
+      _sessionStart = null;
     }
     if (mounted) setState(() {});
+  }
+
+  /// Refreshes the session label from the wall-clock start time. Used both by
+  /// the periodic timer and on app resume, so the clock shows real elapsed time
+  /// even after the app was frozen in the background (where the timer pauses).
+  void _tickSession() {
+    final start = _sessionStart;
+    if (start == null || !mounted) return;
+    setState(() => _sessionTime = DateTime.now().difference(start));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _tickSession();
   }
 
   Future<void> _loadServers() async {
@@ -310,6 +329,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _connSettingsDebounce?.cancel();
     widget.connectionSettings.removeListener(_onConnSettingsChanged);
