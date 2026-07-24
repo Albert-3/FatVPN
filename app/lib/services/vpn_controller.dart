@@ -58,6 +58,16 @@ class VpnController extends ChangeNotifier {
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
+    // Restore the persisted session start *before* subscribing to the state
+    // stream. On relaunch with a live tunnel the stream emits `connected`
+    // almost immediately; if we hadn't loaded the real start first,
+    // `_trackSessionStart` would see a null start and clobber the stored value
+    // with `now`, resetting the timer to zero. Priming it here means the
+    // `connected` event finds a non-null start and leaves it untouched.
+    final storedStart = await _storage.read(key: _sessionStartKey);
+    if (storedStart != null) {
+      _sessionStartedAt = DateTime.tryParse(storedStart);
+    }
     await _vpn.initialize(const SingboxRuntimeOptions(logLevel: 'warn'));
     _stateSubscription = _vpn.stateStream.listen((state) {
       final previous = _state;
