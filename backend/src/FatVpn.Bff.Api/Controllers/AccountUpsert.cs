@@ -11,7 +11,8 @@ namespace FatVpn.Bff.Api.Controllers;
 internal static class AccountUpsert
 {
     public static async Task<Account> UpsertAsync(
-        FatVpnDbContext db, long telegramUserId, string subscriptionId, DateTimeOffset expiresAt, CancellationToken ct)
+        FatVpnDbContext db, long telegramUserId, string subscriptionId, DateTimeOffset expiresAt,
+        string? keyCode, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
         var account = await db.Accounts.SingleOrDefaultAsync(a => a.TelegramUserId == telegramUserId, ct);
@@ -28,6 +29,12 @@ internal static class AccountUpsert
         }
 
         account.CurrentSubscriptionId = subscriptionId;
+        // Only overwrite the displayed key code when the caller actually sent one,
+        // so a bot build that predates this field doesn't wipe a good value.
+        if (!string.IsNullOrEmpty(keyCode))
+        {
+            account.CurrentKeyCode = keyCode;
+        }
         account.ExpiresAt = expiresAt;
         account.UpdatedAt = now;
 

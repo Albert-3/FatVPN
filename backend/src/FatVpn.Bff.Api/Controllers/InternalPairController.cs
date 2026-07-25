@@ -39,7 +39,7 @@ public class InternalPairController(FatVpnDbContext db, IOptions<BotOptions> bot
         }
 
         var account = await AccountUpsert.UpsertAsync(
-            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, ct);
+            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode, ct);
 
         pairing.AccountId = account.Id;
         pairing.Status = PairingStatus.Completed;
@@ -50,4 +50,5 @@ public class InternalPairController(FatVpnDbContext db, IOptions<BotOptions> bot
 }
 
 public sealed record CompletePairingRequest(
-    string PairCode, long TelegramUserId, string SubscriptionId, DateTimeOffset ExpiresAt);
+    string PairCode, long TelegramUserId, string SubscriptionId, DateTimeOffset ExpiresAt,
+    string? KeyCode = null);

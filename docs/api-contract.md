@@ -145,7 +145,8 @@ Best-effort отзыв refresh-токена при выходе. Всегда 20
 ### `GET /me`
 Статус подписки, срок действия.
 
-- **Ответ:** `{ "status": "trial" | "active" | "expired", "expiresAt": datetime }`
+- **Ответ:** `{ "status": "trial" | "active" | "expired", "expiresAt": datetime, "subscriptionId": string?, "keyCode": string? }`
+- `keyCode` — «Код для FatVPN App», который показывает бот (см. `/internal/*` ниже). Приложение показывает его как «Текущий ключ» для pairing-сессий, где код не вводился вручную; `null` для trial/legacy-сессий или если бот его не прислал. `subscriptionId` — Remnawave shortUuid (фолбэк, если `keyCode` нет).
 - **Ошибки:** 401 — токен валиден, но сессия неизвестна (аккаунт/токен удалён) — как у `/servers` и `/config`
 
 ## Внутренние эндпоинты (только для тестового/прод Telegram-бота)
@@ -161,7 +162,8 @@ Best-effort отзыв refresh-токена при выходе. Всегда 20
 Бот завершает pairing по коду: создаёт/обновляет Account и привязывает к нему код.
 
 - **Авторизация:** секрет бота (`X-Bot-Secret`)
-- **Запрос:** `{ "pairCode": string, "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime }`
+- **Запрос:** `{ "pairCode": string, "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime, "keyCode": string? }`
+- `keyCode` (опционально) — «Код для FatVPN App»; сохраняется на Account и отдаётся в `/me`, чтобы приложение показывало тот же код, что и бот. Если не прислан — не перезаписывает уже сохранённый.
 - **Ответ:** 200 OK
 - **Ошибки:** 404 — код неизвестен/истёк; 409 — код уже использован
 
@@ -169,7 +171,8 @@ Best-effort отзыв refresh-токена при выходе. Всегда 20
 Бот обновляет текущую подписку аккаунта при любом изменении активного ключа (создание/смена/продление). Upsert по `telegramUserId`. Именно это не даёт продлению/смене ключа рвать сессию приложения.
 
 - **Авторизация:** секрет бота (`X-Bot-Secret`)
-- **Запрос:** `{ "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime }`
+- **Запрос:** `{ "telegramUserId": int64, "subscriptionId": string, "expiresAt": datetime, "keyCode": string? }`
+- `keyCode` (опционально) — «Код для FatVPN App». Слать при каждом изменении ключа (смена/продление), чтобы «Текущий ключ» в приложении оставался в синхроне с ботом. Если не прислан — сохранённое значение не затирается.
 - **Ответ:** 200 OK
 
 > Полное ТЗ по стороне бота — `docs/bot-pairing-spec.md`.

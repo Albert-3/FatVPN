@@ -24,7 +24,7 @@ public class InternalAccountController(FatVpnDbContext db, IOptions<BotOptions> 
         }
 
         await AccountUpsert.UpsertAsync(
-            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, ct);
+            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode, ct);
 
         await db.SaveChangesAsync(ct);
         return Ok();
@@ -32,4 +32,4 @@ public class InternalAccountController(FatVpnDbContext db, IOptions<BotOptions> 
 }
 
 public sealed record UpsertSubscriptionRequest(
-    long TelegramUserId, string SubscriptionId, DateTimeOffset ExpiresAt);
+    long TelegramUserId, string SubscriptionId, DateTimeOffset ExpiresAt, string? KeyCode = null);

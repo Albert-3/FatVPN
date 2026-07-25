@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace FatVpn.Bff.Api.Auth;
 
 /// <summary>Current subscription for an authenticated caller.</summary>
-public sealed record SubscriptionInfo(DateTimeOffset ExpiresAt, string? SubscriptionId)
+public sealed record SubscriptionInfo(DateTimeOffset ExpiresAt, string? SubscriptionId, string? KeyCode = null)
 {
     public bool IsActive => ExpiresAt > DateTimeOffset.UtcNow;
 }
@@ -27,7 +27,10 @@ public static class SubscriptionResolver
             var account = await db.Accounts.FindAsync([accountId.Value], ct);
             return account is null
                 ? null
-                : new SubscriptionInfo(account.ExpiresAt, NullIfEmpty(account.CurrentSubscriptionId));
+                : new SubscriptionInfo(
+                    account.ExpiresAt,
+                    NullIfEmpty(account.CurrentSubscriptionId),
+                    NullIfEmpty(account.CurrentKeyCode ?? string.Empty));
         }
 
         var token = await db.Tokens.FindAsync([user.GetTokenId()], ct);

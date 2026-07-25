@@ -173,7 +173,7 @@ public class InternalPairControllerTests
 
         var expiry = DateTimeOffset.UtcNow.AddDays(30);
         var result = await NewController(db, Secret)
-            .Complete(new CompletePairingRequest("CODEX", 777, "sub-777", expiry), default);
+            .Complete(new CompletePairingRequest("CODEX", 777, "sub-777", expiry, "GALHKEYCODE"), default);
 
         Assert.IsType<OkResult>(result);
         var pairing = await db.PairingCodes.SingleAsync();
@@ -182,6 +182,7 @@ public class InternalPairControllerTests
         var account = await db.Accounts.SingleAsync();
         Assert.Equal(777, account.TelegramUserId);
         Assert.Equal("sub-777", account.CurrentSubscriptionId);
+        Assert.Equal("GALHKEYCODE", account.CurrentKeyCode);
     }
 
     [Fact]

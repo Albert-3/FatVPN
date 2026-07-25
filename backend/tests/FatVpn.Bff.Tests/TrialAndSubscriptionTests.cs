@@ -199,6 +199,47 @@ public class ProtectedEndpointTests
     }
 
     [Fact]
+    public async Task Me_ReturnsAccountKeyCode()
+    {
+        // The bot-pushed "Код для FatVPN App" is surfaced on /me so a pairing
+        // session (which never pastes a code) can display the same key the bot shows.
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            CurrentSubscriptionId = "sub-abc",
+            CurrentKeyCode = "GALH7WU63B8HAD80",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+        };
+        db.Accounts.Add(account);
+        await db.SaveChangesAsync();
+
+        var controller = new MeController(db);
+        controller.WithUser(AccountClaim(account.Id));
+
+        var ok = Assert.IsType<OkObjectResult>(await controller.GetMe(default));
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        Assert.Contains("GALH7WU63B8HAD80", json);
+    }
+
+    [Fact]
+    public async Task Me_NoKeyCode_ReturnsNullKeyCode()
+    {
+        // Legacy account without a pushed key code — keyCode is null, not "".
+        using var db = TestHelpers.NewDb();
+        var account = new Account { Id = Guid.NewGuid(), CurrentSubscriptionId = "s", ExpiresAt = DateTimeOffset.UtcNow.AddDays(3) };
+        db.Accounts.Add(account);
+        await db.SaveChangesAsync();
+
+        var controller = new MeController(db);
+        controller.WithUser(AccountClaim(account.Id));
+
+        var ok = Assert.IsType<OkObjectResult>(await controller.GetMe(default));
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        Assert.Contains("\"keyCode\":null", json);
+    }
+
+    [Fact]
     public async Task Me_UnknownSession_Unauthorized()
     {
         // Unknown session resolves the same 401 across /me, /servers, /config.

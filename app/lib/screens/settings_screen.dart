@@ -531,10 +531,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Which identifier to show as the active key: the code the user pasted from
-  /// the bot (what they recognize), falling back to the Remnawave subscription
-  /// id for pairing/trial sessions that have no user-entered code.
+  /// the bot (what they recognize), then the account's "Код для FatVPN App"
+  /// pushed by the bot (so pairing sessions match the bot), falling back to the
+  /// Remnawave subscription id for trial/legacy sessions that have neither.
   String? _activeKey(AccountStatus status) =>
-      widget.auth.keyCode ?? status.subscriptionId;
+      widget.auth.keyCode ?? status.keyCode ?? status.subscriptionId;
 
   /// Shows the active key (pasted code or subscription id) with a copy action,
   /// so a user holding several keys can tell which one is active.
