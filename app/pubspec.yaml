@@ -71,6 +71,10 @@ dev_dependencies:
   # AppIcon.appiconset) from a single source. Run: dart run flutter_launcher_icons
   flutter_launcher_icons: ^0.14.1
 
+  # Lets tests fake singbox_mm's platform interface (MockPlatformInterfaceMixin
+  # bypasses the token check PlatformInterface enforces on real subclasses).
+  plugin_platform_interface: ^2.1.8
+
 # Launcher icon config. Sources live in assets/icon/ (not bundled at runtime).
 # Brand: green "V" logo on the app's dark background (#0B1622).
 flutter_launcher_icons:

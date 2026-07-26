@@ -110,6 +110,14 @@ class _CapturePlatform
     latency: const Duration(milliseconds: 1),
     checkedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
   );
+
+  // No tunnel exists here, so "outside the tunnel" is the same measurement.
+  @override
+  Future<VpnPingResult> pingServerOutsideTunnel({
+    required String host,
+    required int port,
+    Duration timeout = const Duration(seconds: 3),
+  }) => pingServer(host: host, port: port, timeout: timeout);
 }
 
 void main() {

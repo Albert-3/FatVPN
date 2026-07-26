@@ -1,5 +1,6 @@
 import Foundation
 import Libbox
+import Network
 import NetworkExtension
 
 // Shared with Runner via the App Group entitlement (PacketTunnel.entitlements) —
@@ -204,6 +205,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        // Two message shapes share this channel. A JSON envelope carrying a
+        // "command" is a request for this process to *do* something on the
+        // app's behalf; anything else is the original payload — a start-options
+        // plist meaning "reload the service with this config".
+        if let envelope = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
+            let command = envelope["command"] as? String
+        {
+            handleCommand(command, envelope, completionHandler: completionHandler)
+            return
+        }
         Task {
             do {
                 let options = try StartOptionsCodec.decode(messageData)
@@ -215,6 +226,108 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler?(error.localizedDescription.data(using: .utf8))
             }
         }
+    }
+
+    private func handleCommand(
+        _ command: String,
+        _ envelope: [String: Any],
+        completionHandler: ((Data?) -> Void)?
+    ) {
+        switch command {
+        case "measureLatency":
+            measureLatency(envelope, completionHandler: completionHandler)
+        default:
+            completionHandler?(Self.encode(["ok": false, "error": "Unknown command: \(command)"]))
+        }
+    }
+
+    /// Times a TCP handshake to a host **from this process**, which is the whole
+    /// reason the container app asks us to do it.
+    ///
+    /// The app's own sockets are carried by the tunnel this extension provides,
+    /// so when it measures a candidate server the number it gets is really
+    /// "device → current server → candidate": every alternative is inflated by
+    /// the live tunnel's round-trip, and the moment that tunnel stops passing
+    /// traffic every measurement fails at once — precisely when the app is
+    /// trying to find a server to escape to. This process is not subject to
+    /// that: a packet tunnel provider's own traffic bypasses the tunnel it
+    /// provides (which is how sing-box reaches the VPN server in the first
+    /// place), so a connect from here travels the real underlay.
+    ///
+    /// Answers on the same JSON shape the in-app ping returns, so the Dart side
+    /// parses one format regardless of who measured.
+    private func measureLatency(_ envelope: [String: Any], completionHandler: ((Data?) -> Void)?) {
+        guard let host = envelope["host"] as? String, !host.isEmpty,
+            let port = envelope["port"] as? Int, port > 0, port <= 65535,
+            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))
+        else {
+            completionHandler?(Self.encode(["ok": false, "error": "Invalid host or port"]))
+            return
+        }
+        let timeoutMs = max((envelope["timeoutMs"] as? Int) ?? 3000, 1)
+
+        Self.tcpLatencyMs(host: host, port: nwPort, timeoutMs: timeoutMs) { latencyMs, error in
+            guard let latencyMs else {
+                completionHandler?(Self.encode(["ok": false, "error": error ?? "Ping failed"]))
+                return
+            }
+            completionHandler?(Self.encode(["ok": true, "latencyMs": latencyMs]))
+        }
+    }
+
+    /// Round-trip of a TCP connect to [host]:[port], or nil with a reason.
+    ///
+    /// Everything runs on one serial queue — NWConnection delivers its state
+    /// updates there and the timeout is scheduled on it — so `settled` needs no
+    /// lock, and the completion fires exactly once no matter which of "ready",
+    /// "failed" and "timed out" arrives first.
+    private static func tcpLatencyMs(
+        host: String,
+        port: NWEndpoint.Port,
+        timeoutMs: Int,
+        completion: @escaping (Int?, String?) -> Void
+    ) {
+        let queue = DispatchQueue(label: "fatvpn.packet-tunnel.latency")
+        // This process's traffic already bypasses the tunnel it provides — that
+        // is how sing-box reaches the VPN server at all. Prohibiting the
+        // tunnel interface type states that requirement outright instead of
+        // resting on it: if the assumption were ever wrong the measurement
+        // would be a fiction, and a fiction is worse than a failure here.
+        let parameters = NWParameters.tcp
+        parameters.prohibitedInterfaceTypes = [.other]
+        let connection = NWConnection(
+            host: NWEndpoint.Host(host), port: port, using: parameters)
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        var settled = false
+
+        func settle(_ latencyMs: Int?, _ error: String?) {
+            guard !settled else { return }
+            settled = true
+            connection.cancel()
+            completion(latencyMs, error)
+        }
+
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt
+                settle(Int(elapsed / 1_000_000), nil)
+            case .failed(let error):
+                settle(nil, error.localizedDescription)
+            case .cancelled:
+                settle(nil, "Ping cancelled")
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) {
+            settle(nil, "Ping timed out")
+        }
+    }
+
+    private static func encode(_ payload: [String: Any]) -> Data? {
+        try? JSONSerialization.data(withJSONObject: payload)
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {

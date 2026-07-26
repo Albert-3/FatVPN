@@ -31,6 +31,8 @@ void main() {
               };
             case 'pingServer':
               return <String, Object?>{'ok': true, 'latencyMs': 28};
+            case 'pingServerOutsideTunnel':
+              return <String, Object?>{'ok': true, 'latencyMs': 61};
             case 'requestVpnPermission':
               return true;
             case 'requestNotificationPermission':
@@ -68,6 +70,15 @@ void main() {
     expect(result.success, isTrue);
     expect(result.latencyMs, 28);
     expect(result.checkMethod, 'tcp_connect');
+  });
+
+  test('pingServerOutsideTunnel parses ping payload', () async {
+    final result = await platform.pingServerOutsideTunnel(
+      host: '1.1.1.1',
+      port: 443,
+    );
+    expect(result.success, isTrue);
+    expect(result.latencyMs, 61);
   });
 
   test('getStateDetails parses detailed payload', () async {

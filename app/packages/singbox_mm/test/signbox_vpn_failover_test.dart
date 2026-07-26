@@ -149,6 +149,14 @@ class _ManagedFakePlatform
     );
   }
 
+  // No tunnel exists here, so "outside the tunnel" is the same measurement.
+  @override
+  Future<VpnPingResult> pingServerOutsideTunnel({
+    required String host,
+    required int port,
+    Duration timeout = const Duration(seconds: 3),
+  }) => pingServer(host: host, port: port, timeout: timeout);
+
   Future<void> dispose() async {
     await _controller.close();
   }

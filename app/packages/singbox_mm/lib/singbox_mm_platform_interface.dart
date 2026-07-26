@@ -122,4 +122,35 @@ abstract class SignboxVpnPlatform extends PlatformInterface {
   }) {
     throw UnimplementedError('pingServer() has not been implemented.');
   }
+
+  /// Measures TCP connect latency to [host]:[port] from **outside** the running
+  /// tunnel, so the number describes the route to that server rather than the
+  /// route through whichever server is currently carrying this app's traffic.
+  ///
+  /// Only iOS implements this, and only iOS needs it. There, the container
+  /// app's own sockets go through the packet tunnel, so an ordinary connect
+  /// measures "this device → current server → target" — every candidate is
+  /// inflated by the live tunnel's own round-trip, and once that tunnel stops
+  /// passing traffic every measurement fails at once, exactly when picking a
+  /// replacement matters most. The tunnel's Network Extension does not have
+  /// that problem (its own traffic bypasses the tunnel it provides), so the
+  /// measurement is taken there and handed back.
+  ///
+  /// Android needs nothing of the sort: the tunnel service already keeps this
+  /// app's sockets out of the tun device, so a plain connect is direct — call
+  /// [pingServer], or `Socket.connect`, instead. Calling this there throws
+  /// [MissingPluginException].
+  ///
+  /// Falls back to an in-app measurement when no tunnel is running, which is
+  /// the same thing: with nothing to bypass, a direct connect is already the
+  /// honest answer.
+  Future<VpnPingResult> pingServerOutsideTunnel({
+    required String host,
+    required int port,
+    Duration timeout = const Duration(seconds: 3),
+  }) {
+    throw UnimplementedError(
+      'pingServerOutsideTunnel() has not been implemented.',
+    );
+  }
 }

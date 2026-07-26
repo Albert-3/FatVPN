@@ -150,8 +150,95 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       result(nil)
     case "pingServer":
       pingServer(arguments: call.arguments, result: result)
+    case "pingServerOutsideTunnel":
+      pingServerOutsideTunnel(arguments: call.arguments, result: result)
     default:
       result(FlutterMethodNotImplemented)
+    }
+  }
+
+  /// Latency to a server measured from *outside* the running tunnel, by asking
+  /// the Packet Tunnel extension to time the handshake for us.
+  ///
+  /// A connect issued here, in the container app, is carried by the tunnel — so
+  /// measuring a candidate server really measures "device → current server →
+  /// candidate". Every alternative comes back inflated by the live tunnel's own
+  /// round-trip, and when that tunnel stops passing traffic every candidate
+  /// looks unreachable at once, which is exactly when the app needs to find one
+  /// that works. The extension's own sockets bypass the tunnel it provides, so
+  /// the measurement is honest there (see PacketTunnelProvider.measureLatency).
+  ///
+  /// With no tunnel running there is nothing to bypass and the in-app path is
+  /// already direct, so this falls back to [pingServer] — as it does when the
+  /// extension can't be reached at all, which must degrade to a worse number
+  /// rather than to no number.
+  private func pingServerOutsideTunnel(arguments: Any?, result: @escaping FlutterResult) {
+    guard let args = arguments as? [String: Any?],
+      let host = args["host"] as? String,
+      !host.isEmpty,
+      let port = args["port"] as? Int,
+      port > 0,
+      port <= 65535
+    else {
+      result([
+        "ok": false,
+        "error": "Invalid host or port",
+      ])
+      return
+    }
+    let timeoutMs = max((args["timeoutMs"] as? Int) ?? 3000, 1)
+
+    guard let session = vpnManager?.connection as? NETunnelProviderSession,
+      session.status == .connected,
+      let message = try? JSONSerialization.data(withJSONObject: [
+        "command": "measureLatency",
+        "host": host,
+        "port": port,
+        "timeoutMs": timeoutMs,
+      ])
+    else {
+      pingServer(arguments: arguments, result: result)
+      return
+    }
+
+    // `answered` is only ever touched on the main queue, so the watchdog and
+    // the extension's reply can't both resolve the call — handing a
+    // FlutterResult two answers is a hard crash.
+    var answered = false
+    let deliver: ([String: Any]) -> Void = { payload in
+      DispatchQueue.main.async {
+        guard !answered else { return }
+        answered = true
+        result(payload)
+      }
+    }
+
+    do {
+      try session.sendProviderMessage(message) { response in
+        guard let response,
+          let payload = try? JSONSerialization.jsonObject(with: response) as? [String: Any]
+        else {
+          deliver([
+            "ok": false,
+            "error": "Tunnel extension returned no usable answer",
+          ])
+          return
+        }
+        deliver(payload)
+      }
+    } catch {
+      pingServer(arguments: arguments, result: result)
+      return
+    }
+
+    // A reply that never comes would leave the caller awaiting forever. The
+    // extension bounds its own measurement by timeoutMs, so anything past that
+    // plus a margin means the IPC itself is gone, not that the server is slow.
+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(timeoutMs + 2000)) {
+      deliver([
+        "ok": false,
+        "error": "Tunnel extension did not answer in time",
+      ])
     }
   }
 

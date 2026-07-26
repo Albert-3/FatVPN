@@ -212,4 +212,28 @@ class MethodChannelSignboxVpn extends SignboxVpnPlatform {
       error: 'Invalid ping response',
     );
   }
+
+  @override
+  /// Measures latency from outside the tunnel (iOS only — see
+  /// [SingboxMmPlatform.pingServerOutsideTunnel]).
+  Future<VpnPingResult> pingServerOutsideTunnel({
+    required String host,
+    required int port,
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final dynamic raw = await methodChannel
+        .invokeMethod<dynamic>('pingServerOutsideTunnel', <String, Object?>{
+          'host': host,
+          'port': port,
+          'timeoutMs': timeout.inMilliseconds,
+        });
+    if (raw is Map<Object?, Object?>) {
+      return VpnPingResult.fromMap(raw, host: host, port: port);
+    }
+    return VpnPingResult.failure(
+      host: host,
+      port: port,
+      error: 'Invalid ping response',
+    );
+  }
 }

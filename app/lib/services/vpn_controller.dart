@@ -608,15 +608,13 @@ class VpnController extends ChangeNotifier {
   /// stopped being useful, not merely slow — the policy then takes any reachable
   /// alternative straight away.
   ///
-  /// ⚠️ Platform caveat, because it changes what these numbers mean: on Android
-  /// this app's own sockets are deliberately kept out of the tun device (see
-  /// VpnTunBuilderConfigurator), so each ping travels the real underlay and
-  /// measures true latency to that node. On iOS the container app's traffic
-  /// goes *through* the tunnel, so every measurement carries the current
-  /// tunnel's own round-trip on top. That biases the comparison toward staying
-  /// put — the alternatives look slower than they are — which is the safe
-  /// direction to be wrong in, but it does mean iOS switches less eagerly.
-  /// Timers also only run while the app is awake, so a backgrounded session is
+  /// Both platforms measure the real underlay rather than the live tunnel, but
+  /// they get there differently — see [PingService]: Android's tunnel keeps
+  /// this app's sockets out of the tun device, while on iOS the measurement is
+  /// delegated to the packet-tunnel extension, whose own traffic bypasses the
+  /// tunnel it provides.
+  ///
+  /// ⚠️ Timers only run while the app is awake, so a backgrounded session is
   /// re-evaluated when the user next opens the app rather than continuously.
   Future<void> _evaluateAutoSwitch({bool tunnelIsDead = false}) async {
     if (_autoSwitchInProgress) return;
