@@ -44,3 +44,6 @@ Designe/
 
 # Built demo APKs (large, not versioned)
 dist/
+
+# Security audit (kept out of a public repo: it maps unfixed findings on a live server)
+docs/security-audit.md
