@@ -5,6 +5,7 @@ class ServerNode {
     required this.address,
     required this.port,
     required this.usersOnline,
+    this.configUri,
   });
 
   factory ServerNode.fromJson(Map<String, dynamic> json) {
@@ -22,6 +23,22 @@ class ServerNode {
   final String address;
   final int port;
   final int usersOnline;
+
+  /// The exact subscription link this entry came from, when the list was built
+  /// from `/config`. Carrying it avoids re-deriving the link by address at
+  /// connect time — an address lookup can't tell apart two inbounds published
+  /// on the same host (e.g. a vless and a hysteria2 entry), and would always
+  /// return whichever came first.
+  final String? configUri;
+
+  ServerNode withConfigUri(String uri) => ServerNode(
+        id: id,
+        name: name,
+        address: address,
+        port: port,
+        usersOnline: usersOnline,
+        configUri: uri,
+      );
 }
 
 class ServerCountry {

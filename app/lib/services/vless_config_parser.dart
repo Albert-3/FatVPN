@@ -49,6 +49,82 @@ String? _schemeOf(String line) {
   return match?.group(1)?.toLowerCase();
 }
 
+/// One connectable entry from the subscription: the raw link plus the bits the
+/// server list needs to render it.
+///
+/// These come from Remnawave *hosts*, which are a different entity from the
+/// *nodes* `GET /servers` returns — a host carries the client-facing address
+/// (often a domain, or a CDN front) and its own remark, and a node can back
+/// several of them. Anything the subscription lists is connectable by
+/// definition, so this is the authoritative list of what the user can reach.
+class ConfigEntry {
+  const ConfigEntry({
+    required this.uri,
+    required this.host,
+    required this.port,
+    required this.tag,
+  });
+
+  /// The full config link, ready to hand to the tunnel plugin.
+  final String uri;
+
+  /// Client-facing address (`vless://…@HOST:port`).
+  final String host;
+
+  /// Client-facing inbound port — the real one to connect to, unlike the
+  /// management port `/servers` reports.
+  final int port;
+
+  /// The link's `#fragment`, URL-decoded: the host remark set in the panel,
+  /// e.g. "🇫🇷 Франция • H2". Empty when the link carries no fragment.
+  final String tag;
+}
+
+/// Decodes `/config` into structured [ConfigEntry] records. Same filtering as
+/// [parseConfigUris]; lines that don't parse as a URI are skipped.
+List<ConfigEntry> parseConfigEntries(String rawConfigContent) {
+  final entries = <ConfigEntry>[];
+  for (final uri in parseConfigUris(rawConfigContent)) {
+    final parsed = Uri.tryParse(uri);
+    if (parsed == null || parsed.host.isEmpty) continue;
+    if (_isXhttp(parsed)) continue;
+    entries.add(ConfigEntry(
+      uri: uri,
+      host: parsed.host,
+      port: parsed.hasPort ? parsed.port : 443,
+      tag: _decodeFragment(parsed.fragment),
+    ));
+  }
+  return entries;
+}
+
+/// True for Xray's XHTTP transport (`?type=xhttp`), which sing-box cannot
+/// speak.
+///
+/// Remnawave's own sing-box render of the same subscription drops these hosts,
+/// which is the authoritative signal — the panel knows sing-box has no XHTTP.
+/// Our plugin does not reject them outright: it "promotes httpupgrade to the
+/// sing-box http transport" as a best-effort approximation, which cannot
+/// interoperate with a real XHTTP inbound (packet-up mode, xmux, padding
+/// obfuscation). Listing such a host would offer the user a server that always
+/// fails to connect, so it is filtered out here rather than surfaced.
+bool _isXhttp(Uri uri) {
+  final type = uri.queryParameters['type']?.toLowerCase();
+  return type == 'xhttp';
+}
+
+/// Fragments arrive percent-encoded (the augmenter and Remnawave both escape
+/// them). A malformed escape must not cost us the whole entry, so fall back to
+/// the raw text.
+String _decodeFragment(String fragment) {
+  if (fragment.isEmpty) return '';
+  try {
+    return Uri.decodeComponent(fragment);
+  } catch (_) {
+    return fragment;
+  }
+}
+
 /// Finds the config URI whose host matches [node]'s address.
 ///
 /// Matching is address-only: `GET /servers` exposes the Remnawave agent's

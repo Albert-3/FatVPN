@@ -7,6 +7,7 @@ import '../models/account_status.dart';
 import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import '../models/server_country.dart';
+import '../utils/country_flag.dart';
 import 'app_logger.dart';
 import 'vless_config_parser.dart';
 
@@ -181,37 +182,82 @@ class ApiClient {
         .toList();
   }
 
-  /// Like [getServers] but keeps only the countries/nodes actually present in
-  /// this subscription's `/config` — `/servers` lists every Remnawave node
-  /// regardless of squad, so offering the others just fails at connect time
-  /// ("No available node in this subscription"). Falls back to the full list if
-  /// the config can't be fetched.
+  /// The servers this subscription can actually reach.
+  ///
+  /// Built from `/config`, not from `/servers`. The subscription is the only
+  /// authoritative answer to "what can this user connect to": every entry in it
+  /// is connectable by definition, whereas `/servers` lists Remnawave *nodes*,
+  /// which is a different entity from the *hosts* the subscription is generated
+  /// from. A node is the machine the panel manages; a host is a client-facing
+  /// endpoint (frequently a domain, or a CDN front) and several can sit on one
+  /// node. The two only share an address when a host happens to be published on
+  /// its node's bare address.
+  ///
+  /// This used to be an intersection keyed on that address, which silently hid
+  /// every host that didn't match one — the Hysteria2 entries (published on
+  /// their own `h*-**.arpozan.cloud` domains, spliced in by the BFF's
+  /// SubscriptionAugmenter) and any node fronted by a domain simply never
+  /// appeared, and could never be picked at connect time either.
+  ///
+  /// `/servers` is now only an enrichment source: where a host does line up
+  /// with a node, we take that node's country grouping and online count.
+  /// Otherwise the country comes from the flag emoji in the host's own remark.
+  /// Falls back to the raw `/servers` list if the config can't be fetched.
   Future<List<ServerCountry>> getUsableServers(String accessToken) async {
     final servers = await getServers(accessToken);
-    List<String> uris;
+    List<ConfigEntry> entries;
     try {
       final (content, _) = await getConfig(accessToken);
-      uris = parseConfigUris(content);
+      entries = parseConfigEntries(content);
     } catch (_) {
       return servers;
     }
-    if (uris.isEmpty) return servers;
+    if (entries.isEmpty) return servers;
 
-    final usable = <ServerCountry>[];
+    // address → (country code, node) for the hosts that do map onto a node.
+    final nodeByAddress = <String, (String, ServerNode)>{};
     for (final country in servers) {
-      final nodes =
-          country.nodes.where((n) => findUriForNode(uris, n) != null).toList();
-      if (nodes.isNotEmpty) {
-        usable.add(ServerCountry(
-          country: country.country,
-          flag: country.flag,
-          nodeCount: nodes.length,
-          nodes: nodes,
-        ));
+      for (final node in country.nodes) {
+        nodeByAddress.putIfAbsent(node.address, () => (country.country, node));
       }
     }
+
+    final byCountry = <String, List<ServerNode>>{};
+    for (final entry in entries) {
+      final match = nodeByAddress[entry.host];
+      final country = match?.$1 ??
+          countryCodeFromFlagEmoji(entry.tag) ??
+          _unknownCountry;
+      // Keep the node's own identity/name when we have one, so nodes that were
+      // already listed look exactly as before; otherwise fall back to the
+      // host's remark, which is all the panel gives us for this entry.
+      final node = match?.$2.withConfigUri(entry.uri) ??
+          ServerNode(
+            id: entry.uri,
+            name: entry.tag.isEmpty ? entry.host : entry.tag,
+            address: entry.host,
+            port: entry.port,
+            usersOnline: 0,
+            configUri: entry.uri,
+          );
+      byCountry.putIfAbsent(country, () => <ServerNode>[]).add(node);
+    }
+
+    final usable = byCountry.entries
+        .map((e) => ServerCountry(
+              country: e.key,
+              flag: e.key,
+              nodeCount: e.value.length,
+              nodes: e.value,
+            ))
+        .toList();
     return usable.isEmpty ? servers : usable;
   }
+
+  /// Bucket for a subscription entry whose remark carries no flag emoji and
+  /// whose host matches no node — rare, but it must stay visible rather than be
+  /// dropped, which is exactly the failure this method exists to undo.
+  static const _unknownCountry = '??';
 
   Future<AccountStatus> getMe(String accessToken) async {
     final response = await _authedGet('/me', accessToken);
