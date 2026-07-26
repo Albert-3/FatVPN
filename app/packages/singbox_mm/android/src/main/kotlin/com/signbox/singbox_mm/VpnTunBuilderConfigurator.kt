@@ -125,10 +125,22 @@ internal object VpnTunBuilderConfigurator {
             includedPackages.add(includePackage.next())
         }
 
-        // Keep this app's sockets out of TUN to prevent self-capture loops.
-        if (includedPackages.isEmpty()) {
-            addDisallowedPackage(hostPackageName)
-        }
+        // This app is deliberately *not* excluded from the tunnel.
+        //
+        // Excluding it used to be the guard against self-capture loops, but the
+        // loop it protects against is only ever created by sing-box's own
+        // outbound sockets, and those are already handled the proper way:
+        // usePlatformAutoDetectInterfaceControl() is true, so the core hands
+        // every outbound fd to autoDetectInterfaceControl, which calls
+        // VpnService.protect() on it. Excluding the whole package on top of
+        // that bought nothing and cost a great deal — every request the app
+        // itself makes, including all of its API traffic, left the device
+        // outside the tunnel while the UI said "connected". It also made any
+        // reachability check from here meaningless, since such a probe measured
+        // the direct path and reported success over a completely dead tunnel.
+        //
+        // Keep this in mind when adding a package to includePackage: an
+        // allow-list that omits this app puts us back in the old behaviour.
 
         for (included in includedPackages) {
             addAllowedPackage(included)
