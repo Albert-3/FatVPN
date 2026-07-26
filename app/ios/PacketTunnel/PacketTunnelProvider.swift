@@ -259,7 +259,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private func measureLatency(_ envelope: [String: Any], completionHandler: ((Data?) -> Void)?) {
         guard let host = envelope["host"] as? String, !host.isEmpty,
             let port = envelope["port"] as? Int, port > 0, port <= 65535,
-            let nwPort = NWEndpoint.Port(rawValue: UInt16(port))
+            let nwPort = Network.NWEndpoint.Port(rawValue: UInt16(port))
         else {
             completionHandler?(Self.encode(["ok": false, "error": "Invalid host or port"]))
             return
@@ -283,7 +283,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// "failed" and "timed out" arrives first.
     private static func tcpLatencyMs(
         host: String,
-        port: NWEndpoint.Port,
+        // `Network.` qualified throughout: NetworkExtension exports its own
+        // (deprecated) NWEndpoint class, so the bare name is ambiguous here.
+        port: Network.NWEndpoint.Port,
         timeoutMs: Int,
         completion: @escaping (Int?, String?) -> Void
     ) {
@@ -296,7 +298,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let parameters = NWParameters.tcp
         parameters.prohibitedInterfaceTypes = [.other]
         let connection = NWConnection(
-            host: NWEndpoint.Host(host), port: port, using: parameters)
+            host: Network.NWEndpoint.Host(host), port: port, using: parameters)
         let startedAt = DispatchTime.now().uptimeNanoseconds
         var settled = false
 
