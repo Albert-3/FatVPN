@@ -563,6 +563,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             s.sessionTime,
             style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
           ),
+          // The tunnel is up but carries nothing — say so, instead of leaving a
+          // green button over a connection that doesn't work.
+          if (_vpn.tunnelNotPassingTraffic) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                s.tunnelNotPassingTraffic,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+              ),
+            ),
+          ],
         ] else if (_vpn.errorMessage != null)
           Text(
             _vpn.errorMessage!,

@@ -34,7 +34,35 @@ internal object SignboxLibboxServiceContract {
     }
 
     fun readPersistedRuntimeState(context: Context): PersistedRuntimeState? {
-        return VpnRuntimeSnapshotStore.read(context)
+        return VpnRuntimeSnapshotStore.read(context)?.let(::reconcileWithRunningService)
+    }
+
+    /// Downgrades a snapshot that claims the tunnel is up when no service is
+    /// actually running in this process.
+    ///
+    /// The snapshot is a record of the last state the service wrote, not proof
+    /// the tunnel survived. Whenever the process dies without an orderly stop —
+    /// force-stop, a low-memory kill, a crash — the file is left saying
+    /// "connected", and every later read repeats that claim. The app trusted it
+    /// and showed a connected tunnel with a running session timer while the tun
+    /// device no longer existed, which is indistinguishable to the user from a
+    /// VPN that simply stopped passing traffic.
+    ///
+    /// Stats are reset alongside the state so the session does not resume
+    /// counting from a byte total that belongs to a tunnel that is gone.
+    private fun reconcileWithRunningService(snapshot: PersistedRuntimeState): PersistedRuntimeState {
+        val claimsTunnelUp = snapshot.state == STATE_CONNECTED ||
+            snapshot.state == STATE_CONNECTING ||
+            snapshot.state == STATE_PREPARING
+        if (!claimsTunnelUp || VpnServiceLiveness.isRunning) {
+            return snapshot
+        }
+        return snapshot.copy(
+            state = STATE_DISCONNECTED,
+            connectedAtMillis = null,
+            uplinkBytesBase = 0L,
+            downlinkBytesBase = 0L,
+        )
     }
 
     fun start(context: Context, configPath: String) {

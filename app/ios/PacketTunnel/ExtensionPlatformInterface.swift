@@ -210,7 +210,22 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
     }
 
     private func reportDefaultInterface(_ listener: LibboxInterfaceUpdateListenerProtocol, _ path: Network.NWPath) {
-        guard path.status != .unsatisfied, let defaultInterface = path.availableInterfaces.first else {
+        // This tells sing-box which interface is the *underlay* — the one it
+        // opens its outbound sockets to the VPN server on. It must never be our
+        // own tunnel: once setTunnelNetworkSettings has applied, the utun we
+        // created shows up in availableInterfaces and can sort first, and
+        // reporting it here makes sing-box dial the server through the tunnel
+        // itself. Traffic then loops back into the TUN and dies — while
+        // NEVPNStatus stays .connected, so iOS and the app keep showing
+        // "connected" with the session timer running.
+        //
+        // The first path update arrives before openTun (sing-box starts the
+        // monitor during service start), so a fresh connection looks fine; the
+        // breakage lands on the *next* path update — a Wi-Fi/cellular switch,
+        // an AP re-association, a DHCP renewal — which is why the tunnel dies
+        // abruptly mid-session rather than at connect time.
+        let underlay = path.availableInterfaces.first { !$0.name.hasPrefix("utun") }
+        guard path.status != .unsatisfied, let defaultInterface = underlay else {
             listener.updateDefaultInterface("", interfaceIndex: -1, isExpensive: false, isConstrained: false)
             return
         }

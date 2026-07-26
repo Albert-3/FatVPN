@@ -98,7 +98,15 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     -> FlutterError?
   {
     stateSink = events
-    emitState()
+    // Only publish the cached state when it was actually derived from a tunnel
+    // we're observing. On a cold launch `connectionState` is still its
+    // "disconnected" default, and emitting it here told the app the VPN was off
+    // while it was in fact up from a previous app run — the app then anchored a
+    // brand-new session (timer restarting at 00:00:00) once the real status
+    // arrived a moment later.
+    if vpnManager != nil {
+      emitState()
+    }
     // Reflect the real tunnel status as soon as the app starts listening,
     // rather than assuming "disconnected" until the first explicit sync.
     refreshManager(emit: true)
@@ -129,7 +137,7 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     case "restartVpn":
       restartVpn(result: result)
     case "getState":
-      result(connectionState)
+      resolveState(result: result)
     case "getStateDetails":
       result(buildStateDetails())
     case "syncRuntimeState":
@@ -426,6 +434,33 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     result(nil)
   }
 
+  /// Answers `getState` from the *real* tunnel status rather than the in-memory
+  /// cache. The cache is only trustworthy once we're observing a manager: it
+  /// starts out "disconnected" on every cold launch, so a tunnel still running
+  /// from a previous app run used to be reported as down until the
+  /// NEVPNStatusDidChange observer happened to fire. The app reconciles its UI
+  /// against this call on launch and on resume, so a stale answer here is what
+  /// made the toggle and the session timer disagree with the system VPN.
+  private func resolveState(result: @escaping FlutterResult) {
+    if let connection = vpnManager?.connection {
+      handleStatusChange(connection.status)
+      result(connectionState)
+      return
+    }
+    loadExistingManager { [weak self] manager in
+      // Always answer: a getState that never completes stalls the app's
+      // launch/resume reconciliation on an un-completable await.
+      guard let self else {
+        DispatchQueue.main.async { result("disconnected") }
+        return
+      }
+      if let manager {
+        self.attachManager(manager)
+      }
+      DispatchQueue.main.async { result(self.connectionState) }
+    }
+  }
+
   private func requestVpnPermission(result: @escaping FlutterResult) {
     loadOrCreateManager { [weak self] outcome in
       guard let self else {
@@ -485,19 +520,26 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     manager.isEnabled = true
   }
 
-  /// Loads the current manager (creating a reference if one exists in
-  /// preferences) purely to observe its status, without touching preferences.
-  private func refreshManager(emit: Bool) {
-    NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
-      guard let self else { return }
-      guard
-        let manager = managers?.first(where: { manager in
+  /// Looks up our already-saved tunnel manager, or nil when the user has never
+  /// approved a VPN configuration. Unlike [loadOrCreateManager] this never
+  /// fabricates a fresh unsaved manager — attaching to one of those would
+  /// observe a permanently `.invalid` connection and pin the state to
+  /// "disconnected".
+  private func loadExistingManager(completion: @escaping (NETunnelProviderManager?) -> Void) {
+    NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+      completion(
+        managers?.first { manager in
           (manager.protocolConfiguration as? NETunnelProviderProtocol)?
             .providerBundleIdentifier == Self.tunnelBundleId
         })
-      else {
-        return
-      }
+    }
+  }
+
+  /// Loads the current manager (creating a reference if one exists in
+  /// preferences) purely to observe its status, without touching preferences.
+  private func refreshManager(emit: Bool) {
+    loadExistingManager { [weak self] manager in
+      guard let self, let manager else { return }
       self.attachManager(manager)
       if emit {
         self.handleStatusChange(manager.connection.status)

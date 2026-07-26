@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -50,10 +51,23 @@ class VpnController extends ChangeNotifier {
   String? _errorMessage;
   String? _connectedNodeName;
 
+  // True when the tunnel came up but a probe through it reached nothing. See
+  // [_verifyTunnelCarriesTraffic].
+  bool _tunnelNotPassingTraffic = false;
+
   VpnConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
   String? get connectedNodeName => _connectedNodeName;
   bool get isConnected => _state == VpnConnectionState.connected;
+
+  /// True while the tunnel is established but nothing gets through it.
+  ///
+  /// "Connected" only ever meant "the OS brought the tun device up", which
+  /// happens before — and independently of — sing-box reaching the server. A
+  /// server that accepts no traffic therefore looked exactly like a working
+  /// one: green toggle, running session timer, no internet. This flag is what
+  /// lets the UI tell those two apart.
+  bool get tunnelNotPassingTraffic => _tunnelNotPassingTraffic;
 
   /// When the current session started (persisted across app restarts). Null
   /// when not connected. Used to render the session timer from real elapsed
@@ -101,6 +115,10 @@ class VpnController extends ChangeNotifier {
       }
       if (state == VpnConnectionState.disconnected) {
         _userDisconnecting = false;
+        // A verdict about traffic only describes a tunnel that exists; carrying
+        // it into the next connection would blame a new server for the old
+        // one's failure.
+        _tunnelNotPassingTraffic = false;
       }
     });
     _initialized = true;
@@ -116,6 +134,16 @@ class VpnController extends ChangeNotifier {
       await _ensureInitialized();
       final actual = await _vpn.getState();
       await _applyRuntimeState(actual);
+      if (actual == VpnConnectionState.connected) {
+        // A tunnel can die at runtime *without* changing state: sing-box loses
+        // the underlay and stops passing packets, but NEVPNStatus stays
+        // .connected, so the UI keeps saying "connected" while nothing works.
+        // The connected→disconnected watcher below never fires for that, so
+        // pull whatever the extension persisted every time we reconcile a live
+        // tunnel — it's the only way the stderr tail reaches the support bundle
+        // for this failure mode.
+        unawaited(_logTunnelDiagnostics());
+      }
       // A tunnel that's still finishing its handshake when we relaunch reports
       // `connecting`/`preparing`. The `connected` transition may have been
       // published by the plugin *before* we subscribed to the state stream, so
@@ -151,8 +179,18 @@ class VpnController extends ChangeNotifier {
       // Restore the persisted start so the session timer resumes from real
       // elapsed time rather than restarting at zero on relaunch.
       final stored = await _storage.read(key: _sessionStartKey);
-      _sessionStartedAt =
-          (stored != null ? DateTime.tryParse(stored) : null) ?? DateTime.now();
+      final parsed = stored != null ? DateTime.tryParse(stored) : null;
+      if (parsed != null) {
+        _sessionStartedAt = parsed;
+      } else {
+        // Nothing usable on disk, yet the tunnel is up — the session started
+        // outside this app process (OS-restarted extension, or the app was
+        // killed before the start could be written). Anchor it now *and
+        // persist it*: leaving it in memory only made the reset permanent,
+        // because the next relaunch would land here again and restart the
+        // clock from zero on every single open.
+        _rememberSessionStart(DateTime.now());
+      }
     }
     if (actual != _state) {
       _state = actual;
@@ -210,12 +248,20 @@ class VpnController extends ChangeNotifier {
   /// until the *user* turns the VPN off — see [disconnect]'s `endSession`.
   void _trackSessionStart(VpnConnectionState state) {
     if (state == VpnConnectionState.connected && _sessionStartedAt == null) {
-      _sessionStartedAt = DateTime.now();
-      unawaited(_storage.write(
-        key: _sessionStartKey,
-        value: _sessionStartedAt!.toIso8601String(),
-      ));
+      _rememberSessionStart(DateTime.now());
     }
+  }
+
+  /// Sets the session start and writes it through to storage, so the timer
+  /// survives the app being killed while the tunnel keeps running. Every place
+  /// that anchors a new session must go through here — an in-memory-only start
+  /// silently resets the clock on the next launch.
+  void _rememberSessionStart(DateTime start) {
+    _sessionStartedAt = start;
+    unawaited(_storage.write(
+      key: _sessionStartKey,
+      value: start.toIso8601String(),
+    ));
   }
 
   /// Clears the persisted session start so the next connection's timer starts
@@ -255,12 +301,165 @@ class VpnController extends ChangeNotifier {
   /// errors, which already carry a user-facing message.
   bool _isNetworkError(Object e) => e is SocketException || e is http.ClientException;
 
+  /// Endpoint the post-connect probe hits. Google's captive-portal check:
+  /// an empty 204, served from everywhere, and designed for exactly this.
+  static const _trafficProbeUrl = 'https://www.gstatic.com/generate_204';
+  static const _trafficProbeTimeout = Duration(seconds: 8);
+
+  // The tunnel reports "established" as soon as the interface is up, a moment
+  // before the OS finishes installing its routes. Probing inside that window is
+  // worthless: the request slips out over the *old* default route and succeeds
+  // no matter how broken the tunnel is — which is exactly how an unreachable
+  // server passed this check during testing. Wait for routing to settle first.
+  static const _trafficProbeSettleDelay = Duration(seconds: 3);
+  static const _trafficProbeRetryDelay = Duration(seconds: 2);
+
+  /// sing-box's local control API (`experimental.clash_api`), on the port
+  /// SingboxFeatureSettings.clashApiPort defaults to.
+  static const _singboxApiBase = 'http://127.0.0.1:16756';
+
+  /// Confirms the established tunnel actually carries traffic, and flags it when
+  /// it doesn't.
+  ///
+  /// This is reliable precisely *because* the tun device is up: with a default
+  /// route into the tunnel there is no direct path left, so a dead outbound
+  /// can't be masked by the request slipping out around it — it simply times
+  /// out. A single failure isn't enough to accuse the server, so one retry
+  /// absorbs a transient blip.
+  ///
+  /// Never tears the tunnel down: a probe is weaker evidence than the user's
+  /// own experience, and yanking a connection out from under someone over one
+  /// unreachable URL would be worse than the symptom.
+  Future<void> _verifyTunnelCarriesTraffic() async {
+    await Future.delayed(_trafficProbeSettleDelay);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      // The user may have switched servers or powered off while we probed;
+      // a verdict about a tunnel that no longer exists is meaningless.
+      if (_state != VpnConnectionState.connected) return;
+      if (attempt > 0) await Future.delayed(_trafficProbeRetryDelay);
+      final reachable = await _probeThroughTunnel();
+      // No verdict — the probe itself couldn't run. Staying silent is right:
+      // an unprovable claim must not be turned into an accusation.
+      if (reachable == null) return;
+      if (reachable) {
+        if (_tunnelNotPassingTraffic) {
+          _tunnelNotPassingTraffic = false;
+          notifyListeners();
+        }
+        return;
+      }
+    }
+    if (_state != VpnConnectionState.connected) return;
+    log.w('Tunnel is up but the probe reached nothing — outbound looks dead');
+    _tunnelNotPassingTraffic = true;
+    notifyListeners();
+    unawaited(_logTunnelDiagnostics());
+  }
+
+  /// True when traffic gets through, false when it demonstrably doesn't, null
+  /// when the probe couldn't be carried out and nothing can be concluded.
+  ///
+  /// The two platforms need opposite approaches, because the tunnel treats this
+  /// app's own traffic differently on each:
+  ///
+  /// * **Android** — the tunnel service deliberately keeps this app's sockets
+  ///   out of the tun device ("prevent self-capture loops", see
+  ///   VpnTunBuilderConfigurator). A request issued from here therefore never
+  ///   touches the tunnel and comes back successful no matter how dead it is —
+  ///   which is exactly how a server that passed no traffic at all was measured
+  ///   as healthy during testing. So we ask sing-box itself over its local
+  ///   Clash API: its delay test dials the probe URL *through the active
+  ///   outbound*, which is the question we actually want answered.
+  /// * **iOS** — the container app's traffic does go through the packet tunnel,
+  ///   so a plain request is both possible and correct. The Clash API is not an
+  ///   option there: it listens inside the network extension, a separate
+  ///   process whose 127.0.0.1 this app cannot reach.
+  Future<bool?> _probeThroughTunnel() {
+    return Platform.isAndroid ? _probeViaSingboxApi() : _probeDirectly();
+  }
+
+  Future<bool?> _probeDirectly() async {
+    try {
+      final response = await http
+          .get(Uri.parse(_trafficProbeUrl))
+          .timeout(_trafficProbeTimeout);
+      return response.statusCode >= 200 && response.statusCode < 400;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool?> _probeViaSingboxApi() async {
+    // Fetching the tag doubles as a liveness check on the API itself: if this
+    // succeeds, anything that goes wrong afterwards is about the outbound, not
+    // about our ability to ask.
+    final tag = await _activeOutboundTag();
+    if (tag == null) return null;
+    try {
+      final uri = Uri.parse('$_singboxApiBase/proxies/${Uri.encodeComponent(tag)}/delay')
+          .replace(queryParameters: <String, String>{
+        'url': _trafficProbeUrl,
+        'timeout': '${_trafficProbeTimeout.inMilliseconds}',
+      });
+      final response = await http
+          .get(uri)
+          .timeout(_trafficProbeTimeout + const Duration(seconds: 4));
+      return response.statusCode == 200;
+    } catch (_) {
+      // A dead outbound makes this request hang rather than fail: sing-box
+      // accepts the connection and then never answers, ignoring the `timeout`
+      // parameter entirely (observed: 30s, zero bytes). Our own timeout is
+      // therefore the verdict, not an inconclusive result — the API answered a
+      // moment ago, so silence here is the outbound's silence.
+      return false;
+    }
+  }
+
+  /// Tag of the proxy outbound currently in use, read back from sing-box.
+  ///
+  /// Taken from the running instance rather than assumed from the node we asked
+  /// for: the tag is the config link's own fragment, which need not match the
+  /// node name `/servers` reports.
+  Future<String?> _activeOutboundTag() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_singboxApiBase/proxies'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return null;
+      final proxies = (jsonDecode(response.body) as Map<String, dynamic>)['proxies'];
+      if (proxies is! Map<String, dynamic>) return null;
+      for (final entry in proxies.entries) {
+        final value = entry.value;
+        if (value is! Map<String, dynamic>) continue;
+        final type = (value['type'] as String?)?.toLowerCase();
+        if (type == null || _nonProxyOutboundTypes.contains(type)) continue;
+        return entry.key;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Outbound types that are not the server we want to test.
+  static const _nonProxyOutboundTypes = <String>{
+    'direct',
+    'block',
+    'reject',
+    'dns',
+    'selector',
+    'urltest',
+    'compatible',
+    'fallback',
+  };
+
   Future<ServerNode?> _connect(
     List<ServerNode> candidates,
     String accessToken, {
     required String networkErrorMessage,
   }) async {
     _errorMessage = null;
+    _tunnelNotPassingTraffic = false;
     _userDisconnecting = false;
     _state = VpnConnectionState.connecting;
     notifyListeners();
@@ -268,19 +467,23 @@ class VpnController extends ChangeNotifier {
     try {
       await _ensureInitialized();
 
-      // `/servers` lists every Remnawave node regardless of squad, but
-      // `/config` only contains entries for nodes in this user's subscription —
-      // narrow to the intersection before picking by ping, otherwise the "best"
-      // node can be one this subscription can't use.
+      // Nodes built from `/config` already carry their exact link (see
+      // ApiClient.getUsableServers). Re-deriving it by address would pick
+      // whichever inbound happened to come first when a host publishes more
+      // than one — which is how the Hysteria2 entries stayed unreachable even
+      // once they were listed. Only fall back to an address lookup for nodes
+      // that came straight from `/servers`.
       final (content, _) = await _apiClient.getConfig(accessToken);
       final uris = parseConfigUris(content);
-      final usableNodes = candidates.where((n) => findUriForNode(uris, n) != null).toList();
+      String? uriFor(ServerNode n) => n.configUri ?? findUriForNode(uris, n);
+
+      final usableNodes = candidates.where((n) => uriFor(n) != null).toList();
       if (usableNodes.isEmpty) {
         throw StateError('No available node in this subscription');
       }
 
       final node = await _pickBestNode(usableNodes);
-      final uri = findUriForNode(uris, node)!;
+      final uri = uriFor(node)!;
 
       log.i('Connecting to node "${node.name}" '
           '(dns=${connectionSettings.dnsPreset.name}, '
@@ -294,6 +497,10 @@ class VpnController extends ChangeNotifier {
       );
       _connectedNodeName = node.name;
       log.i('Tunnel established to "${node.name}"');
+      // Deliberately not awaited: the tunnel is up, so the UI should say so
+      // immediately. The probe corrects that claim a few seconds later if
+      // nothing actually gets through.
+      unawaited(_verifyTunnelCarriesTraffic());
       return node;
     } catch (e) {
       _state = VpnConnectionState.error;
@@ -333,6 +540,22 @@ class VpnController extends ChangeNotifier {
         notifyListeners();
       } else {
         log.w('Tunnel dropped during connect but reported no diagnostics');
+      }
+    } catch (e) {
+      log.w('Failed to read tunnel diagnostics: $e');
+    }
+  }
+
+  /// Records the extension's persisted diagnostics into the app log without
+  /// touching the UI. Unlike [_captureTunnelFailure] this makes no claim that
+  /// anything failed — the tunnel may well be healthy — so it never sets
+  /// [errorMessage]; it exists purely so a silently-dead tunnel leaves a trail
+  /// in the shareable support bundle.
+  Future<void> _logTunnelDiagnostics() async {
+    try {
+      final err = await _vpn.getLastError();
+      if (err != null && err.trim().isNotEmpty) {
+        log.w('Tunnel diagnostics on live tunnel: $err');
       }
     } catch (e) {
       log.w('Failed to read tunnel diagnostics: $e');

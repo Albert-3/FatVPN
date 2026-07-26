@@ -47,6 +47,7 @@ class Strings {
     required this.disconnected,
     required this.sessionTime,
     required this.connectionNotProtected,
+    required this.tunnelNotPassingTraffic,
     required this.bestServers,
     required this.seeAll,
     required this.chooseLocation,
@@ -150,6 +151,10 @@ class Strings {
   final String disconnected;
   final String sessionTime;
   final String connectionNotProtected;
+
+  /// Shown while the tunnel is up but nothing gets through it — the state the
+  /// app used to render as a plain green "connected" with no internet.
+  final String tunnelNotPassingTraffic;
   final String bestServers;
   final String seeAll;
 
@@ -294,6 +299,7 @@ const Strings enStrings = Strings(
   disconnected: 'Disconnected',
   sessionTime: 'SESSION TIME',
   connectionNotProtected: 'Your connection is not protected',
+  tunnelNotPassingTraffic: 'This server is not responding. Pick another one.',
   bestServers: 'Best servers',
   seeAll: 'See all',
   chooseLocation: 'Choose location',
@@ -408,6 +414,7 @@ final Strings ruStrings = Strings(
   disconnected: 'Отключено',
   sessionTime: 'ВРЕМЯ СЕССИИ',
   connectionNotProtected: 'Ваше соединение не защищено',
+  tunnelNotPassingTraffic: 'Сервер не отвечает. Выберите другой.',
   bestServers: 'Лучшие серверы',
   seeAll: 'Смотреть все',
   chooseLocation: 'Выбор локации',
