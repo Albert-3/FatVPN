@@ -35,11 +35,10 @@ public class ConfigController(
         try
         {
             var (content, contentType) = await remnawaveClient.GetSubscriptionConfigAsync(subscription.SubscriptionId, ct);
-            // Remnawave doesn't render our Hysteria2 (FR/US/FI "H2") nodes into the
-            // subscription, so we can splice them in for the app. Off by default —
-            // the synthesized links bring the tunnel up but carry no traffic, which
-            // the app can't tell apart from a working server. See
-            // RemnawaveOptions.AugmentHysteria before turning this on.
+            // Remnawave renders our Hysteria2 (FR/US/FI "H2") nodes only into its
+            // xray-json output, never into the base64/sing-box/clash formats the app
+            // consumes — so we splice them in ourselves. On by default; the links are
+            // verified to carry traffic (see RemnawaveOptions.AugmentHysteria).
             if (remnawaveOptions.Value.AugmentHysteria)
             {
                 content = SubscriptionAugmenter.AppendHysteriaHosts(content);

@@ -3,21 +3,24 @@ using System.Text;
 namespace FatVpn.Bff.Infrastructure.Remnawave;
 
 /// <summary>
-/// PoC: Remnawave omits our Hysteria2 nodes (FR/US/FI "H2") from the subscription
-/// output — they run as an Xray-hysteria plugin, not xray-core, so the panel's
-/// subscription generator skips them in every format (base64, sing-box, clash).
-/// The app therefore never sees them. Here we synthesize <c>hysteria2://</c> links
-/// and append them to the base64 subscription so the sing-box tunnel can use them.
+/// Remnawave omits our Hysteria2 nodes (FR/US/FI "H2") from the subscription formats
+/// the app consumes — they run as an Xray-hysteria plugin, so the panel's generator
+/// skips them in base64, sing-box and clash alike (its xray-json/Happ render is the
+/// one format that does include them). The app would therefore never see them. Here
+/// we synthesize <c>hysteria2://</c> links and append them to the base64 subscription
+/// so the sing-box tunnel can use them.
 ///
 /// The per-user auth for these Hysteria inbounds is the user's vless UUID, which is
 /// already present in every <c>vless://</c> line of the subscription — so we lift it
-/// from the config itself and need no extra Remnawave call. Params (host/sni/alpn)
-/// were read from the panel's Happ (xray-json) render of these same nodes.
+/// from the config itself and need no extra Remnawave call. Verified 2026-07-27
+/// against the panel's own xray-json render: its <c>hysteriaSettings.auth</c> equals
+/// that user's vless UUID. Params (host/sni/alpn) come from the same render.
 /// </summary>
 public static class SubscriptionAugmenter
 {
-    // Hysteria2 hosts Remnawave won't render. Kept in code for the PoC; a later
-    // pass can fetch these from /api/hosts filtered to hysteria inbounds.
+    // Hysteria2 hosts Remnawave won't render. Hardcoded because the panel exposes
+    // them only through /api/hosts joined to a config profile, which is an extra
+    // round trip per /config; revisit if these hosts start changing.
     private static readonly (string Host, int Port, string Name)[] HysteriaHosts =
     [
         ("h2-fr.arpozan.cloud", 443, "\U0001F1EB\U0001F1F7 Франция • H2"),

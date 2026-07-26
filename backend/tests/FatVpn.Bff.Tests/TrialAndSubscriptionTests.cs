@@ -183,9 +183,10 @@ public class ProtectedEndpointTests
     private static System.Security.Claims.Claim AccountClaim(Guid id)
         => new(FatVpnClaimTypes.AccountId, id.ToString());
 
-    /// Options for /config. Hysteria augmentation stays off, matching the
-    /// production default — these tests assert the subscription is proxied
-    /// through unchanged.
+    /// Options for /config. Hysteria augmentation is forced off here (production
+    /// defaults it on) so these tests can assert the subscription is proxied
+    /// through unchanged; the splicing itself is covered by
+    /// <see cref="SubscriptionAugmenterTests"/>.
     private static Microsoft.Extensions.Options.IOptions<RemnawaveOptions> RemnawaveOptionsFor(
         bool augmentHysteria = false)
         => Microsoft.Extensions.Options.Options.Create(

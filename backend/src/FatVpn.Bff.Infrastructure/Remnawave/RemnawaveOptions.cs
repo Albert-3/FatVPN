@@ -15,20 +15,30 @@ public sealed class RemnawaveOptions
     /// "H2" hosts into the subscription (see <see cref="SubscriptionAugmenter"/>).
     /// </summary>
     /// <remarks>
-    /// Off by default: the links were never verified end to end and, on device,
-    /// the FR and US entries connect the tunnel but pass no traffic at all. The
-    /// app reports "connected" from the OS tunnel status, which comes up whether
-    /// or not sing-box ever reached the server — so a broken outbound looks
-    /// exactly like a working one, and the user just has no internet. Serving no
-    /// Hysteria entry is strictly better than serving a dead one.
+    /// On by default since 2026-07-27, when both open questions were settled
+    /// against the live panel and real nodes:
     ///
-    /// Turn this back on once a synthesized link is confirmed to carry traffic.
-    /// Two things are unproven: that the per-user password really is the vless
-    /// UUID (the panel's config profile carries an empty <c>clients</c> array and
-    /// injects credentials onto the node at runtime), and that sing-box's
-    /// standard hysteria2 outbound is wire-compatible with these inbounds, which
-    /// are Xray's <c>"protocol": "hysteria"</c> plugin wrapped in a non-standard
-    /// <c>finalmask</c> QUIC layer.
+    /// 1. <b>The password really is the vless UUID.</b> The config profile keeps
+    ///    an empty <c>clients</c> array (the node injects credentials at runtime),
+    ///    but the panel's own xray-json render of a subscription carries
+    ///    <c>streamSettings.hysteriaSettings.auth</c>, and it is byte-identical to
+    ///    that user's vless UUID — which is what we lift from the subscription.
+    /// 2. <b>sing-box is wire-compatible with these inbounds.</b> Driving the exact
+    ///    outbound the app builds from our synthesized link (sing-box 1.13.14,
+    ///    hysteria2, tls+alpn h3) through all three nodes carried real traffic:
+    ///    exit IPs resolved to FI/FR/US respectively, and 10 MB downloads
+    ///    completed. The non-standard <c>finalmask</c> block turns out to be
+    ///    endpoint-local QUIC tuning (congestion control, receive windows), not a
+    ///    wire-format change, so it needs no client-side counterpart.
+    ///
+    /// The earlier on-device failure ("tunnel up, no traffic") is therefore not a
+    /// config or credential problem. If it recurs, suspect the access network
+    /// blocking UDP/443 — QUIC is all these nodes speak, and the app reports
+    /// "connected" from the OS tunnel status whether or not sing-box ever reached
+    /// the server, so a blocked path looks exactly like a working one.
+    ///
+    /// Note the FI node is slow (~1-2 Mbit/s in that test, vs ~10-17 for FR/US);
+    /// that is node capacity, not the protocol.
     /// </remarks>
-    public bool AugmentHysteria { get; set; }
+    public bool AugmentHysteria { get; set; } = true;
 }
