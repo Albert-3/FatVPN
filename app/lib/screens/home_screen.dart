@@ -13,6 +13,7 @@ import '../services/ping_service.dart';
 import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
+import '../utils/haptics.dart';
 import 'choose_location_screen.dart';
 import 'settings_screen.dart';
 
@@ -339,6 +340,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _onPowerButtonTap() async {
+    // Acknowledge the tap before the (async) connect/disconnect kicks in.
+    unawaited(Haptics.powerToggle());
     if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
       await _vpn.disconnect();
       return;
