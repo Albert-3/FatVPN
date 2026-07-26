@@ -20,7 +20,37 @@ class ConnectionSettingsController extends ChangeNotifier {
   static const _splitEnabledKey = 'conn_split_enabled';
   static const _splitPackagesKey = 'conn_split_packages';
   static const _splitHostsKey = 'conn_split_hosts';
+  static const _splitSeededKey = 'conn_split_hosts_seeded'; // legacy: 'true' = batch 1
+  static const _splitSeedVersionKey = 'conn_split_hosts_seed_version';
   final _storage = const FlutterSecureStorage();
+
+  /// Domains every user gets in the host bypass list: the big Russian services
+  /// (Yandex, Wildberries, Ozon) refuse to work — or bury the user in captchas
+  /// — when the request arrives from a foreign VPN exit. Kept to the entry
+  /// domains of each service; their static/image CDNs (`yastatic.net`,
+  /// `wbbasket.ru`, `ozone.ru`, …) stay in the tunnel by product decision, so
+  /// pictures may still load over the VPN.
+  ///
+  /// Grouped into versioned batches: on launch only batches newer than the
+  /// stored seed version are added, so extending the defaults in a later
+  /// release never resurrects entries the user deleted from an earlier batch.
+  /// Append new batches — never edit a shipped one.
+  ///
+  /// Matched as sing-box `domain_suffix`, so `yandex.ru` also covers
+  /// `mail.yandex.ru`.
+  static const _seedBatches = <List<String>>[
+    <String>['yandex.ru', 'wildberries.ru', 'ozon.ru'],
+    <String>[
+      // Yandex: short domain the search/mail entry points redirect to.
+      'ya.ru',
+      // Wildberries: catalogue/cart API (`card.wb.ru`, `search.wb.ru`).
+      'wb.ru',
+    ],
+  ];
+
+  /// Flattened view of [_seedBatches] — the full default bypass list.
+  static List<String> get defaultBypassHosts =>
+      <String>[for (final batch in _seedBatches) ...batch];
 
   DnsProviderPreset _dnsPreset = DnsProviderPreset.cloudflare;
   String _customDns = '';
@@ -76,6 +106,8 @@ class ConnectionSettingsController extends ChangeNotifier {
     final splitEnabled = await _storage.read(key: _splitEnabledKey);
     final splitPackages = await _storage.read(key: _splitPackagesKey);
     final splitHosts = await _storage.read(key: _splitHostsKey);
+    final splitSeeded = await _storage.read(key: _splitSeededKey);
+    final splitSeedVersion = await _storage.read(key: _splitSeedVersionKey);
     var changed = false;
     if (dns != null) {
       final match = DnsProviderPreset.values.where((p) => p.name == dns);
@@ -109,7 +141,49 @@ class ConnectionSettingsController extends ChangeNotifier {
           splitHosts.split(',').where((h) => h.isNotEmpty).toList();
       changed = true;
     }
+    // A build that predates the versioned key seeded batch 1 and wrote 'true'.
+    final seededBatches =
+        int.tryParse(splitSeedVersion ?? '') ?? (splitSeeded == 'true' ? 1 : 0);
+    if (seededBatches < _seedBatches.length) {
+      changed = await _seedDefaultBypassHosts(splitEnabled, seededBatches) ||
+          changed;
+    }
     if (changed) notifyListeners();
+  }
+
+  /// Adds the [_seedBatches] the user hasn't seen yet to the bypass list — on a
+  /// fresh install that's all of them, on an upgrade only the new ones.
+  /// Returns whether anything changed. [storedSplitEnabled] is the raw stored
+  /// master-switch value (`null` = the user never touched the switch).
+  Future<bool> _seedDefaultBypassHosts(
+    String? storedSplitEnabled,
+    int seededBatches,
+  ) async {
+    var changed = false;
+    final seen = _bypassHosts.map((h) => h.trim().toLowerCase()).toSet();
+    final missing = <String>[];
+    for (var i = seededBatches; i < _seedBatches.length; i++) {
+      for (final host in _seedBatches[i]) {
+        if (seen.add(host)) missing.add(host);
+      }
+    }
+    if (missing.isNotEmpty) {
+      _bypassHosts = <String>[..._bypassHosts, ...missing];
+      await _storage.write(key: _splitHostsKey, value: _bypassHosts.join(','));
+      changed = true;
+    }
+    // The rules do nothing while the master switch is off, so turn it on — but
+    // never override a user who deliberately switched split tunneling off.
+    if (storedSplitEnabled == null && !_splitTunnelEnabled) {
+      _splitTunnelEnabled = true;
+      await _storage.write(key: _splitEnabledKey, value: 'true');
+      changed = true;
+    }
+    await _storage.write(
+      key: _splitSeedVersionKey,
+      value: _seedBatches.length.toString(),
+    );
+    return changed;
   }
 
   Future<void> setDnsPreset(DnsProviderPreset preset) async {
