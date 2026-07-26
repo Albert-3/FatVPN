@@ -183,6 +183,14 @@ public class ProtectedEndpointTests
     private static System.Security.Claims.Claim AccountClaim(Guid id)
         => new(FatVpnClaimTypes.AccountId, id.ToString());
 
+    /// Options for /config. Hysteria augmentation stays off, matching the
+    /// production default — these tests assert the subscription is proxied
+    /// through unchanged.
+    private static Microsoft.Extensions.Options.IOptions<RemnawaveOptions> RemnawaveOptionsFor(
+        bool augmentHysteria = false)
+        => Microsoft.Extensions.Options.Options.Create(
+            new RemnawaveOptions { AugmentHysteria = augmentHysteria });
+
     [Fact]
     public async Task Me_ActiveSubscription_ReturnsActive()
     {
@@ -259,7 +267,7 @@ public class ProtectedEndpointTests
         db.Accounts.Add(account);
         await db.SaveChangesAsync();
 
-        var controller = new ConfigController(db, new FakeRemnawaveClient());
+        var controller = new ConfigController(db, new FakeRemnawaveClient(), RemnawaveOptionsFor());
         controller.WithUser(AccountClaim(account.Id));
 
         Assert.IsType<UnauthorizedResult>(await controller.GetConfig(default));
@@ -306,7 +314,7 @@ public class ProtectedEndpointTests
         db.Accounts.Add(account);
         await db.SaveChangesAsync();
 
-        var controller = new ConfigController(db, new FakeRemnawaveClient());
+        var controller = new ConfigController(db, new FakeRemnawaveClient(), RemnawaveOptionsFor());
         controller.WithUser(AccountClaim(account.Id));
 
         var result = Assert.IsType<StatusCodeResult>(await controller.GetConfig(default));
@@ -322,7 +330,7 @@ public class ProtectedEndpointTests
         await db.SaveChangesAsync();
 
         var remna = new FakeRemnawaveClient { OnGetConfig = () => ("base64payload", "text/plain") };
-        var controller = new ConfigController(db, remna);
+        var controller = new ConfigController(db, remna, RemnawaveOptionsFor());
         controller.WithUser(AccountClaim(account.Id));
 
         var content = Assert.IsType<ContentResult>(await controller.GetConfig(default));
