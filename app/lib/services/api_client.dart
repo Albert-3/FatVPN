@@ -271,14 +271,36 @@ class ApiClient {
     return AccountStatus.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Last subscription we successfully fetched, kept so a reconnect can proceed
+  /// when the network is momentarily unusable. See [getConfig].
+  (String, String)? _lastGoodConfig;
+
   Future<(String content, String contentType)> getConfig(String accessToken) async {
-    final response = await _authedGet('/config', accessToken);
+    try {
+      final response = await _authedGet('/config', accessToken);
 
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to load config', statusCode: response.statusCode);
+      if (response.statusCode != 200) {
+        throw ApiException('Failed to load config', statusCode: response.statusCode);
+      }
+
+      final contentType = response.headers['content-type'] ?? 'text/plain';
+      return _lastGoodConfig = (response.body, contentType);
+    } catch (e) {
+      // Falling back matters most in the one situation where this call is least
+      // likely to succeed: the user is on a server that stopped passing traffic
+      // and is trying to switch away from it. The app's own requests travel
+      // through the tunnel, so the dying one takes them down with it — and
+      // without the previous subscription there would be nothing to reconnect
+      // with, stranding the user on the broken server.
+      //
+      // Safe to reuse: a subscription changes when the user's key does, not
+      // between two taps, and a wrong guess only costs one failed connect that
+      // the next successful fetch corrects. Only network-level failures qualify
+      // — an ApiException is the server talking, and its answer is the truth.
+      final cached = _lastGoodConfig;
+      if (e is ApiException || cached == null) rethrow;
+      log.w('GET /config unreachable ($e) — reusing the last known subscription');
+      return cached;
     }
-
-    final contentType = response.headers['content-type'] ?? 'text/plain';
-    return (response.body, contentType);
   }
 }
