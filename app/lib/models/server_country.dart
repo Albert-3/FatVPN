@@ -14,7 +14,7 @@ class ServerNode {
       name: json['name'] as String,
       address: json['address'] as String,
       port: json['port'] as int,
-      usersOnline: json['usersOnline'] as int,
+      usersOnline: json['usersOnline'] as int?,
     );
   }
 
@@ -22,7 +22,16 @@ class ServerNode {
   final String name;
   final String address;
   final int port;
-  final int usersOnline;
+
+  /// Clients the panel reports on this node, or **null when we don't know**.
+  ///
+  /// The distinction matters: only hosts that line up with a Remnawave node
+  /// carry a count at all (see `ApiClient.getUsableServers`), and everything
+  /// else — every Hysteria2 entry, every domain-fronted host — has no count.
+  /// Writing those down as `0` would read as "completely empty", making the
+  /// least-known servers look like the most attractive ones to anything that
+  /// weighs load. Null says what is actually true: no data.
+  final int? usersOnline;
 
   /// The exact subscription link this entry came from, when the list was built
   /// from `/config`. Carrying it avoids re-deriving the link by address at

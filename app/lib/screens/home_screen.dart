@@ -70,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _vpn.addListener(_handleVpnChange);
+    _vpn.onAutoSwitched = _onAutoSwitched;
     widget.connectionSettings.addListener(_onConnSettingsChanged);
     _lastMintedAt = widget.auth.sessionMintedAt;
     widget.auth.addListener(_onAuthChanged);
@@ -103,7 +104,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Country the given node belongs to, or null if the node isn't in the list
+  /// we last loaded (possible right after a `/servers` refresh reshuffles it).
+  ServerCountry? _countryOf(ServerNode node) {
+    for (final country in _servers) {
+      if (country.nodes.any((n) => n.id == node.id)) return country;
+    }
+    return null;
+  }
+
+  /// The tunnel moved itself to a faster node (see VpnController's auto-switch).
+  /// Say so: the user just lost their live connections and, without an
+  /// explanation, a reconnect they didn't ask for reads as the app breaking.
+  void _onAutoSwitched(ServerNode from, ServerNode to) {
+    if (!mounted) return;
+    final country = _countryOf(to);
+    final label = country != null
+        ? '${countryCodeToFlagEmoji(country.flag)} ${country.country}'
+        : to.name;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(S.of(context).switchedToFasterServer(label))),
+    );
+  }
+
   void _handleVpnChange() {
+    // An auto-switch can land the session in a different country with no user
+    // action behind it; keep the location card honest about where the tunnel
+    // actually is. Only ever follows the tunnel — in explicit-country mode the
+    // pool is that country's nodes, so this resolves to the same country the
+    // user picked.
+    final node = _vpn.connectedNode;
+    if (node != null) {
+      final country = _countryOf(node);
+      if (country != null && country.country != _selectedServer?.country) {
+        _selectedServer = country;
+      }
+    }
     if (_vpn.isConnected && _timer == null) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tickSession());
       _tickSession();
@@ -346,6 +382,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.connectionSettings.removeListener(_onConnSettingsChanged);
     widget.auth.removeListener(_onAuthChanged);
     _vpn.removeListener(_handleVpnChange);
+    _vpn.onAutoSwitched = null;
     _vpn.dispose();
     super.dispose();
   }

@@ -237,7 +237,9 @@ class ApiClient {
             name: entry.tag.isEmpty ? entry.host : entry.tag,
             address: entry.host,
             port: entry.port,
-            usersOnline: 0,
+            // No node backs this host, so the panel reports no client count for
+            // it. Unknown, not zero — see [ServerNode.usersOnline].
+            usersOnline: null,
             configUri: entry.uri,
           );
       byCountry.putIfAbsent(country, () => <ServerNode>[]).add(node);

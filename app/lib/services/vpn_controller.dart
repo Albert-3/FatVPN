@@ -10,6 +10,7 @@ import 'package:singbox_mm/singbox_mm.dart';
 import '../models/server_country.dart';
 import 'api_client.dart';
 import 'app_logger.dart';
+import 'auto_switch_policy.dart';
 import 'connection_settings_controller.dart';
 import 'ping_service.dart';
 import 'vless_config_parser.dart';
@@ -21,13 +22,16 @@ class VpnController extends ChangeNotifier {
     required this.connectionSettings,
     ApiClient? apiClient,
     PingService? pingService,
+    AutoSwitchPolicy? autoSwitchPolicy,
     Future<String?> Function()? onUnauthorized,
   })  : _apiClient = apiClient ?? ApiClient(onUnauthorized: onUnauthorized),
-        _pingService = pingService ?? PingService();
+        _pingService = pingService ?? PingService(),
+        _autoSwitchPolicy = autoSwitchPolicy ?? AutoSwitchPolicy();
 
   final ConnectionSettingsController connectionSettings;
   final ApiClient _apiClient;
   final PingService _pingService;
+  final AutoSwitchPolicy _autoSwitchPolicy;
   final SignboxVpn _vpn = SignboxVpn();
   final _storage = const FlutterSecureStorage();
   StreamSubscription<VpnConnectionState>? _stateSubscription;
@@ -49,15 +53,45 @@ class VpnController extends ChangeNotifier {
   bool _userDisconnecting = false;
   VpnConnectionState _state = VpnConnectionState.disconnected;
   String? _errorMessage;
-  String? _connectedNodeName;
+  ServerNode? _connectedNode;
 
   // True when the tunnel came up but a probe through it reached nothing. See
   // [_verifyTunnelCarriesTraffic].
   bool _tunnelNotPassingTraffic = false;
 
+  // ── Auto-switch: keeping a live session on a good node ────────────────────
+  // Everything needed to re-run the connect that established this session, so
+  // the watchdog below can move it to a better node without the UI's help. See
+  // [_evaluateAutoSwitch].
+  Timer? _autoSwitchTimer;
+  List<ServerNode> _autoSwitchPool = const [];
+  String? _autoSwitchAccessToken;
+  String? _autoSwitchNetworkErrorMessage;
+  bool _autoSwitchInProgress = false;
+  DateTime? _lastAutoSwitchAt;
+
+  /// How often a live session re-measures its alternatives. Long on purpose:
+  /// the pings cost real requests, and nothing here is urgent enough to spend
+  /// the user's battery on a tighter loop.
+  static const _autoSwitchInterval = Duration(minutes: 3);
+
+  /// Minimum quiet period after a switch. Without it a pair of nodes whose
+  /// latencies straddle the threshold could bounce the session back and forth,
+  /// which is worse than either server.
+  static const _autoSwitchCooldown = Duration(minutes: 10);
+
+  /// Notified when the session moves itself to a different node, so the UI can
+  /// reflect the new location and tell the user why their connections blipped.
+  void Function(ServerNode from, ServerNode to)? onAutoSwitched;
+
   VpnConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
-  String? get connectedNodeName => _connectedNodeName;
+  String? get connectedNodeName => _connectedNode?.name;
+
+  /// The node this session is currently running on. Changes without any user
+  /// action when the auto-switch moves the session, which is how the UI learns
+  /// to re-render the location card.
+  ServerNode? get connectedNode => _connectedNode;
   bool get isConnected => _state == VpnConnectionState.connected;
 
   /// True while the tunnel is established but nothing gets through it.
@@ -354,6 +388,10 @@ class VpnController extends ChangeNotifier {
     _tunnelNotPassingTraffic = true;
     notifyListeners();
     unawaited(_logTunnelDiagnostics());
+    // This is exactly the case the auto-switch exists for: the node is up
+    // enough to hold a tunnel but useless to the user. Don't wait for the next
+    // scheduled round — a session that carries nothing has nothing to lose.
+    unawaited(_evaluateAutoSwitch(tunnelIsDead: true));
   }
 
   /// True when traffic gets through, false when it demonstrably doesn't, null
@@ -453,10 +491,18 @@ class VpnController extends ChangeNotifier {
     'fallback',
   };
 
+  /// Brings the tunnel up on one of [candidates].
+  ///
+  /// [preferred] names a node the caller has already decided on — used by the
+  /// auto-switch, which has just measured every candidate and must not have its
+  /// verdict overruled by a second round of pings here. The full [candidates]
+  /// list still becomes the pool the session can later move within, so
+  /// narrowing the connect to one node doesn't strand the session on it.
   Future<ServerNode?> _connect(
     List<ServerNode> candidates,
     String accessToken, {
     required String networkErrorMessage,
+    ServerNode? preferred,
   }) async {
     _errorMessage = null;
     _tunnelNotPassingTraffic = false;
@@ -482,7 +528,9 @@ class VpnController extends ChangeNotifier {
         throw StateError('No available node in this subscription');
       }
 
-      final node = await _pickBestNode(usableNodes);
+      final node = preferred != null && usableNodes.contains(preferred)
+          ? preferred
+          : await _pickBestNode(usableNodes);
       final uri = uriFor(node)!;
 
       log.i('Connecting to node "${node.name}" '
@@ -495,8 +543,11 @@ class VpnController extends ChangeNotifier {
         configLink: uri,
         featureSettings: connectionSettings.buildFeatureSettings(),
       );
-      _connectedNodeName = node.name;
+      _connectedNode = node;
       log.i('Tunnel established to "${node.name}"');
+      // Watch this session from here on, so a node that degrades later doesn't
+      // hold it for the rest of the day.
+      _armAutoSwitch(usableNodes, accessToken, networkErrorMessage);
       // Deliberately not awaited: the tunnel is up, so the UI should say so
       // immediately. The probe corrects that claim a few seconds later if
       // nothing actually gets through.
@@ -512,6 +563,230 @@ class VpnController extends ChangeNotifier {
       log.e('Connect failed', e.toString());
       notifyListeners();
       rethrow;
+    }
+  }
+
+  /// Starts (or restarts) the watchdog that keeps this session on a good node.
+  ///
+  /// Armed on every successful connect, from the exact candidate list that
+  /// connect chose out of — so the session can only ever move within the
+  /// selection the user made. In "Best server" mode that's every node in the
+  /// subscription; with a country picked it's that country's nodes, and the
+  /// flag on screen stays true no matter what the watchdog does.
+  void _armAutoSwitch(
+    List<ServerNode> pool,
+    String accessToken,
+    String networkErrorMessage,
+  ) {
+    _autoSwitchPool = pool;
+    _autoSwitchAccessToken = accessToken;
+    _autoSwitchNetworkErrorMessage = networkErrorMessage;
+    // Evidence gathered about the previous node says nothing about this one.
+    _autoSwitchPolicy.reset();
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+    // With a single node there is nowhere to move; a timer would only burn
+    // battery to rediscover that every few minutes.
+    if (pool.length < 2) return;
+    _autoSwitchTimer = Timer.periodic(
+      _autoSwitchInterval,
+      (_) => unawaited(_evaluateAutoSwitch()),
+    );
+  }
+
+  void _disarmAutoSwitch() {
+    _autoSwitchTimer?.cancel();
+    _autoSwitchTimer = null;
+    _autoSwitchPolicy.reset();
+  }
+
+  /// Re-measures the session's alternatives — latency from this device, client
+  /// counts from the panel — and moves it if one is clearly better (see
+  /// [AutoSwitchPolicy] for what "clearly" means and how the two signals rank).
+  ///
+  /// [tunnelIsDead] comes from the traffic probe and means the current node has
+  /// stopped being useful, not merely slow — the policy then takes any reachable
+  /// alternative straight away.
+  ///
+  /// ⚠️ Platform caveat, because it changes what these numbers mean: on Android
+  /// this app's own sockets are deliberately kept out of the tun device (see
+  /// VpnTunBuilderConfigurator), so each ping travels the real underlay and
+  /// measures true latency to that node. On iOS the container app's traffic
+  /// goes *through* the tunnel, so every measurement carries the current
+  /// tunnel's own round-trip on top. That biases the comparison toward staying
+  /// put — the alternatives look slower than they are — which is the safe
+  /// direction to be wrong in, but it does mean iOS switches less eagerly.
+  /// Timers also only run while the app is awake, so a backgrounded session is
+  /// re-evaluated when the user next opens the app rather than continuously.
+  Future<void> _evaluateAutoSwitch({bool tunnelIsDead = false}) async {
+    if (_autoSwitchInProgress) return;
+    if (_state != VpnConnectionState.connected) return;
+    final current = _connectedNode;
+    final accessToken = _autoSwitchAccessToken;
+    final networkErrorMessage = _autoSwitchNetworkErrorMessage;
+    if (current == null || accessToken == null || networkErrorMessage == null) {
+      return;
+    }
+    final lastSwitch = _lastAutoSwitchAt;
+    if (!tunnelIsDead &&
+        lastSwitch != null &&
+        DateTime.now().difference(lastSwitch) < _autoSwitchCooldown) {
+      return;
+    }
+
+    _autoSwitchInProgress = true;
+    try {
+      final pool = _autoSwitchPool;
+      final measurements = await Future.wait(
+        pool.map((n) => _pingService.pingMs(n.address, n.port)),
+      );
+      final pingsByNodeId = <String, int>{};
+      for (var i = 0; i < pool.length; i++) {
+        final ms = measurements[i];
+        if (ms != null) pingsByNodeId[pool[i].id] = ms;
+      }
+
+      // Measuring takes seconds, and the user may have disconnected or switched
+      // servers in the meantime. Acting on a verdict about a session that no
+      // longer exists would yank a connection they just made.
+      if (_state != VpnConnectionState.connected || _connectedNode != current) {
+        return;
+      }
+
+      final usersByNodeId = await _liveUserCounts(accessToken, pool);
+
+      // Every round's raw numbers, so the crowding thresholds can be sanity-
+      // checked against what this panel actually looks like in the field —
+      // from a support bundle, without reproducing anything.
+      log.d('Auto-switch round: ${pool.map((n) => '${n.name}='
+          '${pingsByNodeId[n.id] ?? '-'}ms/'
+          '${usersByNodeId[n.id] ?? '?'}u').join(', ')}');
+
+      final target = _autoSwitchPolicy.evaluate(
+        current: current,
+        pool: pool,
+        pingsByNodeId: pingsByNodeId,
+        usersByNodeId: usersByNodeId,
+        tunnelIsDead: tunnelIsDead,
+      );
+      if (target == null) return;
+
+      String describe(ServerNode n) {
+        final ping = pingsByNodeId[n.id];
+        final users = usersByNodeId[n.id];
+        return '"${n.name}" (${ping == null ? 'unreachable' : '${ping}ms'}, '
+            '${users == null ? 'load unknown' : '$users users'})';
+      }
+
+      log.i('Auto-switching from ${describe(current)} to ${describe(target)}'
+          '${tunnelIsDead ? ' — tunnel was passing no traffic' : ''}');
+      await _performAutoSwitch(
+        from: current,
+        to: target,
+        pool: pool,
+        accessToken: accessToken,
+        networkErrorMessage: networkErrorMessage,
+      );
+    } catch (e) {
+      log.w('Auto-switch evaluation failed: $e');
+    } finally {
+      _autoSwitchInProgress = false;
+    }
+  }
+
+  /// Current client counts for the nodes in [pool], keyed by node id, with
+  /// nodes the panel reports nothing for left out entirely (see
+  /// [ServerNode.usersOnline] — absent means unknown, and the policy abstains
+  /// rather than reading it as an empty server).
+  ///
+  /// Re-fetched each round rather than read off [pool]: those counts were taken
+  /// when the server list was loaded, possibly hours ago, and a snapshot from
+  /// then cannot show that a server filled up *during* this session — which is
+  /// the entire reason to consult load at all.
+  ///
+  /// Best-effort. `/servers` failing (offline, or 402 on a lapsed subscription)
+  /// leaves the pool's own counts in place; those are what the connect-time
+  /// decision ran on, so falling back to them is no worse than not having the
+  /// signal.
+  Future<Map<String, int>> _liveUserCounts(
+    String accessToken,
+    List<ServerNode> pool,
+  ) async {
+    final counts = <String, int>{};
+    for (final node in pool) {
+      final users = node.usersOnline;
+      if (users != null) counts[node.id] = users;
+    }
+    final poolIds = pool.map((n) => n.id).toSet();
+    try {
+      final servers = await _apiClient.getServers(accessToken);
+      for (final country in servers) {
+        for (final node in country.nodes) {
+          final users = node.usersOnline;
+          if (users != null && poolIds.contains(node.id)) {
+            counts[node.id] = users;
+          }
+        }
+      }
+    } catch (e) {
+      log.w('Auto-switch could not refresh node load, using last known: $e');
+    }
+    return counts;
+  }
+
+  /// Rebuilds the tunnel on [to], falling back to [from] if that fails.
+  ///
+  /// The fallback is the point of this method: the session being replaced is a
+  /// *working* one, and an optimisation the user never asked for must not be
+  /// able to leave them offline. If the new node won't come up we put the old
+  /// one back before giving up.
+  Future<void> _performAutoSwitch({
+    required ServerNode from,
+    required ServerNode to,
+    required List<ServerNode> pool,
+    required String accessToken,
+    required String networkErrorMessage,
+  }) async {
+    _lastAutoSwitchAt = DateTime.now();
+    // Not a user power-off: the VPN stays on across the swap, so the session
+    // timer must keep running (see [disconnect]).
+    await disconnect(endSession: false);
+    await _waitForDisconnected();
+    try {
+      await _connect(
+        pool,
+        accessToken,
+        networkErrorMessage: networkErrorMessage,
+        preferred: to,
+      );
+      onAutoSwitched?.call(from, to);
+    } catch (e) {
+      log.w('Auto-switch to "${to.name}" failed, restoring "${from.name}": $e');
+      try {
+        await _waitForDisconnected();
+        await _connect(
+          pool,
+          accessToken,
+          networkErrorMessage: networkErrorMessage,
+          preferred: from,
+        );
+      } catch (e2) {
+        // Both nodes refused. The error state and message from [_connect] are
+        // already on screen, and the user can retry from the power button.
+        log.e('Auto-switch fallback to "${from.name}" failed too', e2.toString());
+      }
+    }
+  }
+
+  /// Blocks until the tunnel has actually torn down. A connect issued while the
+  /// previous session is still going down gets dropped by the plugin, which
+  /// would leave the session on the old node while we believe we moved it.
+  Future<void> _waitForDisconnected() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 4));
+    while (_state != VpnConnectionState.disconnected &&
+        _state != VpnConnectionState.error &&
+        DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 150));
     }
   }
 
@@ -572,12 +847,16 @@ class VpnController extends ChangeNotifier {
     if (endSession) {
       _clearSessionStart();
     }
+    // The watchdog belongs to the session being torn down; the next connect
+    // arms a fresh one for whatever it establishes.
+    _disarmAutoSwitch();
     await _vpn.stop();
-    _connectedNodeName = null;
+    _connectedNode = null;
   }
 
   @override
   void dispose() {
+    _autoSwitchTimer?.cancel();
     _stateSubscription?.cancel();
     super.dispose();
   }

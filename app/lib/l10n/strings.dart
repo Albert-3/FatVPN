@@ -54,6 +54,7 @@ class Strings {
     required this.allLocations,
     required this.serversCount,
     required this.unreachable,
+    required this.switchedToFasterServer,
     required this.openBotTitle,
     required this.openBotSubtitle,
     required this.trialUsedTitle,
@@ -162,6 +163,10 @@ class Strings {
   final String allLocations;
   final String Function(int count) serversCount;
   final String unreachable;
+
+  /// Told to the user after the app moved a live session to a faster node on
+  /// its own — without it, the reconnect blip looks like a fault.
+  final String Function(String location) switchedToFasterServer;
 
   final String openBotTitle;
   final String openBotSubtitle;
@@ -306,6 +311,7 @@ const Strings enStrings = Strings(
   allLocations: 'ALL LOCATIONS',
   serversCount: _enServersCount,
   unreachable: 'unreachable',
+  switchedToFasterServer: _enSwitchedToFasterServer,
   openBotTitle: 'Start for free',
   openBotSubtitle: 'Get 2 days free. Buy a subscription later in the FatVPN Telegram bot and add your key in Settings.',
   trialUsedTitle: 'Connect a subscription',
@@ -368,6 +374,9 @@ String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
 String _enExpiresInHours(int n) => 'Expires in $n hour${n == 1 ? '' : 's'}';
 String _enServersCount(int n) => '$n server${n == 1 ? '' : 's'}';
 
+String _enSwitchedToFasterServer(String location) =>
+    'Switched to a faster server: $location';
+
 final Strings ruStrings = Strings(
   notSignedIn: 'Вы не авторизованы',
   couldNotReachServer: 'Не удалось подключиться к серверу.',
@@ -421,6 +430,8 @@ final Strings ruStrings = Strings(
   allLocations: 'ВСЕ ЛОКАЦИИ',
   serversCount: (n) => '$n ${_ruPluralServers(n)}',
   unreachable: 'недоступен',
+  switchedToFasterServer: (location) =>
+      'Переключились на более быстрый сервер: $location',
   openBotTitle: 'Начните бесплатно',
   openBotSubtitle:
       'Получите 2 дня бесплатно. Подписку купите позже в Telegram-боте FatVPN, а ключ добавите в настройках.',
