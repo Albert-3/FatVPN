@@ -313,7 +313,7 @@ const Strings enStrings = Strings(
   unreachable: 'unreachable',
   switchedToFasterServer: _enSwitchedToFasterServer,
   openBotTitle: 'Start for free',
-  openBotSubtitle: 'Get 2 days free. Buy a subscription later in the FatVPN Telegram bot and add your key in Settings.',
+  openBotSubtitle: 'Get 2 days free, or enter your key right away if you already have one. A subscription is bought in the FatVPN Telegram bot.',
   trialUsedTitle: 'Connect a subscription',
   trialUsedSubtitle: 'Your free trial has ended. Buy a subscription in the FatVPN Telegram bot, or enter your key if you already have one.',
   trialResumableTitle: 'Session interrupted',
@@ -434,7 +434,7 @@ final Strings ruStrings = Strings(
       'Переключились на более быстрый сервер: $location',
   openBotTitle: 'Начните бесплатно',
   openBotSubtitle:
-      'Получите 2 дня бесплатно. Подписку купите позже в Telegram-боте FatVPN, а ключ добавите в настройках.',
+      'Получите 2 дня бесплатно или сразу введите ключ, если он у вас уже есть. Подписка покупается в Telegram-боте FatVPN.',
   trialUsedTitle: 'Подключите подписку',
   trialUsedSubtitle:
       'Ваш бесплатный период закончился. Купите подписку в Telegram-боте FatVPN или введите ключ, если он у вас уже есть.',

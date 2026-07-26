@@ -225,6 +225,13 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                               const SizedBox(height: 14),
                               _ErrorBlock(message: auth.error!),
                             ],
+                            // A fresh install isn't always a new user: someone
+                            // reinstalling or moving to a second phone already
+                            // holds a key from the bot. Offer key entry next to
+                            // the trial instead of making them spend it first.
+                            const SizedBox(height: 14),
+                            const Divider(color: AppColors.disabled, height: 1),
+                            _ManualKeyEntry(auth: auth),
                           ] else if (!widget.renew) ...[
                             // Trial-used recovery: the device already spent its free
                             // trial but has no session (e.g. it signed out, or left
