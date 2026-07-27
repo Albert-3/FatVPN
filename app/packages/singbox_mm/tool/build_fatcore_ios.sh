@@ -60,6 +60,17 @@ rm -rf "$XCFRAMEWORK"
 
 [[ -d "$XCFRAMEWORK" ]] || { echo "Libbox.xcframework was not produced." >&2; exit 1; }
 
+# gomobile happily produces a framework from the first package alone if the
+# second one fails to bind, and the result looks identical from the outside —
+# it is the Network Extension that then fails to compile, half an hour later,
+# on a symbol it cannot find. Fail here instead, where the cause is on screen.
+if ! grep -rq --include='*.h' "FatxrayStart" "$XCFRAMEWORK"; then
+  echo "Libbox.xcframework has no Xray bridge: FatxrayStart is missing from" >&2
+  echo "its headers, so only sing-box was bound. Check the gomobile output" >&2
+  echo "above for errors against ./fatxray." >&2
+  exit 1
+fi
+
 echo "Done."
 echo "- Libbox.xcframework written to $XCFRAMEWORK"
 echo "- Exports LibboxXxx (sing-box $SINGBOX_REF) and FatxrayXxx (Xray)"

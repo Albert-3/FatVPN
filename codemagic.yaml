@@ -41,6 +41,9 @@ workflows:
         script: |
           git lfs install
           git lfs pull
+      - name: Check the framework carries the Xray bridge
+        script: |
+          bash app/packages/singbox_mm/tool/check_xray_bridge.sh
       - name: Flutter pub get
         script: |
           cd app
@@ -94,6 +97,9 @@ workflows:
         script: |
           git lfs install
           git lfs pull
+      - name: Check the framework carries the Xray bridge
+        script: |
+          bash app/packages/singbox_mm/tool/check_xray_bridge.sh
       - name: Flutter pub get
         script: |
           cd app
