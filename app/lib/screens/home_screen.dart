@@ -122,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final country = _countryOf(to);
     final label = country != null
         ? '${countryCodeToFlagEmoji(country.flag)} '
-            '${countryLabel(country.country, S.of(context).otherLocations)}'
+            '${countryLabel(country.country, S.of(context).whitelistLocations)}'
         : to.name;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(S.of(context).switchedToFasterServer(label))),
@@ -518,7 +518,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 2),
                 Text(
                   _hasSpecificLocation
-                      ? countryLabel(_selectedServer!.country, s.otherLocations)
+                      ? countryLabel(_selectedServer!.country, s.whitelistLocations)
                       : s.bestServer,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
@@ -717,7 +717,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         const SizedBox(height: 6),
                         Text(
                           countryLabel(
-                              server.country, S.of(context).otherLocations),
+                              server.country, S.of(context).whitelistLocations),
                           style: TextStyle(
                             color: isSelected
                                 ? AppColors.accent

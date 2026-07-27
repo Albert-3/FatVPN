@@ -107,8 +107,8 @@ void main() {
       // bucket; showing "??" as a flag looked like a rendering fault.
       expect(countryCodeToFlagEmoji(unknownCountryCode), '🌍');
       expect(countryCodeToFlagEmoji('unknown'), '🌍');
-      expect(countryLabel(unknownCountryCode, 'Особые'), 'Особые');
-      expect(countryLabel('DE', 'Особые'), 'DE');
+      expect(countryLabel(unknownCountryCode, 'Белые списки'), 'Белые списки');
+      expect(countryLabel('DE', 'Белые списки'), 'DE');
     });
 
     test('round-trips with countryCodeToFlagEmoji', () {

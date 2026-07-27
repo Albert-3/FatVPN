@@ -834,7 +834,7 @@ sing-box `http`-транспорт (`vpn_config_parser.dart:909`) — это б�
 
 Заодно у хостов без флага в ремарке (`Белые списки`, `Авто 🔥 [GRPC]` — они группируются в бакет
 `??`) теперь рисуется 🌍 вместо строки `??`, а заголовок группы берётся из локализации
-(`otherLocations`: EN `Other`, RU `Особые`). Файлы: `utils/country_flag.dart` (`unknownCountryCode`,
+(`whitelistLocations`: EN `Whitelists`, RU `Белые списки` — так их называет сама панель). Файлы: `utils/country_flag.dart` (`unknownCountryCode`,
 `countryLabel`, глобус как фолбэк), `services/api_client.dart`, `screens/choose_location_screen.dart`,
 `screens/home_screen.dart` (3 места), `l10n/strings.dart`.
 

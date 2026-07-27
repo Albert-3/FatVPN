@@ -54,7 +54,7 @@ class Strings {
     required this.allLocations,
     required this.serversCount,
     required this.unreachable,
-    required this.otherLocations,
+    required this.whitelistLocations,
     required this.switchedToFasterServer,
     required this.openBotTitle,
     required this.openBotSubtitle,
@@ -175,9 +175,10 @@ class Strings {
   final String unreachable;
 
   /// Label for the group of servers that belong to no country — the panel's
-  /// bypass hosts ("Белые списки", "Авто"), which front a whitelisted address
-  /// instead of a location.
-  final String otherLocations;
+  /// bypass hosts, which front a whitelisted address instead of a location.
+  /// Named after what the panel itself calls them, so the user recognizes the
+  /// entry they were told to look for.
+  final String whitelistLocations;
 
   /// Told to the user after the app moved a live session to a faster node on
   /// its own — without it, the reconnect blip looks like a fault.
@@ -346,7 +347,7 @@ const Strings enStrings = Strings(
   allLocations: 'ALL LOCATIONS',
   serversCount: _enServersCount,
   unreachable: 'unreachable',
-  otherLocations: 'Other',
+  whitelistLocations: 'Whitelists',
   switchedToFasterServer: _enSwitchedToFasterServer,
   openBotTitle: 'Start for free',
   openBotSubtitle: 'Get 2 days free, or enter your key right away if you already have one. A subscription is bought in the FatVPN Telegram bot.',
@@ -478,7 +479,7 @@ final Strings ruStrings = Strings(
   allLocations: 'ВСЕ ЛОКАЦИИ',
   serversCount: (n) => '$n ${_ruPluralServers(n)}',
   unreachable: 'недоступен',
-  otherLocations: 'Особые',
+  whitelistLocations: 'Белые списки',
   switchedToFasterServer: (location) =>
       'Переключились на более быстрый сервер: $location',
   openBotTitle: 'Начните бесплатно',
