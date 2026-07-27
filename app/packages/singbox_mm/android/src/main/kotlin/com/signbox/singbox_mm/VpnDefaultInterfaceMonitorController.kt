@@ -12,6 +12,9 @@ internal class VpnDefaultInterfaceMonitorController(
     private val logTag: String,
     private val canSetUnderlyingNetworks: Boolean,
     private val applyUnderlyingNetworks: (Array<Network>?) -> Unit,
+    /// Told about every upstream change, so a watcher can re-check the tunnel
+    /// right after the ground moved under it rather than on its own schedule.
+    private val onDefaultNetworkChanged: () -> Unit = {},
 ) {
     @Volatile
     private var defaultInterfaceListener: InterfaceUpdateListener? = null
@@ -91,6 +94,10 @@ internal class VpnDefaultInterfaceMonitorController(
             canSetUnderlyingNetworks = canSetUnderlyingNetworks,
             applyUnderlyingNetworks = applyUnderlyingNetworks,
         )
+        // Fired on the initial notify too, when the monitor first attaches. That
+        // is harmless — nothing is watching a tunnel that hasn't come up yet —
+        // and it keeps this to one call site instead of five callbacks.
+        onDefaultNetworkChanged()
     }
 
     private fun resolveUpstreamNetwork(excluded: Network? = null): Network? {

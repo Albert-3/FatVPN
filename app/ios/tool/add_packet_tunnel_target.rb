@@ -64,7 +64,7 @@ end
 ext_target = project.new_target(:app_extension, EXT_NAME, :ios, DEPLOYMENT_TARGET, nil, :swift)
 
 ext_group = project.main_group.new_group(EXT_NAME, EXT_NAME)
-swift_refs = ['PacketTunnelProvider.swift', 'ExtensionPlatformInterface.swift'].map { |f| ext_group.new_reference(f) }
+swift_refs = ['PacketTunnelProvider.swift', 'ExtensionPlatformInterface.swift', 'TunnelHealthWatchdog.swift'].map { |f| ext_group.new_reference(f) }
 ext_group.new_reference('Info.plist')
 ext_group.new_reference('PacketTunnel.entitlements')
 

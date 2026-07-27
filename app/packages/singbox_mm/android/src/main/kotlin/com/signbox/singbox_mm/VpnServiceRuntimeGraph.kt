@@ -60,6 +60,8 @@ internal class VpnServiceRuntimeGraph(
         VpnServiceControlGraph(
             service = service,
             worker = worker,
+            connectivity = connectivity,
+            mainHandler = mainHandler,
             runtimeSession = coreRuntimeSession,
             notificationRuntime = notificationRuntime,
             liveNotificationTicker = liveNotificationTicker,

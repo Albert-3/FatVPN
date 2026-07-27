@@ -13,6 +13,13 @@ internal class VpnServicePlatformGraph(
     private val runtimeSession: VpnCoreRuntimeSession,
     private val resolvePrivateDnsHost: () -> String?,
 ) {
+    /// Invoked whenever the upstream the tunnel rides on changes. Settable
+    /// rather than a constructor parameter because the listener — the health
+    /// watchdog — is built in the control graph, which is assembled after this
+    /// one; the monitor reads the property at call time, so ordering can't bite.
+    @Volatile
+    var onDefaultNetworkChanged: () -> Unit = {}
+
     val defaultInterfaceMonitorController by lazy {
         VpnDefaultInterfaceMonitorController(
             connectivity = connectivity,
@@ -21,6 +28,9 @@ internal class VpnServicePlatformGraph(
             canSetUnderlyingNetworks = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP,
             applyUnderlyingNetworks = { networks ->
                 service.setUnderlyingNetworks(networks)
+            },
+            onDefaultNetworkChanged = {
+                this@VpnServicePlatformGraph.onDefaultNetworkChanged.invoke()
             },
         )
     }

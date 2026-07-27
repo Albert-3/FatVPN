@@ -55,6 +55,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var tunnelOptions: [String: NSObject]?
     private var startOptionsURL: URL?
 
+    /// Rebuilds sing-box when the tunnel stops carrying traffic without ever
+    /// leaving `.connected` — the failure the user can otherwise only clear by
+    /// toggling the VPN by hand. See [TunnelHealthWatchdog] for why it lives in
+    /// this process rather than in the app.
+    ///
+    /// Repairs go through `reloadService`, which is `startOrReloadService` — the
+    /// very call `startTunnel` uses, on the very config content it was given, so
+    /// a recovery rebuilds exactly the tunnel that was started. (Tearing the
+    /// whole extension down and back up, the app-side equivalent, isn't an
+    /// option from in here: `cancelTunnelWithError` would leave the user with no
+    /// VPN at all, which is worse than the symptom being repaired.)
+    private lazy var healthWatchdog = TunnelHealthWatchdog(
+        readConfigContent: { [weak self] in self?.tunnelOptions?["configContent"] as? String },
+        hasUpstreamNetwork: { [weak self] in self?.platformInterface.hasUsableUpstream ?? true },
+        recover: { [weak self] in
+            guard let self else { return }
+            Task {
+                do {
+                    try await self.reloadService()
+                } catch {
+                    Self.writeDiagnostics("HEALTH RECOVERY FAILED: \(error.localizedDescription)")
+                }
+            }
+        },
+        log: { [weak self] message in self?.writeMessage(message) }
+    )
+
     private static var sharedDirectory: URL {
         guard let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
             // App Group misconfiguration is a build/provisioning bug, not a
@@ -144,6 +171,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         writeMessage("(packet-tunnel) starting sing-box")
         try await startService(configContent: configContent)
+        // Only now is there a tunnel worth watching.
+        healthWatchdog.start()
     }
 
     private func startService(configContent: String) async throws {
@@ -198,6 +227,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         writeMessage("(packet-tunnel) stopping, reason: \(reason)")
+        healthWatchdog.stop()
         stopService()
         commandServer?.close()
         commandServer = nil
@@ -221,6 +251,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 tunnelOptions = options
                 try? persistStartOptions(options)
                 try await reloadService()
+                // A different server (or different settings) is a different
+                // tunnel: give the watchdog a fresh settle window rather than
+                // letting the old one's schedule judge this one.
+                healthWatchdog.restart()
                 completionHandler?(nil)
             } catch {
                 completionHandler?(error.localizedDescription.data(using: .utf8))
@@ -337,7 +371,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler()
     }
 
+    /// The underlay this tunnel rides on changed — reported by
+    /// [ExtensionPlatformInterface]'s path monitor, which sees it first.
+    func underlayDidChange() {
+        healthWatchdog.checkSoon()
+    }
+
     override func wake() {
         commandServer?.wake()
+        // Coming out of device sleep is a prime moment for a tunnel to still be
+        // an interface while no longer having a path to the server.
+        healthWatchdog.checkSoon()
     }
 }

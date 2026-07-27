@@ -59,21 +59,28 @@ class VpnController extends ChangeNotifier {
   // [_verifyTunnelCarriesTraffic].
   bool _tunnelNotPassingTraffic = false;
 
-  // ── Auto-switch: keeping a live session on a good node ────────────────────
+  // Guards against overlapping traffic probes (connect, app resume and the
+  // periodic health tick can each ask for one).
+  bool _probingTraffic = false;
+
+  // ── Session health: keeping a live session working, and on a good node ────
   // Everything needed to re-run the connect that established this session, so
   // the watchdog below can move it to a better node without the UI's help. See
-  // [_evaluateAutoSwitch].
-  Timer? _autoSwitchTimer;
+  // [_sessionHealthTick] and [_evaluateAutoSwitch].
+  Timer? _sessionHealthTimer;
   List<ServerNode> _autoSwitchPool = const [];
   String? _autoSwitchAccessToken;
   String? _autoSwitchNetworkErrorMessage;
   bool _autoSwitchInProgress = false;
   DateTime? _lastAutoSwitchAt;
 
-  /// How often a live session re-measures its alternatives. Long on purpose:
+  /// How often a live session checks itself: is the tunnel still carrying
+  /// traffic, and is there a clearly better node to move to. Long on purpose:
   /// the pings cost real requests, and nothing here is urgent enough to spend
-  /// the user's battery on a tighter loop.
-  static const _autoSwitchInterval = Duration(minutes: 3);
+  /// the user's battery on a tighter loop — the tunnel's own watchdog, which
+  /// runs inside the VPN service and so survives the app being backgrounded,
+  /// is what catches a dead tunnel quickly.
+  static const _sessionHealthInterval = Duration(minutes: 3);
 
   /// Minimum quiet period after a switch. Without it a pair of nodes whose
   /// latencies straddle the threshold could bounce the session back and forth,
@@ -177,6 +184,11 @@ class VpnController extends ChangeNotifier {
         // tunnel — it's the only way the stderr tail reaches the support bundle
         // for this failure mode.
         unawaited(_logTunnelDiagnostics());
+        // The user opening the app on a tunnel that has been up for hours is
+        // very often the user checking *why* nothing loads. Ask the tunnel
+        // itself rather than waiting for the next scheduled round: a dead one
+        // gets flagged on screen and escalated to another node from here.
+        unawaited(_verifyTunnelCarriesTraffic());
       }
       // A tunnel that's still finishing its handshake when we relaunch reports
       // `connecting`/`preparing`. The `connected` transition may have been
@@ -368,6 +380,19 @@ class VpnController extends ChangeNotifier {
   /// own experience, and yanking a connection out from under someone over one
   /// unreachable URL would be worse than the symptom.
   Future<void> _verifyTunnelCarriesTraffic() async {
+    // Connect, resume and the periodic health tick can all ask at once; one
+    // verdict at a time is enough, and overlapping probes would just multiply
+    // the requests a dying tunnel is already failing to carry.
+    if (_probingTraffic) return;
+    _probingTraffic = true;
+    try {
+      await _runTrafficProbe();
+    } finally {
+      _probingTraffic = false;
+    }
+  }
+
+  Future<void> _runTrafficProbe() async {
     await Future.delayed(_trafficProbeSettleDelay);
     for (var attempt = 0; attempt < 2; attempt++) {
       // The user may have switched servers or powered off while we probed;
@@ -550,7 +575,7 @@ class VpnController extends ChangeNotifier {
       log.i('Tunnel established to "${node.name}"');
       // Watch this session from here on, so a node that degrades later doesn't
       // hold it for the rest of the day.
-      _armAutoSwitch(usableNodes, accessToken, networkErrorMessage);
+      _armSessionHealth(usableNodes, accessToken, networkErrorMessage);
       // Deliberately not awaited: the tunnel is up, so the UI should say so
       // immediately. The probe corrects that claim a few seconds later if
       // nothing actually gets through.
@@ -569,14 +594,15 @@ class VpnController extends ChangeNotifier {
     }
   }
 
-  /// Starts (or restarts) the watchdog that keeps this session on a good node.
+  /// Starts (or restarts) the watchdog that keeps this session healthy and on a
+  /// good node.
   ///
   /// Armed on every successful connect, from the exact candidate list that
   /// connect chose out of — so the session can only ever move within the
   /// selection the user made. In "Best server" mode that's every node in the
   /// subscription; with a country picked it's that country's nodes, and the
   /// flag on screen stays true no matter what the watchdog does.
-  void _armAutoSwitch(
+  void _armSessionHealth(
     List<ServerNode> pool,
     String accessToken,
     String networkErrorMessage,
@@ -586,21 +612,41 @@ class VpnController extends ChangeNotifier {
     _autoSwitchNetworkErrorMessage = networkErrorMessage;
     // Evidence gathered about the previous node says nothing about this one.
     _autoSwitchPolicy.reset();
-    _autoSwitchTimer?.cancel();
-    _autoSwitchTimer = null;
-    // With a single node there is nowhere to move; a timer would only burn
-    // battery to rediscover that every few minutes.
-    if (pool.length < 2) return;
-    _autoSwitchTimer = Timer.periodic(
-      _autoSwitchInterval,
-      (_) => unawaited(_evaluateAutoSwitch()),
+    _sessionHealthTimer?.cancel();
+    // Armed even with a single node in the pool, where there is nowhere to
+    // move: the tick still asks whether the tunnel carries traffic, which is
+    // what puts the warning on screen instead of leaving a green toggle over a
+    // dead connection.
+    _sessionHealthTimer = Timer.periodic(
+      _sessionHealthInterval,
+      (_) => unawaited(_sessionHealthTick()),
     );
   }
 
-  void _disarmAutoSwitch() {
-    _autoSwitchTimer?.cancel();
-    _autoSwitchTimer = null;
+  void _disarmSessionHealth() {
+    _sessionHealthTimer?.cancel();
+    _sessionHealthTimer = null;
     _autoSwitchPolicy.reset();
+  }
+
+  /// One round of looking after a live session: first whether the tunnel still
+  /// works at all, then whether a better node is available.
+  ///
+  /// The order matters. Until now the periodic round only compared *latencies*,
+  /// which says nothing about the tunnel itself — a node that answers pings
+  /// while its tunnel passes no traffic looked perfectly healthy, so a session
+  /// that had silently died stayed dead until the user noticed and toggled the
+  /// VPN by hand. The probe is the part that can tell those two apart, and it
+  /// escalates to a switch on its own when the answer is "nothing gets through"
+  /// (see [_verifyTunnelCarriesTraffic]).
+  Future<void> _sessionHealthTick() async {
+    if (_state != VpnConnectionState.connected) return;
+    await _verifyTunnelCarriesTraffic();
+    // A dead tunnel has already been escalated; re-measuring alternatives now
+    // would only race the switch that verdict just started.
+    if (_tunnelNotPassingTraffic) return;
+    if (_autoSwitchPool.length < 2) return;
+    await _evaluateAutoSwitch();
   }
 
   /// Re-measures the session's alternatives — latency from this device, client
@@ -850,7 +896,7 @@ class VpnController extends ChangeNotifier {
     }
     // The watchdog belongs to the session being torn down; the next connect
     // arms a fresh one for whatever it establishes.
-    _disarmAutoSwitch();
+    _disarmSessionHealth();
     // Drop the node *before* the teardown, not after. Stopping the tunnel takes
     // a moment and emits state events all the way through, and every listener
     // that reads connectedNode during that window used to be told we were still
@@ -864,7 +910,7 @@ class VpnController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _autoSwitchTimer?.cancel();
+    _sessionHealthTimer?.cancel();
     _stateSubscription?.cancel();
     super.dispose();
   }

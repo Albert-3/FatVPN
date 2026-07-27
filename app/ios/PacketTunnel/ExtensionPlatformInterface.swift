@@ -227,9 +227,27 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         let underlay = path.availableInterfaces.first { !$0.name.hasPrefix("utun") }
         guard path.status != .unsatisfied, let defaultInterface = underlay else {
             listener.updateDefaultInterface("", interfaceIndex: -1, isExpensive: false, isConstrained: false)
+            tunnel?.underlayDidChange()
             return
         }
         listener.updateDefaultInterface(defaultInterface.name, interfaceIndex: Int32(defaultInterface.index), isExpensive: path.isExpensive, isConstrained: path.isConstrained)
+        // Per the note above, this is the exact moment a live tunnel breaks. Tell
+        // the health watchdog so it re-checks in seconds instead of waiting out
+        // its own interval.
+        tunnel?.underlayDidChange()
+    }
+
+    /// Whether the device has any non-tunnel network at all.
+    ///
+    /// Read by the health watchdog before it blames the tunnel for carrying no
+    /// traffic: a phone in a lift has nothing for the tunnel to carry, and
+    /// rebuilding it over that would be wrong. `true` when we cannot tell — an
+    /// absent signal must not silently disable the watchdog, and the probe
+    /// itself is better evidence than a missing monitor.
+    var hasUsableUpstream: Bool {
+        guard let path = nwMonitor?.currentPath else { return true }
+        if path.status == .unsatisfied { return false }
+        return path.availableInterfaces.contains { !$0.name.hasPrefix("utun") }
     }
 
     func findConnectionOwner(_ ipProtocol: Int32, sourceAddress: String?, sourcePort: Int32, destinationAddress: String?, destinationPort: Int32) throws -> LibboxConnectionOwner {

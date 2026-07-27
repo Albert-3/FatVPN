@@ -14,6 +14,7 @@ internal class VpnCoreServiceCoordinator(
     private val notificationRuntime: VpnServiceNotificationRuntime,
     private val trafficMonitor: NotificationTrafficMonitor,
     private val liveNotificationTicker: VpnLiveNotificationTicker,
+    private val healthWatchdog: VpnTunnelHealthWatchdog,
     private val readPrivateDnsHost: () -> String?,
     private val logTag: String,
     private val defaultProfileLabel: String,
@@ -74,6 +75,10 @@ internal class VpnCoreServiceCoordinator(
                     },
                 )
                 liveNotificationTicker.start()
+                // Only now is there a tunnel worth watching — and it is watched
+                // from in here rather than from Dart because this service
+                // outlives the Flutter engine (see [VpnTunnelHealthWatchdog]).
+                healthWatchdog.start()
                 notificationRuntime.notify(
                     status = VpnNotificationStatus.CONNECTED,
                     detail = runtimeSession.coreNotificationDetail,
@@ -88,6 +93,7 @@ internal class VpnCoreServiceCoordinator(
         disconnectError: String? = null,
     ) {
         liveNotificationTicker.stop()
+        healthWatchdog.stop()
         if (!emitDisconnected) {
             // Internal restart/reload closes the old service and may trigger
             // postServiceClose callbacks. Suppress those so we don't stopSelf

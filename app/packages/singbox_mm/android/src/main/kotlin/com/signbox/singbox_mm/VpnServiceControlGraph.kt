@@ -1,11 +1,15 @@
 package com.signbox.singbox_mm
 
+import android.net.ConnectivityManager
 import android.net.VpnService
+import android.os.Handler
 import java.util.concurrent.ExecutorService
 
 internal class VpnServiceControlGraph(
     private val service: SignboxLibboxVpnService,
     private val worker: ExecutorService,
+    private val connectivity: ConnectivityManager,
+    private val mainHandler: Handler,
     private val runtimeSession: VpnCoreRuntimeSession,
     private val notificationRuntime: VpnServiceNotificationRuntime,
     private val liveNotificationTicker: VpnLiveNotificationTicker,
@@ -87,6 +91,38 @@ internal class VpnServiceControlGraph(
         )
     }
 
+    private val healthWatchdog: VpnTunnelHealthWatchdog by lazy {
+        VpnTunnelHealthWatchdog(
+            handler = mainHandler,
+            probe = VpnTunnelHealthProbe(
+                readConfigPath = { runtimeSession.configPath },
+                logTag = SignboxLibboxServiceContract.LOG_TAG,
+            ),
+            policy = VpnTunnelHealthPolicy(),
+            isTunnelUp = {
+                runtimeStateBridge.state == SignboxLibboxServiceContract.STATE_CONNECTED &&
+                    runtimeSession.commandServer != null
+            },
+            hasUpstreamNetwork = {
+                VpnUpstreamNetworkResolver.resolve(
+                    connectivity = connectivity,
+                    preferredNetwork = null,
+                ) != null
+            },
+            // The same stop/start the notification's Restart action runs, so
+            // an unattended recovery takes a path the app already exercises.
+            // It queues onto the worker, which serialises it against a
+            // concurrent user stop/start.
+            restartCore = { actionScheduler.scheduleRestart(runtimeSession.configPath) },
+            logTag = SignboxLibboxServiceContract.LOG_TAG,
+        ).also { watchdog ->
+            // A default-network change is the most common way a tunnel keeps its
+            // interface but loses its path to the server, so don't wait out a
+            // full interval to find out.
+            platformGraph.onDefaultNetworkChanged = { watchdog.checkSoon() }
+        }
+    }
+
     private val coreServiceCoordinator by lazy {
         VpnCoreServiceCoordinator(
             context = service,
@@ -97,6 +133,7 @@ internal class VpnServiceControlGraph(
             notificationRuntime = notificationRuntime,
             trafficMonitor = trafficMonitor,
             liveNotificationTicker = liveNotificationTicker,
+            healthWatchdog = healthWatchdog,
             readPrivateDnsHost = resolvePrivateDnsHost,
             logTag = SignboxLibboxServiceContract.LOG_TAG,
             defaultProfileLabel = SignboxLibboxServiceContract.DEFAULT_PROFILE_LABEL,
