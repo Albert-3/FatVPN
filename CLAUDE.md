@@ -140,4 +140,6 @@ Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose
 - `docs/ui-design-spec.md` — Flutter UI spec
 - `docs/bot-integration-spec.md` — Telegram bot integration spec (deep-link token flow)
 - `docs/bot-pairing-spec.md` — standalone dev spec for the bot-side pairing changes (new Account-based onboarding)
+- `docs/improvement-plan-index.md` — **full technical audit (2026-07-27)**: top-10 issues, cross-cutting fixes, work order. Start here
+- `docs/improvement-plan-bff.md` / `-app-android.md` / `-ios.md` — per-area findings (bugs, security, performance) with file:line and proposed fixes
 - `VPN-App-Project.md` — master project document (Russian): requirements, 10-day plan, open questions
