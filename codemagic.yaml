@@ -108,8 +108,23 @@ workflows:
           xcode-project use-profiles
       - name: Build ipa
         script: |
+          # App Store Connect consumes a build number on upload and refuses to
+          # ever see it again, including after a run that failed later on. Kept
+          # in pubspec.yaml, the number therefore had to be bumped by hand
+          # before every attempt, and a forgotten bump cost a full build.
+          #
+          # The commit count is monotonic on master and needs no bookkeeping,
+          # so it is the build number. Version *name* still comes from pubspec.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            # A shallow clone would count a handful of commits and hand App
+            # Store Connect a number below what it already has.
+            git fetch --unshallow
+          fi
+          BUILD_NUMBER="$(git rev-list --count HEAD)"
+          echo "Build number: $BUILD_NUMBER (commits on HEAD)"
           cd app
           flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - app/build/ios/ipa/*.ipa
