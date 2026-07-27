@@ -1923,7 +1923,10 @@ void main() {
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
-      expect(fallbackServer['detour'], 'direct');
+      // Not `'detour': 'direct'`: sing-box rejects a DNS detour onto an
+      // optionless direct outbound and refuses to start the whole tunnel. An
+      // absent detour dials the server directly, which is the same intent.
+      expect(fallbackServer.containsKey('detour'), isFalse);
       expect(fallbackServer['address_resolver'], 'dns-direct');
     },
   );

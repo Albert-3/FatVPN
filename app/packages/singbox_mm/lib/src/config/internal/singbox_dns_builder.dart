@@ -172,7 +172,14 @@ class SingboxDnsBuilder {
       final Map<String, Object?> fallbackServer = <String, Object?>{
         'tag': 'dns-remote-fallback',
         'address': dohFallbackAddress,
-        'detour': preferDirectDohFallback ? 'direct' : profile.tag,
+        // Leaving the device directly is expressed by *omitting* the detour,
+        // not by naming the `direct` outbound: sing-box refuses a DNS detour
+        // that lands on a direct outbound carrying no options at all — "detour
+        // to an empty direct outbound makes no sense" (common/dialer/detour.go)
+        // — and the whole tunnel then fails to start. With no detour the server
+        // is dialled by the default system dialer, which is what naming
+        // `direct` was reaching for anyway.
+        if (!preferDirectDohFallback) 'detour': profile.tag,
         'strategy': resolvedRemoteStrategy,
       };
       if (preferDirectDohFallback &&
