@@ -11,6 +11,8 @@ class FakeSignboxVpnPlatform
     with MockPlatformInterfaceMixin
     implements SignboxVpnPlatform {
   String? latestConfig;
+  String? latestXrayConfig;
+  int xrayConfigCalls = 0;
   String? lastError;
   String? singboxVersion = 'sing-box test';
   bool initialized = false;
@@ -71,6 +73,12 @@ class FakeSignboxVpnPlatform
   @override
   Future<void> setConfig(String configJson) async {
     latestConfig = configJson;
+  }
+
+  @override
+  Future<void> setXrayConfig(String? configJson) async {
+    latestXrayConfig = configJson;
+    xrayConfigCalls++;
   }
 
   @override
@@ -2932,4 +2940,113 @@ void main() {
       expect(ping.latencyMs, isNotNull);
     },
   );
+
+  group('xhttp nodes are carried by the bundled Xray core', () {
+    // The panel's shutdown-bypass host. sing-box has no XHTTP implementation,
+    // so connecting to it has to hand the transport to Xray and talk to that
+    // core over a local SOCKS server instead.
+    const String whitelistLink =
+        'vless://11111111-2222-3333-4444-555555555555@81.222.127.189:443'
+        '?encryption=none&type=xhttp&path=%2Fapi%2Fv1%2Fassets'
+        '&host=cdn.example.net&mode=packet-up'
+        '&extra=%7B%22uplinkHTTPMethod%22%3A%22DELETE%22%7D'
+        '&security=tls&sni=cdn.example.net&fp=qq&alpn=h2#whitelist';
+
+    test('points sing-box at the local Xray endpoint', () async {
+      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+      SignboxVpnPlatform.instance = fakePlatform;
+      final SignboxVpn vpn = SignboxVpn();
+      await vpn.initialize(const SingboxRuntimeOptions());
+
+      await vpn.connectManualConfigLink(configLink: whitelistLink);
+
+      final Map<String, dynamic> config =
+          jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
+      final Map<String, dynamic> outbound =
+          ((config['outbounds'] as List<dynamic>).firstWhere(
+                    (dynamic item) =>
+                        item is Map && item['tag'] == 'whitelist',
+                  )
+                  as Map<dynamic, dynamic>)
+              .cast<String, dynamic>();
+
+      expect(outbound['type'], 'socks');
+      expect(outbound['server'], '127.0.0.1');
+      expect(outbound['server_port'], kXrayBridgeSocksPort);
+    });
+
+    test('hands the tunnel process a matching Xray config', () async {
+      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+      SignboxVpnPlatform.instance = fakePlatform;
+      final SignboxVpn vpn = SignboxVpn();
+      await vpn.initialize(const SingboxRuntimeOptions());
+
+      await vpn.connectManualConfigLink(configLink: whitelistLink);
+
+      final Map<String, dynamic> xray =
+          jsonDecode(fakePlatform.latestXrayConfig!) as Map<String, dynamic>;
+      final Map<String, dynamic> inbound =
+          ((xray['inbounds'] as List<dynamic>).single as Map<dynamic, dynamic>)
+              .cast<String, dynamic>();
+      // The two cores have to agree on the port, or sing-box dials nothing.
+      expect(inbound['port'], kXrayBridgeSocksPort);
+      final Map<String, dynamic> outbound =
+          ((xray['outbounds'] as List<dynamic>).single as Map<dynamic, dynamic>)
+              .cast<String, dynamic>();
+      final Map<String, dynamic> stream =
+          (outbound['streamSettings'] as Map<dynamic, dynamic>)
+              .cast<String, dynamic>();
+      expect(stream['network'], 'xhttp');
+    });
+
+    test('leaves the tunnel routing exactly as a direct connect would', () async {
+      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+      SignboxVpnPlatform.instance = fakePlatform;
+      final SignboxVpn vpn = SignboxVpn();
+      await vpn.initialize(const SingboxRuntimeOptions());
+
+      await vpn.connectManualConfigLink(configLink: whitelistLink);
+
+      // Swapping the outbound is the whole of the change: everything still
+      // ends at the node's tag, so split tunnelling and DNS behave the same.
+      // Note there is no bypass rule for the node's own address here — none is
+      // emitted on the ordinary path either. Keeping the local engine's
+      // traffic out of the tun is the platform's job (VpnService.protect on
+      // Android), not this config's.
+      final Map<String, dynamic> config =
+          jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
+      final Map<String, dynamic> route =
+          (config['route'] as Map<dynamic, dynamic>).cast<String, dynamic>();
+      expect(route['final'], 'whitelist');
+      expect(route['auto_detect_interface'], isTrue);
+    });
+
+    test('shuts the second core down for a node that does not need it',
+        () async {
+      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+      SignboxVpnPlatform.instance = fakePlatform;
+      final SignboxVpn vpn = SignboxVpn();
+      await vpn.initialize(const SingboxRuntimeOptions());
+
+      await vpn.connectManualConfigLink(configLink: whitelistLink);
+      expect(fakePlatform.latestXrayConfig, isNotNull);
+
+      await vpn.connectManualConfigLink(
+        configLink:
+            'vless://11111111-2222-3333-4444-555555555555@grpc.example.net:8443'
+            '?encryption=none&type=grpc&serviceName=grpc&security=none#plain',
+      );
+
+      expect(fakePlatform.latestXrayConfig, isNull);
+      final Map<String, dynamic> config =
+          jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
+      final Map<String, dynamic> outbound =
+          ((config['outbounds'] as List<dynamic>).firstWhere(
+                    (dynamic item) => item is Map && item['tag'] == 'plain',
+                  )
+                  as Map<dynamic, dynamic>)
+              .cast<String, dynamic>();
+      expect(outbound['type'], 'vless');
+    });
+  });
 }

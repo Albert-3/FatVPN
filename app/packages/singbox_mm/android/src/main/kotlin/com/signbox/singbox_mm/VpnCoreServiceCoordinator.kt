@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.PlatformInterface
+import java.io.File
 
 internal class VpnCoreServiceCoordinator(
     private val context: Context,
@@ -16,6 +17,7 @@ internal class VpnCoreServiceCoordinator(
     private val liveNotificationTicker: VpnLiveNotificationTicker,
     private val healthWatchdog: VpnTunnelHealthWatchdog,
     private val readPrivateDnsHost: () -> String?,
+    private val protectSocket: (Int) -> Boolean,
     private val logTag: String,
     private val defaultProfileLabel: String,
     private val commandPort: Int,
@@ -48,6 +50,13 @@ internal class VpnCoreServiceCoordinator(
                     onPreparing = { profileLabel ->
                         runtimeSession.bindPreparedProfile(profileLabel)
                         runtimeStateBridge.publish(statePreparing, null)
+                    },
+                    startAuxiliaryCore = {
+                        VpnXrayEngine.applyConfig(
+                            configFile = resolveXrayConfigFile(configPath),
+                            protectSocket = protectSocket,
+                            logTag = logTag,
+                        )
                     },
                     onConnecting = {
                         runtimeStateBridge.publish(stateConnecting, null)
@@ -88,6 +97,17 @@ internal class VpnCoreServiceCoordinator(
         }
     }
 
+    /// The Xray config the app left next to the sing-box one it is handing us.
+    ///
+    /// Derived from the config path rather than carried as its own extra so
+    /// that the restarts this service schedules for itself — the health
+    /// watchdog's, above all — find it without anyone re-sending it.
+    private fun resolveXrayConfigFile(configPath: String?): File {
+        val directory = configPath?.let { File(it).parentFile }
+            ?: File(context.filesDir, "singbox")
+        return File(directory, PluginRuntimeConfigStore.XRAY_CONFIG_FILE_NAME)
+    }
+
     fun stop(
         emitDisconnected: Boolean,
         disconnectError: String? = null,
@@ -114,6 +134,9 @@ internal class VpnCoreServiceCoordinator(
             ),
         )
         runtimeSession.clearRuntimeHandles()
+        // After sing-box, mirroring the start order: while sing-box is winding
+        // down it can still push traffic at the SOCKS port.
+        VpnXrayEngine.stop(logTag)
 
         if (emitDisconnected) {
             runtimeSession.clearProfileAndConfig()

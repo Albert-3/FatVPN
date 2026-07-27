@@ -1,9 +1,14 @@
 import 'vpn_profile.dart';
 
 /// Transports that the current libbox.so build supports natively.
-/// `xhttp` (Xray splithttp) is intentionally absent — sing-box does not
-/// expose it as a standalone outbound type; xhttp links are normalized to
-/// sing-box `http` transport by [VpnConfigParser] and [SingboxConfigBuilder].
+///
+/// `xhttp` (Xray splithttp) is intentionally absent, and this list is about
+/// sing-box alone: sing-box has no such outbound type, so [VpnConfigParser] and
+/// [SingboxConfigBuilder] normalize xhttp links onto its `http` transport.
+/// That normalization is not what carries an xhttp node, though — connecting to
+/// one hands the transport to the bundled Xray core instead and points sing-box
+/// at a local SOCKS server (see `xray_config_builder.dart`). So "unsupported
+/// here" does not mean "unreachable".
 const List<VpnTransport> _kSupportedTransports = <VpnTransport>[
   VpnTransport.tcp,
   VpnTransport.ws,

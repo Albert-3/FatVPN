@@ -71,4 +71,26 @@ internal class PluginConfigOperations(
             }
         }
     }
+
+    /// Stores the Xray config for the next tunnel start, or clears it when the
+    /// caller passes null.
+    ///
+    /// Unlike [setConfig] a missing payload is not an error — it is how the app
+    /// says "this node needs only sing-box".
+    fun setXrayConfig(arguments: Any?, result: Result) {
+        executor.execute {
+            try {
+                @Suppress("UNCHECKED_CAST")
+                val args = arguments as? Map<String, Any?> ?: emptyMap()
+                runtimeConfigStore.writeXrayConfig(args["config"] as? String)
+                postSuccess(result, null)
+            } catch (error: Throwable) {
+                postError(
+                    result,
+                    "XRAY_CONFIG_WRITE_FAILED",
+                    error.message ?: "Could not write xray config",
+                )
+            }
+        }
+    }
 }

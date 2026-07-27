@@ -66,6 +66,21 @@ abstract class SignboxVpnPlatform extends PlatformInterface {
     throw UnimplementedError('validateConfig() has not been implemented.');
   }
 
+  /// Hands the tunnel process the Xray configuration to run alongside sing-box,
+  /// or `null` to run sing-box alone.
+  ///
+  /// The bundled Xray core terminates transports sing-box has no
+  /// implementation for and offers them as a local SOCKS server. It has to be
+  /// launched inside the VPN process — that is the only place whose sockets can
+  /// be kept out of the tunnel it is feeding — so Dart can only hand the config
+  /// down before [startVpn]; the launch itself happens natively.
+  ///
+  /// Must be called on every connect, including with `null`, so a previous
+  /// session's core is not left running for a node that does not need it.
+  Future<void> setXrayConfig(String? configJson) {
+    throw UnimplementedError('setXrayConfig() has not been implemented.');
+  }
+
   /// Starts the VPN service.
   Future<void> startVpn() {
     throw UnimplementedError('startVpn() has not been implemented.');

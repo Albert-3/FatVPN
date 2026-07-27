@@ -17,6 +17,7 @@ internal data class VpnCoreStartRequest(
     val commandHandler: CommandServerHandler,
     val beforeRuntimeStart: () -> Unit,
     val onPreparing: (String) -> Unit,
+    val startAuxiliaryCore: () -> Unit,
     val onConnecting: () -> Unit,
 )
 
@@ -49,6 +50,10 @@ internal object VpnCoreStartFlow {
             request.beforeRuntimeStart()
             VpnCoreSetupManager.ensure(request.context)
             request.onPreparing(preparedConfig.profileLabel)
+            // Before sing-box, not after: the config it is about to load names a
+            // SOCKS server that this core provides, and sing-box dials it as
+            // soon as the first packet arrives.
+            request.startAuxiliaryCore()
 
             val startOutcome = VpnCoreSessionOrchestrator.startPreparedRuntime(
                 preparedConfig = preparedConfig,

@@ -10,6 +10,9 @@ Future<ManualConnectResult> _connectManualProfileInternal(
 }) async {
   final SingboxFeatureSettings effectiveSettings =
       featureSettings ?? client._featureSettings;
+  // sing-box handles this node on its own; make sure a second core left over
+  // from an earlier session does not come up with it.
+  await client._guard(() => client._platform.setXrayConfig(null));
   final Map<String, Object?> config = await client.applyProfile(
     profile: profile,
     bypassPolicy: bypassPolicy,
@@ -51,13 +54,25 @@ Future<ManualConnectResult> _connectManualConfigLinkInternal(
     fallbackTag: fallbackTag,
     sbmmPassphrase: sbmmPassphrase,
   );
-  final ManualConnectResult result = await client.connectManualProfile(
-    profile: parsed.profile,
-    bypassPolicy: bypassPolicy,
-    throttlePolicy: throttlePolicy,
-    featureSettings: featureSettings,
-    requestPermission: requestPermission,
-  );
+  // Which core carries the node is a property of the node, not a user setting,
+  // so it is decided here rather than asked of the caller: the app picks a
+  // server, the plugin knows which of its cores can speak to it.
+  final ManualConnectResult result = linkNeedsXrayCore(configLink)
+      ? await client.connectViaXrayCore(
+          profile: parsed.profile,
+          configLink: configLink,
+          bypassPolicy: bypassPolicy,
+          throttlePolicy: throttlePolicy,
+          featureSettings: featureSettings,
+          requestPermission: requestPermission,
+        )
+      : await client.connectManualProfile(
+          profile: parsed.profile,
+          bypassPolicy: bypassPolicy,
+          throttlePolicy: throttlePolicy,
+          featureSettings: featureSettings,
+          requestPermission: requestPermission,
+        );
   final List<String> warnings = <String>[
     ...parsed.warnings,
     ...result.warnings,
@@ -128,6 +143,7 @@ Future<ManualConnectResult> _connectManualProfileWithPresetPoolInternal(
   required GfwPresetPack preset,
   required bool requestPermission,
 }) async {
+  await client._guard(() => client._platform.setXrayConfig(null));
   final Map<String, Object?> config = await client.applyEndpointPool(
     profiles: <VpnProfile>[profile],
     options: preset.endpointPoolOptions,

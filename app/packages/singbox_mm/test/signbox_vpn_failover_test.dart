@@ -61,6 +61,9 @@ class _ManagedFakePlatform
   }
 
   @override
+  Future<void> setXrayConfig(String? configJson) async {}
+
+  @override
   Future<String> validateConfig(String configJson) async {
     return configJson;
   }

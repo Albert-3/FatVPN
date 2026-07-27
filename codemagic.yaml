@@ -8,7 +8,9 @@ workflows:
     scripts:
       - name: Build Libbox.xcframework via gomobile
         script: |
-          bash app/packages/singbox_mm/tool/fetch_singbox_libbox_ios.sh
+          # Builds both cores into one framework — see the script header for
+          # why sing-box and Xray cannot ship as two.
+          bash app/packages/singbox_mm/tool/build_fatcore_ios.sh
       - name: Zip xcframework for download
         script: |
           cd app/packages/singbox_mm/ios/Frameworks

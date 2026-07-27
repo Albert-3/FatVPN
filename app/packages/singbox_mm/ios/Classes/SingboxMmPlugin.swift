@@ -53,6 +53,11 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   // re-reading the file (the file write stays as a durability fallback).
   private var activeConfig: String?
 
+  // The Xray config for the node being connected to, if it needs the second
+  // core. Kept in memory only: it is rebuilt on every connect, and a stale one
+  // on disk would be worse than none.
+  private var activeXrayConfig: String?
+
   private var connectionState: String = "disconnected"
   private var lastError: String?
   private var connectedAtMillis: Int64?
@@ -130,6 +135,8 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       validateConfig(arguments: call.arguments, result: result)
     case "setConfig":
       setConfig(arguments: call.arguments, result: result)
+    case "setXrayConfig":
+      setXrayConfig(arguments: call.arguments, result: result)
     case "startVpn":
       startVpn(result: result)
     case "stopVpn":
@@ -395,6 +402,20 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     }
   }
 
+  /// Stores the Xray config the extension starts alongside sing-box, or clears
+  /// it when the app passes nothing.
+  ///
+  /// Unlike `setConfig` a missing payload is not an error — it is how the app
+  /// says "this node needs only sing-box". Clearing matters as much as setting:
+  /// a config left from an earlier session would bring a second core up inside
+  /// an extension that has little memory to spare.
+  private func setXrayConfig(arguments: Any?, result: @escaping FlutterResult) {
+    let args = arguments as? [String: Any?]
+    let config = (args?["config"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    activeXrayConfig = config
+    result(nil)
+  }
+
   private func validateConfig(arguments: Any?, result: @escaping FlutterResult) {
     guard let args = arguments as? [String: Any?],
       let config = args["config"] as? String,
@@ -468,8 +489,11 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             }
             self.attachManager(manager)
             do {
-              try manager.connection.startVPNTunnel(
-                options: ["configContent": config as NSString])
+              var startOptions: [String: NSObject] = ["configContent": config as NSString]
+              if let xrayConfig = self.activeXrayConfig {
+                startOptions["xrayConfigContent"] = xrayConfig as NSString
+              }
+              try manager.connection.startVPNTunnel(options: startOptions)
               self.lastError = nil
               DispatchQueue.main.async { result(nil) }
             } catch {

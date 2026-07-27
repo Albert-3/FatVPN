@@ -8,6 +8,7 @@ internal object PluginFactoryDefaults {
             requestNotificationPermission = PluginMethods.REQUEST_NOTIFICATION_PERMISSION,
             validateConfig = PluginMethods.VALIDATE_CONFIG,
             setConfig = PluginMethods.SET_CONFIG,
+            setXrayConfig = PluginMethods.SET_XRAY_CONFIG,
             startVpn = PluginMethods.START_VPN,
             stopVpn = PluginMethods.STOP_VPN,
             restartVpn = PluginMethods.RESTART_VPN,

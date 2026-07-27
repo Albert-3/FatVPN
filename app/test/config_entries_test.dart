@@ -62,17 +62,19 @@ void main() {
       expect(entries.map((e) => e.host), ['ok.example.com']);
     });
 
-    test('drops XHTTP hosts sing-box cannot speak', () {
+    test('lists XHTTP hosts, which the bundled Xray core carries', () {
       // Real shape of the panel's "🌍 Белые списки #1" host, read off the panel
-      // itself: an Xray XHTTP inbound in packet-up mode behind a CDN. sing-box
-      // has no XHTTP at all, so this one can never connect — and a listed host
-      // that always fails pings fine and reads as the app being broken.
+      // itself: an Xray XHTTP inbound in packet-up mode behind a CDN. It was
+      // hidden for as long as sing-box was the only core, because sing-box has
+      // no XHTTP at all; the plugin now hands such a node to Xray instead, so
+      // hiding it would drop the one server that survives a mobile-internet
+      // shutdown.
       final entries = parseConfigEntries(subscription([
         'vless://uuid@81.222.127.189:443?type=xhttp&path=/api/v1/assets&mode=packet-up&security=tls#WL',
         'vless://uuid@95.85.224.3:8443?type=grpc&security=tls#EE',
       ]));
 
-      expect(entries.map((e) => e.host), ['95.85.224.3']);
+      expect(entries.map((e) => e.host), ['81.222.127.189', '95.85.224.3']);
     });
 
     test('returns empty on content that is not base64', () {

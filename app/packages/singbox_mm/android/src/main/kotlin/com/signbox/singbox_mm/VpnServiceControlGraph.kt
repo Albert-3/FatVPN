@@ -135,6 +135,7 @@ internal class VpnServiceControlGraph(
             liveNotificationTicker = liveNotificationTicker,
             healthWatchdog = healthWatchdog,
             readPrivateDnsHost = resolvePrivateDnsHost,
+            protectSocket = { fd -> service.protect(fd) },
             logTag = SignboxLibboxServiceContract.LOG_TAG,
             defaultProfileLabel = SignboxLibboxServiceContract.DEFAULT_PROFILE_LABEL,
             commandPort = SignboxLibboxServiceContract.CORE_COMMAND_PORT,

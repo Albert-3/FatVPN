@@ -69,6 +69,10 @@ internal class VpnTunnelHealthProbe(
 
     fun run(): VpnTunnelHealthVerdict {
         val controller = resolveController() ?: return VpnTunnelHealthVerdict.UNKNOWN
+        // Traffic that actually arrived outranks any question we could ask.
+        if (carriedTrafficSinceLastCheck(controller)) {
+            return VpnTunnelHealthVerdict.HEALTHY
+        }
         // Reading the outbound tag doubles as a liveness check on the API
         // itself: once this succeeds, anything that goes wrong afterwards is
         // about the outbound rather than about our ability to ask.
@@ -79,6 +83,51 @@ internal class VpnTunnelHealthProbe(
             }
         }
         return VpnTunnelHealthVerdict.DEAD
+    }
+
+    /// Bytes the core had received through its outbounds when this probe last
+    /// looked. Null until the first look, and reset by a restart along with the
+    /// counter it mirrors.
+    @Volatile
+    private var lastReceivedBytes: Long? = null
+
+    /// Whether the tunnel has demonstrably carried traffic since the previous
+    /// check.
+    ///
+    /// This exists because the delay test is an interrogation, and a witness is
+    /// better than an interrogation. The test opens a *fresh* connection through
+    /// the outbound and gives it eight seconds; a node fronted by a CDN can need
+    /// longer than that for a cold dial, so the answer comes back "dead" for a
+    /// tunnel the user is browsing through at that very moment. Acting on it
+    /// tears down a working session, and the rebuild makes the next cold dial
+    /// slower still — the failure feeds itself.
+    ///
+    /// Received bytes cannot lie in that direction: they are data the far end
+    /// sent back, so any increase means the whole path worked. Sent bytes are
+    /// weaker evidence — they can pile into a socket that never answers — so
+    /// only the receive counter counts here.
+    ///
+    /// A tunnel nobody is using produces no evidence either way, and then the
+    /// delay test is still the right question to ask.
+    private fun carriedTrafficSinceLastCheck(controller: String): Boolean {
+        val received = receivedBytes(controller) ?: return false
+        val previous = lastReceivedBytes
+        lastReceivedBytes = received
+        // A restart zeroes the counter. Lower than last time proves nothing.
+        if (previous == null || received < previous) return false
+        return received > previous
+    }
+
+    /// Total bytes received through the core's outbounds, or null when the
+    /// control API can't be read.
+    private fun receivedBytes(controller: String): Long? {
+        val response = httpGet("http://$controller/connections", CONTROL_API_TIMEOUT_MS)
+        if (response == null || response.code != HttpURLConnection.HTTP_OK) {
+            return null
+        }
+        return runCatching {
+            JSONObject(response.body).getLong("downloadTotal")
+        }.getOrNull()
     }
 
     /// Tag of the proxy outbound currently in use, read back from the core

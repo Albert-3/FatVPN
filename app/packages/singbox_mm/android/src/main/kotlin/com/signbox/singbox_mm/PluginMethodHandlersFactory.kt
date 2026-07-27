@@ -19,6 +19,9 @@ internal object PluginMethodHandlersFactory {
             setConfig = { arguments, result ->
                 configOperations.setConfig(arguments, result)
             },
+            setXrayConfig = { arguments, result ->
+                configOperations.setXrayConfig(arguments, result)
+            },
             startVpn = { result -> methodOperations.startVpn(result) },
             stopVpn = { result -> methodOperations.stopVpn(result) },
             restartVpn = { result -> methodOperations.restartVpn(result) },

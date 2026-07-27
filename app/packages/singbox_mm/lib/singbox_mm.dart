@@ -7,6 +7,7 @@ export 'src/config/singbox_config_document.dart';
 export 'src/config/sbmm_secure_link_codec.dart';
 export 'src/config/vpn_config_parser.dart';
 export 'src/config/vpn_subscription_parser.dart';
+export 'src/config/xray_config_builder.dart';
 export 'src/core/singbox_mm_client.dart';
 export 'src/core/singbox_mm_exception.dart';
 export 'src/models/bypass_policy.dart';

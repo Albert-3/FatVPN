@@ -169,10 +169,43 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             throw TunnelStartupError(message: "Failed to start command server: \(error.localizedDescription)")
         }
 
+        // Before sing-box, not after: the config it is about to load names the
+        // SOCKS server this core provides, and sing-box dials it as soon as the
+        // first packet arrives.
+        try startXrayIfNeeded(effectiveOptions["xrayConfigContent"] as? String)
+
         writeMessage("(packet-tunnel) starting sing-box")
         try await startService(configContent: configContent)
         // Only now is there a tunnel worth watching.
         healthWatchdog.start()
+    }
+
+    /// Brings the bundled Xray core up for nodes on a transport sing-box has no
+    /// implementation for, or makes sure it is down for every other node.
+    ///
+    /// Nothing here protects the core's sockets, and nothing needs to: a packet
+    /// tunnel provider's own traffic already bypasses the tunnel it provides.
+    /// On Android that exclusion has to be arranged by hand, with
+    /// `VpnService.protect` on every socket the core opens.
+    private func startXrayIfNeeded(_ xrayConfigContent: String?) throws {
+        guard let xrayConfigContent, !xrayConfigContent.isEmpty else {
+            stopXray()
+            return
+        }
+        // This process is reused across reconnects, so a core from the previous
+        // session may still be up; starting on top of it is refused by the core.
+        stopXray()
+        do {
+            try FatxrayStart(xrayConfigContent)
+        } catch {
+            throw TunnelStartupError(
+                message: "Failed to start Xray core: \(error.localizedDescription)")
+        }
+        writeMessage("(packet-tunnel) Xray core started (\(FatxrayVersion()))")
+    }
+
+    private func stopXray() {
+        try? FatxrayStop()
     }
 
     private func startService(configContent: String) async throws {
@@ -222,6 +255,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         reasserting = true
         defer { reasserting = false }
+        // A reload is also how the health watchdog recovers a stalled tunnel,
+        // and a node carried by Xray is only as alive as that core — so bring
+        // it back if it is gone rather than reloading sing-box onto a dead
+        // SOCKS port.
+        if let xrayConfigContent = tunnelOptions?["xrayConfigContent"] as? String,
+            !FatxrayIsRunning()
+        {
+            try startXrayIfNeeded(xrayConfigContent)
+        }
         try await startService(configContent: configContent)
     }
 
@@ -231,6 +273,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         stopService()
         commandServer?.close()
         commandServer = nil
+        // After sing-box, mirroring the start order: while sing-box winds down
+        // it can still push traffic at the SOCKS port.
+        stopXray()
         completionHandler()
     }
 

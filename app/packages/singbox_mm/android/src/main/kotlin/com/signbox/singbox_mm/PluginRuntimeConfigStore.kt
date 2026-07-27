@@ -82,6 +82,31 @@ internal class PluginRuntimeConfigStore(
         writeConfigAtomically(file, configContent)
     }
 
+    /// Stores the Xray config the tunnel service starts alongside sing-box, or
+    /// removes it when [configContent] is null.
+    ///
+    /// Removal is as load-bearing as writing: the service decides whether to
+    /// bring the second core up by whether this file exists, so a config left
+    /// behind by an earlier session would start Xray for a node that has no use
+    /// for it. Both cases go through the same atomic write/rename as the
+    /// sing-box config, so a service reading it mid-update sees one version or
+    /// the other, never a half-written one.
+    @Synchronized
+    fun writeXrayConfig(configContent: String?) {
+        val file = resolveXrayConfigFile()
+        if (configContent.isNullOrBlank()) {
+            file.delete()
+            return
+        }
+        writeConfigAtomically(file, configContent)
+    }
+
+    @Synchronized
+    fun resolveXrayConfigFile(): File {
+        val runtime = ensureRuntimeConfig()
+        return File(runtime.workingDirectory, XRAY_CONFIG_FILE_NAME)
+    }
+
     @Synchronized
     fun resolveConfigFile(): File {
         val runtime = ensureRuntimeConfig()
@@ -123,5 +148,12 @@ internal class PluginRuntimeConfigStore(
         file.setExecutable(false, false)
         file.setReadable(true, true)
         file.setWritable(true, true)
+    }
+
+    internal companion object {
+        /// Sits next to the sing-box config so the tunnel service can find it
+        /// from the config path it is already handed, with no second extra to
+        /// keep in sync across restarts.
+        const val XRAY_CONFIG_FILE_NAME = "active-xray-config.json"
     }
 }

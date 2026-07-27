@@ -1,6 +1,7 @@
 package com.signbox.singbox_mm
 
 import android.os.Handler
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -29,6 +30,9 @@ internal class VpnTunnelHealthWatchdog(
     private val hasUpstreamNetwork: () -> Boolean,
     private val restartCore: () -> Unit,
     private val logTag: String,
+    /// Same clock [handler] schedules against, so a delay computed here means
+    /// the same thing as one handed to `postDelayed`.
+    private val uptimeMs: () -> Long = { SystemClock.uptimeMillis() },
 ) {
     private companion object {
         /// A freshly started tunnel needs a moment before its first verdict means
@@ -52,6 +56,9 @@ internal class VpnTunnelHealthWatchdog(
 
     // Touched only from handler callbacks.
     private var probeInFlight = false
+
+    /// When the tunnel now being watched came up.
+    private var tunnelUpSinceMs = 0L
 
     /// The periodic check. Reschedules itself rather than using a fixed-rate
     /// timer so the interval can widen while the policy is backing off.
@@ -78,6 +85,7 @@ internal class VpnTunnelHealthWatchdog(
     fun start() {
         if (started) return
         started = true
+        tunnelUpSinceMs = uptimeMs()
         policy.onTunnelStarted()
         probeExecutor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "singbox-health-probe").apply { isDaemon = true }
@@ -101,8 +109,26 @@ internal class VpnTunnelHealthWatchdog(
     fun checkSoon() {
         if (!started) return
         handler.removeCallbacks(expeditedTick)
-        handler.postDelayed(expeditedTick, NETWORK_SETTLE_DELAY_MS)
+        handler.postDelayed(expeditedTick, expeditedDelayMs())
     }
+
+    /// How long an out-of-band check must wait: soon after a network change, but
+    /// never sooner than a freshly built tunnel is owed.
+    ///
+    /// This is what stops the watchdog from feeding itself. A recovery tears the
+    /// tun device down and puts a new one up, and that *is* a default-network
+    /// change — so every restart schedules the very probe that judges it, eight
+    /// seconds into a tunnel whose first handshake has not finished. That probe
+    /// fails, two of them buy another recovery, and a tunnel that carries
+    /// traffic perfectly well is rebuilt every ninety seconds forever (measured
+    /// on an emulator: nine recoveries in sixteen minutes, with the browser
+    /// loading pages through it the whole time).
+    ///
+    /// Nodes fronted by a CDN feel this worst — the first request has a TLS
+    /// handshake and an HTTP session to build before anything can pass — which
+    /// is why the panel's shutdown-bypass host looked broken while working.
+    private fun expeditedDelayMs(): Long =
+        maxOf(NETWORK_SETTLE_DELAY_MS, FIRST_CHECK_DELAY_MS - (uptimeMs() - tunnelUpSinceMs))
 
     private fun runProbe() {
         if (probeInFlight) return

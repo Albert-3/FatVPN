@@ -360,8 +360,23 @@ class VpnController extends ChangeNotifier {
   // worthless: the request slips out over the *old* default route and succeeds
   // no matter how broken the tunnel is — which is exactly how an unreachable
   // server passed this check during testing. Wait for routing to settle first.
-  static const _trafficProbeSettleDelay = Duration(seconds: 3);
-  static const _trafficProbeRetryDelay = Duration(seconds: 2);
+  //
+  // The wait is generous because the *first* request through a node costs far
+  // more than the ones after it, and this probe is the first: a TLS handshake,
+  // and for the panel's shutdown-bypass host an HTTP session through a CDN on
+  // top of that. Judging a node before it has finished coming up is not a
+  // cosmetic mistake — the verdict flags the server on screen and escalates to
+  // [_evaluateAutoSwitch], moving the user off a node that was about to work.
+  // For the bypass host that is the worst possible outcome, since it is chosen
+  // precisely when the alternatives are unreachable.
+  static const _trafficProbeSettleDelay = Duration(seconds: 8);
+  static const _trafficProbeRetryDelay = Duration(seconds: 6);
+
+  /// How many times the probe asks before it will call a tunnel dead.
+  ///
+  /// Three rather than two so the attempts span a real warm-up window instead
+  /// of landing twice in the same cold moment.
+  static const _trafficProbeAttempts = 3;
 
   /// sing-box's local control API (`experimental.clash_api`), on the port
   /// SingboxFeatureSettings.clashApiPort defaults to.
@@ -373,8 +388,9 @@ class VpnController extends ChangeNotifier {
   /// This is reliable precisely *because* the tun device is up: with a default
   /// route into the tunnel there is no direct path left, so a dead outbound
   /// can't be masked by the request slipping out around it — it simply times
-  /// out. A single failure isn't enough to accuse the server, so one retry
-  /// absorbs a transient blip.
+  /// out. A single failure isn't enough to accuse the server, so the retries
+  /// ([_trafficProbeAttempts]) absorb both a transient blip and a node that is
+  /// merely slow to warm up.
   ///
   /// Never tears the tunnel down: a probe is weaker evidence than the user's
   /// own experience, and yanking a connection out from under someone over one
@@ -394,7 +410,7 @@ class VpnController extends ChangeNotifier {
 
   Future<void> _runTrafficProbe() async {
     await Future.delayed(_trafficProbeSettleDelay);
-    for (var attempt = 0; attempt < 2; attempt++) {
+    for (var attempt = 0; attempt < _trafficProbeAttempts; attempt++) {
       // The user may have switched servers or powered off while we probed;
       // a verdict about a tunnel that no longer exists is meaningless.
       if (_state != VpnConnectionState.connected) return;
@@ -456,6 +472,9 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<bool?> _probeViaSingboxApi() async {
+    // Traffic that actually arrived outranks any question we could ask; see
+    // [_carriedTrafficSinceLastCheck].
+    if (await _carriedTrafficSinceLastCheck()) return true;
     // Fetching the tag doubles as a liveness check on the API itself: if this
     // succeeds, anything that goes wrong afterwards is about the outbound, not
     // about our ability to ask.
@@ -478,6 +497,50 @@ class VpnController extends ChangeNotifier {
       // therefore the verdict, not an inconclusive result — the API answered a
       // moment ago, so silence here is the outbound's silence.
       return false;
+    }
+  }
+
+  /// Bytes received through the tunnel when this probe last looked. Null until
+  /// the first look, and reset by a restart along with the counter it mirrors.
+  int? _lastReceivedBytes;
+
+  /// Whether the tunnel has demonstrably carried traffic since the previous
+  /// check.
+  ///
+  /// The delay test is an interrogation, and a witness beats an interrogation.
+  /// It opens a *fresh* connection through the outbound and allows it eight
+  /// seconds — but a node fronted by a CDN can need longer for a cold dial, so
+  /// "dead" comes back for a tunnel the user is browsing through right then.
+  /// Believing it costs the user the server: the banner tells them to pick
+  /// another one and [_evaluateAutoSwitch] moves them off it.
+  ///
+  /// Received bytes can't lie that way — they are data the far end sent back,
+  /// so any increase means the whole path worked. Sent bytes are weaker (they
+  /// can pile into a socket that never answers), so only receives count.
+  ///
+  /// A tunnel nobody is using produces no evidence, and then the delay test is
+  /// still the right question to ask.
+  Future<bool> _carriedTrafficSinceLastCheck() async {
+    final received = await _receivedBytes();
+    if (received == null) return false;
+    final previous = _lastReceivedBytes;
+    _lastReceivedBytes = received;
+    // A restart zeroes the counter. Lower than last time proves nothing.
+    if (previous == null || received < previous) return false;
+    return received > previous;
+  }
+
+  Future<int?> _receivedBytes() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_singboxApiBase/connections'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) return null;
+      final total =
+          (jsonDecode(response.body) as Map<String, dynamic>)['downloadTotal'];
+      return total is int ? total : null;
+    } catch (_) {
+      return null;
     }
   }
 

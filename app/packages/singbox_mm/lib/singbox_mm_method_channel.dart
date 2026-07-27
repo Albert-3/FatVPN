@@ -116,6 +116,16 @@ class MethodChannelSignboxVpn extends SignboxVpnPlatform {
   }
 
   @override
+  /// Stores (or clears) the Xray config the tunnel process starts alongside
+  /// sing-box.
+  Future<void> setXrayConfig(String? configJson) {
+    return methodChannel.invokeMethod<void>(
+      'setXrayConfig',
+      <String, Object?>{'config': configJson},
+    );
+  }
+
+  @override
   /// Starts VPN service.
   Future<void> startVpn() {
     return methodChannel.invokeMethod<void>('startVpn');
