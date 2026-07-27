@@ -50,8 +50,21 @@ class HostBypassEditor extends StatefulWidget {
 }
 
 class _HostBypassEditorState extends State<HostBypassEditor> {
+  /// Owned by the State, not by [_showAddDialog]: `showDialog`'s future completes
+  /// the moment the route is popped, while the dialog is still playing its exit
+  /// animation and its `TextField` still listens to this controller. Disposing it
+  /// there threw "A TextEditingController was used after being disposed" and then
+  /// tripped `_dependents.isEmpty`, replacing the screen with a red error page.
+  final _hostController = TextEditingController();
+
+  @override
+  void dispose() {
+    _hostController.dispose();
+    super.dispose();
+  }
+
   Future<void> _showAddDialog(Strings s) async {
-    final controller = TextEditingController();
+    final controller = _hostController..clear();
     String? error;
 
     await showDialog<void>(
@@ -108,7 +121,7 @@ class _HostBypassEditorState extends State<HostBypassEditor> {
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
                   child: Text(
-                    MaterialLocalizations.of(context).cancelButtonLabel,
+                    s.cancel,
                     style: const TextStyle(color: AppColors.textSecondary),
                   ),
                 ),
@@ -125,7 +138,6 @@ class _HostBypassEditorState extends State<HostBypassEditor> {
         );
       },
     );
-    controller.dispose();
   }
 
   @override

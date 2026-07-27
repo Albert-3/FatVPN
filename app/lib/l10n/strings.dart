@@ -85,6 +85,7 @@ class Strings {
     required this.selectedInList,
     required this.bypassingTunnel,
     required this.add,
+    required this.cancel,
     required this.searchApps,
     required this.loadingApps,
     required this.splitTunnelDisabledHint,
@@ -203,6 +204,11 @@ class Strings {
   final String selectedInList;
   final String bypassingTunnel;
   final String add;
+
+  /// The app hand-rolls its localization and never registers
+  /// `flutter_localizations`, so `MaterialLocalizations` falls back to its
+  /// English defaults — `cancelButtonLabel` showed "Cancel" under RU.
+  final String cancel;
   final String searchApps;
   final String loadingApps;
   final String splitTunnelDisabledHint;
@@ -342,6 +348,7 @@ const Strings enStrings = Strings(
   selectedInList: 'SELECTED IN LIST',
   bypassingTunnel: 'Bypassing tunnel',
   add: 'Add',
+  cancel: 'Cancel',
   searchApps: 'Search apps',
   loadingApps: 'Loading apps…',
   splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
@@ -465,6 +472,7 @@ final Strings ruStrings = Strings(
   selectedInList: 'ВЫБРАНО В СПИСКЕ',
   bypassingTunnel: 'Обход туннеля',
   add: 'Добавить',
+  cancel: 'Отмена',
   searchApps: 'Поиск приложений',
   loadingApps: 'Загрузка приложений…',
   splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
