@@ -199,9 +199,11 @@ fake-ip из `198.18.0.0/16` только тем именам, что идут �
 Прогонять после того, как Android закрыт. Сборка — Codemagic workflow `ios-release` → TestFlight,
 проверка на реальном iPhone (эмулятор не поднимает Network Extension).
 
-⚠️ Перед запуском workflow: **бампнуть build number** в `app/pubspec.yaml` (сейчас `1.0.4+26`) и
-**запушить в origin** — Codemagic собирает `origin/master`, а номер обязан быть строго выше
-последнего загруженного в TestFlight, иначе Publishing падает с 409 DUPLICATE.
+✅ 2026-07-27: build number бампнут до **`1.0.4+28`** (27 уже уходил в TestFlight), фиксы находок
+№1/№6/№7/№8 влиты в `master` и запушены. Codemagic собирает `origin/master`, а номер обязан быть
+строго выше последнего загруженного в TestFlight, иначе Publishing падает с 409 DUPLICATE.
+`app/pubspec.yaml` — единственное место, где он задан: оба `Info.plist` (Runner и PacketTunnel)
+читают `FLUTTER_BUILD_NUMBER`.
 
 ### K. Общая часть (тот же Dart-код, что и на Android)
 
@@ -241,8 +243,8 @@ fake-ip из `198.18.0.0/16` только тем именам, что идут �
 - [ ] **N2.** Убрать `Remnawave__AugmentHysteria=false` из env контейнера `fatvpn-bff`, если он там
       остался, — иначе новый дефолт `true` не сработает и H2-нод не будет.
 - [ ] **N3.** `dotnet test tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj` — ожидается 80 passed.
-- [ ] **N4.** Бампнуть build number в `app/pubspec.yaml` и запушить в origin (см. предупреждение
-      в разделе 2).
+- [x] **N4.** Бампнуть build number в `app/pubspec.yaml` и запушить в origin — сделано 2026-07-27:
+      `1.0.4+28`, вместе с фиксами №1/№6/№7/№8 в `origin/master`.
 - [ ] **N5.** Решить судьбу `app/test/widget_test.dart` (удалить либо переписать).
 
 ---
@@ -484,7 +486,6 @@ if (node != null && country.country != _selectedServer?.country) {
 **iOS:** весь раздел 2 (K1–K7, L1–L6, M1–M2) — нужен билд в TestFlight.
 **Деплой:** N1–N5.
 
-> ⚠️ Перед деплоем/сборкой iOS: в дереве лежат **несмёрженные правки** по находкам №1, №6, №7, №8
-> (`git status`: `home_screen.dart`, `api_client.dart`, `vpn_controller.dart`,
-> `split_tunnel_hosts_screen.dart`, `strings.dart`). Их надо закоммитить, иначе Codemagic соберёт
-> `origin/master` без них.
+> ✅ 2026-07-27: правки по находкам №1, №6, №7, №8 закоммичены и влиты в `master` fast-forward
+> (`694b4b1`, `62ca113`, `6ef24e4`), build number бампнут до `1.0.4+28` — всё в `origin/master`,
+> Codemagic соберёт уже с фиксами.
