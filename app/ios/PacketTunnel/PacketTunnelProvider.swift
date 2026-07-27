@@ -195,17 +195,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // This process is reused across reconnects, so a core from the previous
         // session may still be up; starting on top of it is refused by the core.
         stopXray()
-        do {
-            try FatxrayStart(xrayConfigContent)
-        } catch {
+        // gomobile binds a package-level Go function returning `error` as a C
+        // function with an NSError out-parameter — not as a throwing method, so
+        // there is nothing here for `try` to catch. Same shape as
+        // LibboxNewCommandServer above.
+        var startError: NSError?
+        if !FatxrayStart(xrayConfigContent, &startError) {
             throw TunnelStartupError(
-                message: "Failed to start Xray core: \(error.localizedDescription)")
+                message: "Failed to start Xray core: "
+                    + (startError?.localizedDescription ?? "unknown error"))
         }
         writeMessage("(packet-tunnel) Xray core started (\(FatxrayVersion()))")
     }
 
     private func stopXray() {
-        try? FatxrayStop()
+        // Runs on every start and on teardown, so "it was not running" is the
+        // normal case rather than a failure worth reporting — the error
+        // out-parameter is deliberately dropped.
+        _ = FatxrayStop(nil)
     }
 
     private func startService(configContent: String) async throws {
