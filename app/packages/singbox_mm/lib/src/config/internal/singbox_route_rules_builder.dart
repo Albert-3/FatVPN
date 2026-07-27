@@ -6,11 +6,17 @@ import '../../models/vpn_profile.dart';
 class SingboxRouteRulesBuilder {
   const SingboxRouteRulesBuilder();
 
+  /// [proxyOutboundTag] is the tag traffic must carry to leave through the
+  /// server. Only needed for the whitelist model (see
+  /// [SingboxFeatureSettings.route] `tunnelsOnlyListedHosts`), where the
+  /// default outbound is `direct` and reaching the proxy takes an explicit
+  /// rule; the exclusion model gets there through `route.final` instead.
   List<Object?> build({
     required VpnProfile profile,
     required BypassPolicy bypassPolicy,
     required SingboxFeatureSettings settings,
     required bool includeDnsRoutingRule,
+    required String proxyOutboundTag,
   }) {
     final List<Object?> rules = <Object?>[];
 
@@ -80,6 +86,30 @@ class SingboxRouteRulesBuilder {
       rules.add(<String, Object?>{
         'ip_cidr': directCidrs,
         'outbound': 'direct',
+      });
+    }
+
+    // The whitelist model: with `route.final` set to `direct` (see
+    // SingboxConfigBuilder), these are the only rules that put anything into
+    // the tunnel at all. They come after the direct rules above so an explicit
+    // bypass still wins, and before the rule-sets below for the same reason.
+    final List<String> proxyDomains = _dedupeStrings(
+      settings.route.regionProxyDomains,
+    );
+    if (proxyDomains.isNotEmpty) {
+      rules.add(<String, Object?>{
+        'domain_suffix': proxyDomains,
+        'outbound': proxyOutboundTag,
+      });
+    }
+
+    final List<String> proxyCidrs = _dedupeStrings(
+      settings.route.regionProxyCidrs,
+    );
+    if (proxyCidrs.isNotEmpty) {
+      rules.add(<String, Object?>{
+        'ip_cidr': proxyCidrs,
+        'outbound': proxyOutboundTag,
       });
     }
 

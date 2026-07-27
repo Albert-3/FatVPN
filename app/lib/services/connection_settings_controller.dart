@@ -4,6 +4,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 
+/// Which way round the split-tunnel lists are read.
+enum SplitTunnelMode {
+  /// Blacklist: the listed apps and hosts go *around* the VPN, everything else
+  /// is tunnelled. The original behaviour, and still the default.
+  exclude,
+
+  /// Whitelist: *only* the listed apps and hosts are tunnelled, everything
+  /// else leaves the device directly.
+  include,
+}
+
 /// Persists the user's connection preferences (DNS provider, network stack)
 /// and turns them into a [SingboxFeatureSettings] that [VpnController] applies
 /// on the next connect. Mirrors [LocaleController]'s secure-storage pattern.
@@ -18,8 +29,16 @@ class ConnectionSettingsController extends ChangeNotifier {
   static const _customDnsKey = 'conn_dns_custom';
   static const _stackKey = 'conn_network_stack';
   static const _splitEnabledKey = 'conn_split_enabled';
+  static const _splitModeKey = 'conn_split_mode';
   static const _splitPackagesKey = 'conn_split_packages';
   static const _splitHostsKey = 'conn_split_hosts';
+  // Whitelist entries live under their own keys. Sharing the lists across both
+  // modes would mean a single tap on the mode switch silently inverted every
+  // rule the user had saved — and the seeded defaults below make that concrete:
+  // three entry domains meant to *skip* the VPN would become the only three
+  // domains allowed *through* it.
+  static const _splitTunnelPackagesKey = 'conn_split_tunnel_packages';
+  static const _splitTunnelHostsKey = 'conn_split_tunnel_hosts';
   static const _splitSeededKey = 'conn_split_hosts_seeded'; // legacy: 'true' = batch 1
   static const _splitSeedVersionKey = 'conn_split_hosts_seed_version';
   final _storage = const FlutterSecureStorage();
@@ -61,6 +80,7 @@ class ConnectionSettingsController extends ChangeNotifier {
   // Per-app bypass only works on Android — iOS has no per-app VPN for non-MDM
   // apps, so there we bypass by host instead (see [_bypassHosts]).
   bool _splitTunnelEnabled = false;
+  SplitTunnelMode _splitTunnelMode = SplitTunnelMode.exclude;
   Set<String> _bypassPackages = <String>{};
 
   // Host-based split tunneling (used on iOS, where per-app is impossible):
@@ -69,6 +89,13 @@ class ConnectionSettingsController extends ChangeNotifier {
   // an ordered list so the picker list stays stable.
   List<String> _bypassHosts = <String>[];
 
+  // The whitelist counterparts of the two lists above, held separately so each
+  // mode keeps its own rules (see [_splitTunnelPackagesKey]). Apps here map to
+  // sing-box `include_package`; hosts become `regionProxyDomains`/`Cidrs`,
+  // which flip the config's default route to `direct`.
+  Set<String> _tunnelPackages = <String>{};
+  List<String> _tunnelHosts = <String>[];
+
   DnsProviderPreset get dnsPreset => _dnsPreset;
 
   /// User-entered resolver used when [dnsPreset] is [DnsProviderPreset.custom]
@@ -76,11 +103,34 @@ class ConnectionSettingsController extends ChangeNotifier {
   String get customDns => _customDns;
   SingboxTunImplementation get networkStack => _networkStack;
   bool get splitTunnelEnabled => _splitTunnelEnabled;
+
+  /// Whether the lists name what skips the VPN or what is the only thing to
+  /// use it. Each mode reads its own lists — see [activePackages].
+  SplitTunnelMode get splitTunnelMode => _splitTunnelMode;
   Set<String> get bypassPackages => _bypassPackages;
 
   /// Raw domain/IP entries that bypass the VPN (host-based split tunneling,
   /// surfaced on iOS). Order preserved for a stable list UI.
   List<String> get bypassHosts => List<String>.unmodifiable(_bypassHosts);
+
+  /// Apps that are the only ones allowed through the VPN, in
+  /// [SplitTunnelMode.include].
+  Set<String> get tunnelPackages => _tunnelPackages;
+
+  /// Domain/IP entries that are the only ones routed through the VPN, in
+  /// [SplitTunnelMode.include].
+  List<String> get tunnelHosts => List<String>.unmodifiable(_tunnelHosts);
+
+  /// The app list belonging to the current mode — what the picker shows and
+  /// edits, so the UI never has to branch on the mode itself.
+  Set<String> get activePackages => _splitTunnelMode == SplitTunnelMode.include
+      ? _tunnelPackages
+      : _bypassPackages;
+
+  /// The host list belonging to the current mode. See [activePackages].
+  List<String> get activeHosts => _splitTunnelMode == SplitTunnelMode.include
+      ? tunnelHosts
+      : bypassHosts;
 
   /// DNS presets surfaced in the UI. `custom` lets the user type their own
   /// resolver (see [customDns]).
@@ -104,8 +154,11 @@ class ConnectionSettingsController extends ChangeNotifier {
     final customDns = await _storage.read(key: _customDnsKey);
     final stack = await _storage.read(key: _stackKey);
     final splitEnabled = await _storage.read(key: _splitEnabledKey);
+    final splitMode = await _storage.read(key: _splitModeKey);
     final splitPackages = await _storage.read(key: _splitPackagesKey);
     final splitHosts = await _storage.read(key: _splitHostsKey);
+    final tunnelPackages = await _storage.read(key: _splitTunnelPackagesKey);
+    final tunnelHosts = await _storage.read(key: _splitTunnelHostsKey);
     final splitSeeded = await _storage.read(key: _splitSeededKey);
     final splitSeedVersion = await _storage.read(key: _splitSeedVersionKey);
     var changed = false;
@@ -139,6 +192,23 @@ class ConnectionSettingsController extends ChangeNotifier {
     if (splitHosts != null && splitHosts.isNotEmpty) {
       _bypassHosts =
           splitHosts.split(',').where((h) => h.isNotEmpty).toList();
+      changed = true;
+    }
+    if (splitMode != null) {
+      final match = SplitTunnelMode.values.where((m) => m.name == splitMode);
+      if (match.isNotEmpty) {
+        _splitTunnelMode = match.first;
+        changed = true;
+      }
+    }
+    if (tunnelPackages != null && tunnelPackages.isNotEmpty) {
+      _tunnelPackages =
+          tunnelPackages.split(',').where((p) => p.isNotEmpty).toSet();
+      changed = true;
+    }
+    if (tunnelHosts != null && tunnelHosts.isNotEmpty) {
+      _tunnelHosts =
+          tunnelHosts.split(',').where((h) => h.isNotEmpty).toList();
       changed = true;
     }
     // A build that predates the versioned key seeded batch 1 and wrote 'true'.
@@ -215,33 +285,85 @@ class ConnectionSettingsController extends ChangeNotifier {
     await _storage.write(key: _splitEnabledKey, value: enabled.toString());
   }
 
+  /// Switches which way the lists are read. The lists themselves are left
+  /// alone: each mode has its own, so coming back to a mode finds the rules
+  /// that were set up under it.
+  Future<void> setSplitTunnelMode(SplitTunnelMode mode) async {
+    if (_splitTunnelMode == mode) return;
+    _splitTunnelMode = mode;
+    notifyListeners();
+    await _storage.write(key: _splitModeKey, value: mode.name);
+  }
+
   Future<void> setBypassPackages(Set<String> packages) async {
     _bypassPackages = packages;
     notifyListeners();
     await _storage.write(key: _splitPackagesKey, value: packages.join(','));
   }
 
+  Future<void> setTunnelPackages(Set<String> packages) async {
+    _tunnelPackages = packages;
+    notifyListeners();
+    await _storage.write(
+      key: _splitTunnelPackagesKey,
+      value: packages.join(','),
+    );
+  }
+
+  /// Replaces the app list of the current mode — what the picker writes back.
+  Future<void> setActivePackages(Set<String> packages) =>
+      _splitTunnelMode == SplitTunnelMode.include
+          ? setTunnelPackages(packages)
+          : setBypassPackages(packages);
+
   /// Adds a raw domain/IP entry to the host-based bypass list. Returns `false`
   /// if the entry is invalid or already present (no state change in that case).
-  Future<bool> addBypassHost(String raw) async {
+  Future<bool> addBypassHost(String raw) => _addHost(raw, SplitTunnelMode.exclude);
+
+  Future<void> removeBypassHost(String host) =>
+      _removeHost(host, SplitTunnelMode.exclude);
+
+  /// Adds a raw domain/IP entry to the host list of the current mode. See
+  /// [addBypassHost] for the return value.
+  Future<bool> addActiveHost(String raw) => _addHost(raw, _splitTunnelMode);
+
+  Future<void> removeActiveHost(String host) =>
+      _removeHost(host, _splitTunnelMode);
+
+  Future<bool> _addHost(String raw, SplitTunnelMode mode) async {
     final host = raw.trim();
     if (!isValidBypassHost(host)) return false;
-    if (_bypassHosts.any((h) => h.toLowerCase() == host.toLowerCase())) {
+    final current = _hostsFor(mode);
+    if (current.any((h) => h.toLowerCase() == host.toLowerCase())) {
       return false;
     }
-    _bypassHosts = <String>[..._bypassHosts, host];
-    notifyListeners();
-    await _storage.write(key: _splitHostsKey, value: _bypassHosts.join(','));
+    await _writeHosts(mode, <String>[...current, host]);
     return true;
   }
 
-  Future<void> removeBypassHost(String host) async {
-    final next =
-        _bypassHosts.where((h) => h != host).toList(growable: false);
-    if (next.length == _bypassHosts.length) return;
-    _bypassHosts = next;
+  Future<void> _removeHost(String host, SplitTunnelMode mode) async {
+    final current = _hostsFor(mode);
+    final next = current.where((h) => h != host).toList(growable: false);
+    if (next.length == current.length) return;
+    await _writeHosts(mode, next);
+  }
+
+  List<String> _hostsFor(SplitTunnelMode mode) =>
+      mode == SplitTunnelMode.include ? _tunnelHosts : _bypassHosts;
+
+  Future<void> _writeHosts(SplitTunnelMode mode, List<String> hosts) async {
+    if (mode == SplitTunnelMode.include) {
+      _tunnelHosts = hosts;
+    } else {
+      _bypassHosts = hosts;
+    }
     notifyListeners();
-    await _storage.write(key: _splitHostsKey, value: _bypassHosts.join(','));
+    await _storage.write(
+      key: mode == SplitTunnelMode.include
+          ? _splitTunnelHostsKey
+          : _splitHostsKey,
+      value: hosts.join(','),
+    );
   }
 
   /// A bypass host is valid when it is a domain (`example.com`, `*.ru`) or an
@@ -254,25 +376,36 @@ class ConnectionSettingsController extends ChangeNotifier {
 
   /// Built fresh at each connect so preference edits take effect on reconnect.
   SingboxFeatureSettings buildFeatureSettings() {
-    // Per-app bypass (Android): on only when at least one app is picked;
-    // an empty include/exclude list would otherwise be a no-op anyway.
-    final splitApps = _splitTunnelEnabled && _bypassPackages.isNotEmpty;
+    final whitelist = _splitTunnelMode == SplitTunnelMode.include;
 
-    // Host bypass (iOS + also honoured on Android): classify each raw entry
-    // into a `direct` domain-suffix or ip-cidr route rule. These are platform
-    // independent (pure packet routing inside the TUN), so they take effect on
-    // iOS where per-app split tunneling is impossible.
-    final directDomains = <String>[];
-    final directCidrs = <String>[];
+    // Per-app split tunneling (Android): on only when at least one app is
+    // picked. An empty list is a no-op in exclusion mode, and in whitelist mode
+    // it is worse than that — "tunnel only these apps: none" would be a VPN
+    // that carries nothing — so an empty pick deliberately means "don't filter
+    // by app at all" rather than "filter everything out".
+    final packages = activePackages;
+    final splitApps = _splitTunnelEnabled && packages.isNotEmpty;
+
+    // Host-based split tunneling (iOS + also honoured on Android): classify
+    // each raw entry into a domain-suffix or ip-cidr route rule. These are
+    // platform independent (pure packet routing inside the TUN), so they take
+    // effect on iOS where per-app split tunneling is impossible.
+    //
+    // In whitelist mode the same entries become `regionProxy*` instead, which
+    // is what flips the config's default route to `direct` — see
+    // RouteOptions.tunnelsOnlyListedHosts, where an empty list likewise leaves
+    // the full tunnel alone rather than routing everything around it.
+    final domains = <String>[];
+    final cidrs = <String>[];
     if (_splitTunnelEnabled) {
-      for (final raw in _bypassHosts) {
+      for (final raw in activeHosts) {
         final cidr = _asCidr(raw);
         if (cidr != null) {
-          directCidrs.add(cidr);
+          cidrs.add(cidr);
           continue;
         }
         final domain = _asDomainSuffix(raw);
-        if (domain != null) directDomains.add(domain);
+        if (domain != null) domains.add(domain);
       }
     }
 
@@ -280,13 +413,15 @@ class ConnectionSettingsController extends ChangeNotifier {
         _dnsPreset == DnsProviderPreset.custom && _customDns.trim().isNotEmpty;
     return SingboxFeatureSettings(
       route: RouteOptions(
-        regionDirectDomains: directDomains,
-        regionDirectCidrs: directCidrs,
+        regionDirectDomains: whitelist ? const <String>[] : domains,
+        regionDirectCidrs: whitelist ? const <String>[] : cidrs,
+        regionProxyDomains: whitelist ? domains : const <String>[],
+        regionProxyCidrs: whitelist ? cidrs : const <String>[],
         // Domain-suffix route rules only match once sing-box knows the
         // connection's domain, which requires sniffing (SNI/host). Enable it
-        // only when there are domain bypass rules — IP/CIDR rules match on the
+        // only when there are domain rules — IP/CIDR rules match on the
         // destination address alone and need no sniffing.
-        resolveDestination: directDomains.isNotEmpty,
+        resolveDestination: domains.isNotEmpty,
       ),
       dns: DnsOptions.fromProvider(
         preset: _dnsPreset,
@@ -295,7 +430,10 @@ class ConnectionSettingsController extends ChangeNotifier {
       inbound: InboundOptions(
         tunImplementation: _networkStack,
         splitTunnelingEnabled: splitApps,
-        excludePackages: splitApps ? _bypassPackages.toList() : const <String>[],
+        includePackages:
+            splitApps && whitelist ? packages.toList() : const <String>[],
+        excludePackages:
+            splitApps && !whitelist ? packages.toList() : const <String>[],
       ),
     );
   }

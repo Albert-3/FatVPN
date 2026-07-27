@@ -99,6 +99,14 @@ class Strings {
     required this.noBypassHosts,
     required this.splitTunnelAppsTab,
     required this.splitTunnelHostsTab,
+    required this.splitTunnelModeLabel,
+    required this.splitTunnelModeExclude,
+    required this.splitTunnelModeInclude,
+    required this.appsUseVpnOnly,
+    required this.hostsUseVpnOnly,
+    required this.splitTunnelIncludeDisabledHint,
+    required this.splitTunnelHostsIncludeDisabledHint,
+    required this.splitTunnelIncludeEmptyNotice,
     required this.notifExpiringSoonTitle,
     required this.notifExpiresInDays,
     required this.notifExpiresInMinutes,
@@ -225,6 +233,21 @@ class Strings {
   final String splitTunnelAppsTab;
   final String splitTunnelHostsTab;
 
+  // Whitelist mode: the same two lists, read the other way round — only what
+  // they name uses the VPN. Each mode keeps its own entries, so these labels
+  // are what tells the user which set they are editing.
+  final String splitTunnelModeLabel;
+  final String splitTunnelModeExclude;
+  final String splitTunnelModeInclude;
+  final String appsUseVpnOnly;
+  final String hostsUseVpnOnly;
+  final String splitTunnelIncludeDisabledHint;
+  final String splitTunnelHostsIncludeDisabledHint;
+
+  /// Shown while the whitelist is empty, where the safe fallback — leaving the
+  /// full tunnel up — is the opposite of what "only these" sounds like.
+  final String splitTunnelIncludeEmptyNotice;
+
   /// Title of the "subscription ending soon" reminder notification.
   final String notifExpiringSoonTitle;
 
@@ -278,7 +301,7 @@ const Strings enStrings = Strings(
   customDnsHint: 'Custom resolver (DoH URL, tls:// or IP)',
   routing: 'ROUTING',
   splitTunnelingSettings: 'Split tunneling settings',
-  splitTunnelingSubtitle: 'Apps, domains and IPs that bypass the VPN',
+  splitTunnelingSubtitle: 'Choose which apps, domains and IPs use the VPN',
   system: 'SYSTEM',
   language: 'Language',
   account: 'ACCOUNT',
@@ -352,7 +375,7 @@ const Strings enStrings = Strings(
   searchApps: 'Search apps',
   loadingApps: 'Loading apps…',
   splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
-  splitTunnelingSubtitleHosts: 'Choose domains and IPs that bypass the VPN',
+  splitTunnelingSubtitleHosts: 'Choose which domains and IPs use the VPN',
   hostsBypassVpn: 'Domains and IP ranges that bypass the VPN',
   addBypassHost: 'Add domain or IP',
   bypassHostHint: 'example.com, *.ru or 10.0.0.0/8',
@@ -362,6 +385,17 @@ const Strings enStrings = Strings(
   noBypassHosts: 'No rules yet. Tap “Add domain or IP” to create one.',
   splitTunnelAppsTab: 'Apps',
   splitTunnelHostsTab: 'Domains / IP',
+  splitTunnelModeLabel: 'Mode',
+  splitTunnelModeExclude: 'Around the VPN',
+  splitTunnelModeInclude: 'Only these',
+  appsUseVpnOnly: 'Only these apps use the VPN',
+  hostsUseVpnOnly: 'Only these domains and IP ranges use the VPN',
+  splitTunnelIncludeDisabledHint:
+      'Turn on the switch above to pick the only apps that use the VPN.',
+  splitTunnelHostsIncludeDisabledHint:
+      'Turn on the switch above to pick the only domains and IPs that use the VPN.',
+  splitTunnelIncludeEmptyNotice:
+      'This list is empty, so everything still goes through the VPN.',
   notifExpiringSoonTitle: 'Subscription ending soon',
   notifExpiresInDays: _enNotifExpiresInDays,
   notifExpiresInMinutes: _enNotifExpiresInMinutes,
@@ -398,7 +432,7 @@ final Strings ruStrings = Strings(
   customDnsHint: 'Свой резолвер (DoH-URL, tls:// или IP)',
   routing: 'МАРШРУТИЗАЦИЯ',
   splitTunnelingSettings: 'Настройки раздельного туннелирования',
-  splitTunnelingSubtitle: 'Приложения, домены и IP в обход VPN',
+  splitTunnelingSubtitle: 'Выберите, какие приложения, домены и IP идут через VPN',
   system: 'СИСТЕМА',
   language: 'Язык',
   account: 'АККАУНТ',
@@ -476,7 +510,7 @@ final Strings ruStrings = Strings(
   searchApps: 'Поиск приложений',
   loadingApps: 'Загрузка приложений…',
   splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
-  splitTunnelingSubtitleHosts: 'Выберите домены и IP, которые обходят VPN',
+  splitTunnelingSubtitleHosts: 'Выберите, какие домены и IP идут через VPN',
   hostsBypassVpn: 'Домены и подсети, которые обходят VPN',
   addBypassHost: 'Добавить домен или IP',
   bypassHostHint: 'example.com, *.ru или 10.0.0.0/8',
@@ -486,6 +520,17 @@ final Strings ruStrings = Strings(
   noBypassHosts: 'Пока нет правил. Нажмите «Добавить домен или IP».',
   splitTunnelAppsTab: 'Приложения',
   splitTunnelHostsTab: 'Домены / IP',
+  splitTunnelModeLabel: 'Режим',
+  splitTunnelModeExclude: 'Мимо VPN',
+  splitTunnelModeInclude: 'Только эти',
+  appsUseVpnOnly: 'Через VPN идут только эти приложения',
+  hostsUseVpnOnly: 'Через VPN идут только эти домены и подсети',
+  splitTunnelIncludeDisabledHint:
+      'Включите переключатель выше, чтобы выбрать приложения, которым разрешён VPN.',
+  splitTunnelHostsIncludeDisabledHint:
+      'Включите переключатель выше, чтобы выбрать домены и IP, которым разрешён VPN.',
+  splitTunnelIncludeEmptyNotice:
+      'Список пуст, поэтому весь трафик по-прежнему идёт через VPN.',
   notifExpiringSoonTitle: 'Подписка скоро закончится',
   notifExpiresInDays: (n) =>
       'Доступ истекает через $n ${_ruPluralDays(n)}. Продлите в Telegram, чтобы остаться на связи.',

@@ -141,8 +141,12 @@ internal object VpnTunBuilderConfigurator {
         //
         // Keep this in mind when adding a package to includePackage: an
         // allow-list that omits this app puts us back in the old behaviour.
+        // VpnSplitTunnelPackages is what stops that from happening.
 
-        for (included in includedPackages) {
+        for (included in VpnSplitTunnelPackages.allowedPackages(
+            includedPackages = includedPackages,
+            hostPackageName = hostPackageName,
+        )) {
             addAllowedPackage(included)
         }
 

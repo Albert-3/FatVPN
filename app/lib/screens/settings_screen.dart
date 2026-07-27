@@ -160,8 +160,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'custom_dns': cs.customDns.isEmpty ? '(none)' : cs.customDns,
       'network_stack': cs.networkStack.name,
       'split_tunnel_enabled': cs.splitTunnelEnabled.toString(),
-      'split_bypass_count': cs.bypassPackages.length.toString(),
-      'split_bypass_hosts': cs.bypassHosts.length.toString(),
+      // The mode decides what the two counts below mean, so it has to travel
+      // with them — the same "2 apps, 3 hosts" is a narrow bypass in one mode
+      // and the user's entire internet in the other.
+      'split_tunnel_mode': cs.splitTunnelMode.name,
+      'split_app_count': cs.activePackages.length.toString(),
+      'split_host_count': cs.activeHosts.length.toString(),
       'logged_in': widget.auth.isLoggedIn.toString(),
       'subscription_active': widget.auth.subscriptionActive.toString(),
       'session_expires_at': session?.expiresAt.toIso8601String() ?? '(none)',

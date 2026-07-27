@@ -118,4 +118,105 @@ void main() {
       expect(c.bypassHosts, ConnectionSettingsController.defaultBypassHosts);
     });
   });
+
+  group('split-tunnel mode', () {
+    /// A controller with split tunneling on and the seeding already done, so a
+    /// test only sees what it put there itself.
+    Future<ConnectionSettingsController> seeded([
+      Map<String, String> extra = const <String, String>{},
+    ]) async {
+      FlutterSecureStorage.setMockInitialValues(<String, String>{
+        'conn_split_enabled': 'true',
+        'conn_split_hosts_seed_version': '2',
+        ...extra,
+      });
+      final c = ConnectionSettingsController();
+      await c.load();
+      return c;
+    }
+
+    test('is exclusion by default, so an upgrade changes nothing', () async {
+      final c = await seeded();
+      expect(c.splitTunnelMode, SplitTunnelMode.exclude);
+    });
+
+    test('survives a restart', () async {
+      final c = await seeded();
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+
+      final next = ConnectionSettingsController();
+      await next.load();
+      expect(next.splitTunnelMode, SplitTunnelMode.include);
+    });
+
+    test('keeps a list per mode instead of inverting the saved one', () async {
+      // The point of separate lists: the seeded defaults are domains that must
+      // *skip* the VPN, and reading them as a whitelist would leave the user
+      // with three sites and no internet.
+      final c = await seeded(<String, String>{
+        'conn_split_hosts': 'bank.example.com',
+      });
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+      await c.addActiveHost('work.example.com');
+
+      expect(c.tunnelHosts, <String>['work.example.com']);
+      expect(c.bypassHosts, contains('bank.example.com'));
+      expect(c.bypassHosts, isNot(contains('work.example.com')));
+
+      await c.setSplitTunnelMode(SplitTunnelMode.exclude);
+      expect(c.activeHosts, c.bypassHosts,
+          reason: 'coming back finds the exclusion list untouched');
+    });
+
+    test('removing an entry only touches the active mode', () async {
+      final c = await seeded(<String, String>{
+        'conn_split_hosts': 'shared.example.com',
+        'conn_split_tunnel_hosts': 'shared.example.com',
+      });
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+      await c.removeActiveHost('shared.example.com');
+
+      expect(c.tunnelHosts, isEmpty);
+      expect(c.bypassHosts, contains('shared.example.com'));
+    });
+
+    test('picks the matching per-app list for sing-box', () async {
+      final c = await seeded(<String, String>{
+        'conn_split_packages': 'com.example.bank',
+        'conn_split_tunnel_packages': 'com.example.browser',
+      });
+
+      final excluding = c.buildFeatureSettings().inbound;
+      expect(excluding.excludePackages, <String>['com.example.bank']);
+      expect(excluding.includePackages, isEmpty);
+
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+      final including = c.buildFeatureSettings().inbound;
+      expect(including.includePackages, <String>['com.example.browser']);
+      expect(including.excludePackages, isEmpty);
+    });
+
+    test('an empty pick means no per-app filtering, not a shut tunnel',
+        () async {
+      final c = await seeded();
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+
+      final inbound = c.buildFeatureSettings().inbound;
+      expect(inbound.splitTunnelingEnabled, isFalse);
+      expect(inbound.includePackages, isEmpty);
+    });
+
+    test('the master switch still turns every rule off', () async {
+      final c = await seeded(<String, String>{
+        'conn_split_tunnel_hosts': 'work.example.com',
+        'conn_split_tunnel_packages': 'com.example.browser',
+      });
+      await c.setSplitTunnelMode(SplitTunnelMode.include);
+      await c.setSplitTunnelEnabled(false);
+
+      final settings = c.buildFeatureSettings();
+      expect(settings.route.tunnelsOnlyListedHosts, isFalse);
+      expect(settings.inbound.includePackages, isEmpty);
+    });
+  });
 }

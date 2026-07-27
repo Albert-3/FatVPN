@@ -119,10 +119,48 @@ class SingboxDnsBuilder {
 
     final List<Object?> servers = <Object?>[];
     servers.add(<String, Object?>{'tag': 'dns-fakeip', 'address': 'fakeip'});
-    rules.add(<String, Object?>{
-      'query_type': const <String>['A'],
-      'server': 'dns-fakeip',
-    });
+
+    // Which names are resolved through the tunnel, and which are resolved by
+    // the device itself, has to follow the routing model — a name resolved the
+    // wrong way is either a leak or a dead connection.
+    //
+    // * Exclusion model: everything is tunnelled unless named, so every A
+    //   query gets a fake IP and only the named bypass domains are resolved
+    //   for real up front.
+    // * Whitelist model: only the named domains are tunnelled, so only they
+    //   may get a fake IP. Giving fake IPs to the rest would be actively
+    //   harmful — those connections leave through `direct`, and a 198.18.x.x
+    //   destination means nothing outside the tunnel, so the whole internet
+    //   would break the moment a whitelist was saved.
+    //
+    // Fake IPs (rather than simply resolving whitelisted names through
+    // `dns-remote`) are what let the route rules match on the domain without
+    // depending on sniffing: sing-box maps the fake address back to the name
+    // it handed out, so even traffic with no readable SNI reaches the proxy.
+    final List<String> proxyDomains = _dedupeStrings(
+      settings.route.regionProxyDomains,
+    );
+    final bool tunnelOnlyListedHosts = settings.route.tunnelsOnlyListedHosts;
+    if (tunnelOnlyListedHosts) {
+      if (proxyDomains.isNotEmpty) {
+        rules.add(<String, Object?>{
+          'domain_suffix': proxyDomains,
+          'query_type': const <String>['A'],
+          'server': 'dns-fakeip',
+        });
+        // AAAA and everything else for the same names: still through the
+        // tunnel, just without a fake address to hand back.
+        rules.add(<String, Object?>{
+          'domain_suffix': proxyDomains,
+          'server': 'dns-remote',
+        });
+      }
+    } else {
+      rules.add(<String, Object?>{
+        'query_type': const <String>['A'],
+        'server': 'dns-fakeip',
+      });
+    }
 
     servers.add(<String, Object?>{
       'tag': 'dns-remote',
@@ -154,7 +192,12 @@ class SingboxDnsBuilder {
       'servers': servers,
       'strategy': resolvedRemoteStrategy,
       'rules': rules,
-      'final': preferDirectDohFallback ? 'dns-remote-fallback' : 'dns-remote',
+      // Whatever no rule claimed is, by definition, not being tunnelled in the
+      // whitelist model — so it must be resolved by the device, not through
+      // the server.
+      'final': tunnelOnlyListedHosts
+          ? 'dns-direct'
+          : (preferDirectDohFallback ? 'dns-remote-fallback' : 'dns-remote'),
       'independent_cache': true,
     };
     if (settings.dns.timeout != null) {

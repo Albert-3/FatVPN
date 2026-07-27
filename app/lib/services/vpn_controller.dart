@@ -564,7 +564,8 @@ class VpnController extends ChangeNotifier {
       log.i('Connecting to node "${node.name}" '
           '(dns=${connectionSettings.dnsPreset.name}, '
           'stack=${connectionSettings.networkStack.name}, '
-          'split=${connectionSettings.splitTunnelEnabled})');
+          'split=${connectionSettings.splitTunnelEnabled}'
+          '/${connectionSettings.splitTunnelMode.name})');
       // Built fresh here so DNS / network-stack preference edits in Settings
       // take effect on this (re)connect.
       await _vpn.connectManualConfigLink(

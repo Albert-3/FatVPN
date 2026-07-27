@@ -7,10 +7,12 @@ import '../services/installed_apps_service.dart';
 import '../theme/app_colors.dart';
 import 'split_tunnel_hosts_screen.dart';
 
-/// Android split tunneling: one screen with two tabs — "Apps" (per-app bypass
-/// via sing-box `exclude_package`) and "Domains/IP" (host bypass via
-/// `route.rules` direct, the same model iOS uses). Both feed
-/// [ConnectionSettingsController] and apply on the next connect.
+/// Android split tunneling: one screen with two tabs — "Apps" (per-app, via
+/// sing-box `exclude_package`/`include_package`) and "Domains/IP" (by host, via
+/// `route.rules`, the same model iOS uses). The mode selector above the tabs
+/// decides whether the two lists name what skips the VPN or what is the only
+/// thing allowed through it. Both feed [ConnectionSettingsController] and apply
+/// on the next connect.
 class SplitTunnelingScreen extends StatelessWidget {
   const SplitTunnelingScreen({super.key, required this.connectionSettings});
 
@@ -30,6 +32,7 @@ class SplitTunnelingScreen extends StatelessWidget {
                 title: s.splitTunneling,
                 connectionSettings: connectionSettings,
               ),
+              SplitTunnelModeSelector(connectionSettings: connectionSettings),
               TabBar(
                 labelColor: AppColors.textPrimary,
                 unselectedLabelColor: AppColors.textSecondary,
@@ -55,8 +58,10 @@ class SplitTunnelingScreen extends StatelessWidget {
   }
 }
 
-/// Lets the user pick installed apps that bypass the VPN tunnel (sing-box
-/// `exclude_package`). Android-only; embedded as a tab in [SplitTunnelingScreen].
+/// Lets the user pick installed apps that either bypass the VPN tunnel
+/// (sing-box `exclude_package`) or are the only ones inside it
+/// (`include_package`), depending on the active mode. Android-only; embedded as
+/// a tab in [SplitTunnelingScreen].
 class AppBypassPicker extends StatefulWidget {
   const AppBypassPicker({super.key, required this.connectionSettings});
 
@@ -84,14 +89,14 @@ class _AppBypassPickerState extends State<AppBypassPicker> {
     if (mounted) setState(() => _apps = apps);
   }
 
-  void _toggleApp(String packageName, bool bypass) {
-    final next = Set<String>.from(widget.connectionSettings.bypassPackages);
-    if (bypass) {
+  void _toggleApp(String packageName, bool selected) {
+    final next = Set<String>.from(widget.connectionSettings.activePackages);
+    if (selected) {
       next.add(packageName);
     } else {
       next.remove(packageName);
     }
-    widget.connectionSettings.setBypassPackages(next);
+    widget.connectionSettings.setActivePackages(next);
   }
 
   @override
@@ -100,8 +105,14 @@ class _AppBypassPickerState extends State<AppBypassPicker> {
     return AnimatedBuilder(
       animation: widget.connectionSettings,
       builder: (context, _) {
+        final whitelist = widget.connectionSettings.splitTunnelMode ==
+            SplitTunnelMode.include;
         if (!widget.connectionSettings.splitTunnelEnabled) {
-          return SplitTunnelHint(text: s.splitTunnelDisabledHint);
+          return SplitTunnelHint(
+            text: whitelist
+                ? s.splitTunnelIncludeDisabledHint
+                : s.splitTunnelDisabledHint,
+          );
         }
         return Column(
           children: [
@@ -110,12 +121,33 @@ class _AppBypassPickerState extends State<AppBypassPicker> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  s.appsBypassVpn,
+                  whitelist ? s.appsUseVpnOnly : s.appsBypassVpn,
                   style: const TextStyle(
                       color: AppColors.textSecondary, fontSize: 13),
                 ),
               ),
             ),
+            // Same reasoning as the host editor's notice: picking no app leaves
+            // every app in the tunnel rather than shutting them all out.
+            if (whitelist && widget.connectionSettings.activePackages.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline,
+                        color: AppColors.accent, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        s.splitTunnelIncludeEmptyNotice,
+                        style: const TextStyle(
+                            color: AppColors.accent, fontSize: 12, height: 1.3),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             Expanded(child: _buildAppList(s)),
           ],
         );
@@ -170,10 +202,11 @@ class _AppBypassPickerState extends State<AppBypassPicker> {
             itemCount: filtered.length,
             itemBuilder: (context, i) {
               final app = filtered[i];
-              final bypass = widget.connectionSettings.bypassPackages.contains(app.packageName);
+              final selected = widget.connectionSettings.activePackages
+                  .contains(app.packageName);
               return _AppTile(
                 app: app,
-                bypass: bypass,
+                selected: selected,
                 onChanged: (v) => _toggleApp(app.packageName, v),
               );
             },
@@ -185,10 +218,14 @@ class _AppBypassPickerState extends State<AppBypassPicker> {
 }
 
 class _AppTile extends StatelessWidget {
-  const _AppTile({required this.app, required this.bypass, required this.onChanged});
+  const _AppTile({
+    required this.app,
+    required this.selected,
+    required this.onChanged,
+  });
 
   final LaunchableApp app;
-  final bool bypass;
+  final bool selected;
   final ValueChanged<bool> onChanged;
 
   @override
@@ -201,7 +238,7 @@ class _AppTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
       ),
       child: CheckboxListTile(
-        value: bypass,
+        value: selected,
         onChanged: (v) => onChanged(v ?? false),
         activeColor: AppColors.accent,
         checkColor: AppColors.background,

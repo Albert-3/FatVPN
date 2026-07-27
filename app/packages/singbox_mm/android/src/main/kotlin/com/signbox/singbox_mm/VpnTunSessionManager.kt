@@ -28,7 +28,6 @@ internal object VpnTunSessionManager {
                 VpnPackageAccessController.addAllowedPackage(
                     builder = builder,
                     packageName = packageName,
-                    hostPackageName = hostPackageName,
                     logTag = logTag,
                 )
             },

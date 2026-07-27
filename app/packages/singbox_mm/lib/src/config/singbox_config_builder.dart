@@ -107,7 +107,17 @@ class SingboxConfigBuilder {
       bypassPolicy: bypassPolicy,
       settings: settings,
       includeDnsRoutingRule: settings.dns.enableDnsRouting,
+      proxyOutboundTag: finalOutboundTag,
     );
+
+    // Whitelist model: everything the rules above didn't explicitly send into
+    // the tunnel leaves the device directly. Read after the rules are built so
+    // they still target the real proxy tag (which WARP may have re-pointed at a
+    // chain), and after `_applyWarp`, whose chosen tag is the one being
+    // replaced here.
+    final String routeFinalOutboundTag = settings.route.tunnelsOnlyListedHosts
+        ? 'direct'
+        : finalOutboundTag;
 
     final Map<String, Object?> experimental = <String, Object?>{
       'cache_file': <String, Object?>{
@@ -137,7 +147,7 @@ class SingboxConfigBuilder {
       'route': <String, Object?>{
         'auto_detect_interface': true,
         'override_android_vpn': false,
-        'final': finalOutboundTag,
+        'final': routeFinalOutboundTag,
         'rules': routeRules,
         if (settings.route.ruleSets.isNotEmpty)
           'rule_set': settings.route.ruleSets

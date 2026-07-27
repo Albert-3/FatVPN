@@ -152,6 +152,8 @@ class RouteOptions {
     this.ipv6RouteMode = SingboxIpv6RouteMode.disable,
     this.regionDirectDomains = const <String>[],
     this.regionDirectCidrs = const <String>[],
+    this.regionProxyDomains = const <String>[],
+    this.regionProxyCidrs = const <String>[],
     this.extraBlockedKeywords = const <String>[],
     this.ruleSets = const <SingboxRuleSet>[],
   });
@@ -180,6 +182,28 @@ class RouteOptions {
   /// Documented field.
   final List<String> regionDirectCidrs;
 
+  /// Domain suffixes that go *through* the proxy while everything else goes
+  /// direct — the inverse of [regionDirectDomains].
+  ///
+  /// Naming either of these lists is what picks the routing model, so the two
+  /// are meant to be used one at a time; see [tunnelsOnlyListedHosts].
+  final List<String> regionProxyDomains;
+
+  /// IP/CIDR ranges that go *through* the proxy while everything else goes
+  /// direct — the inverse of [regionDirectCidrs]. See [regionProxyDomains].
+  final List<String> regionProxyCidrs;
+
+  /// True when the config should tunnel only what [regionProxyDomains] and
+  /// [regionProxyCidrs] name, sending all other traffic straight out.
+  ///
+  /// Deliberately derived from the lists rather than carried as its own flag:
+  /// a standalone switch would allow "whitelist on, nothing whitelisted",
+  /// which routes every last packet around the tunnel while the UI still says
+  /// the VPN is connected. With no separate flag that state cannot be
+  /// expressed — an empty whitelist simply leaves the full tunnel in place.
+  bool get tunnelsOnlyListedHosts =>
+      regionProxyDomains.isNotEmpty || regionProxyCidrs.isNotEmpty;
+
   /// Documented field.
   final List<String> extraBlockedKeywords;
 
@@ -197,6 +221,8 @@ class RouteOptions {
       'ipv6RouteMode': ipv6RouteMode.name,
       'regionDirectDomains': regionDirectDomains,
       'regionDirectCidrs': regionDirectCidrs,
+      'regionProxyDomains': regionProxyDomains,
+      'regionProxyCidrs': regionProxyCidrs,
       'extraBlockedKeywords': extraBlockedKeywords,
       'ruleSets': ruleSets.map((SingboxRuleSet e) => e.toMap()).toList(),
     };
@@ -221,6 +247,8 @@ class RouteOptions {
       ),
       regionDirectDomains: _readStringList(raw['regionDirectDomains']),
       regionDirectCidrs: _readStringList(raw['regionDirectCidrs']),
+      regionProxyDomains: _readStringList(raw['regionProxyDomains']),
+      regionProxyCidrs: _readStringList(raw['regionProxyCidrs']),
       extraBlockedKeywords: _readStringList(raw['extraBlockedKeywords']),
       ruleSets: (raw['ruleSets'] as List<dynamic>?)
               ?.map(
