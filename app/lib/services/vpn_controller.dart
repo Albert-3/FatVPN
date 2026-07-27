@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:singbox_mm/singbox_mm.dart';
 
@@ -13,6 +12,7 @@ import 'app_logger.dart';
 import 'auto_switch_policy.dart';
 import 'connection_settings_controller.dart';
 import 'ping_service.dart';
+import 'secure_store.dart';
 import 'vless_config_parser.dart';
 
 /// Owns the sing-box VPN tunnel and exposes real connection state to the UI,
@@ -33,7 +33,7 @@ class VpnController extends ChangeNotifier {
   final PingService _pingService;
   final AutoSwitchPolicy _autoSwitchPolicy;
   final SignboxVpn _vpn = SignboxVpn();
-  final _storage = const FlutterSecureStorage();
+  final _storage = SecureStore();
   StreamSubscription<VpnConnectionState>? _stateSubscription;
 
   // Wall-clock start of the current tunnel session, persisted so it survives

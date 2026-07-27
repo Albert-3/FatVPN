@@ -1,8 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:singbox_mm/singbox_mm.dart';
+
+import 'secure_store.dart';
 
 /// Which way round the split-tunnel lists are read.
 enum SplitTunnelMode {
@@ -41,7 +42,7 @@ class ConnectionSettingsController extends ChangeNotifier {
   static const _splitTunnelHostsKey = 'conn_split_tunnel_hosts';
   static const _splitSeededKey = 'conn_split_hosts_seeded'; // legacy: 'true' = batch 1
   static const _splitSeedVersionKey = 'conn_split_hosts_seed_version';
-  final _storage = const FlutterSecureStorage();
+  final _storage = SecureStore();
 
   /// Domains every user gets in the host bypass list: the big Russian services
   /// (Yandex, Wildberries, Ozon) refuse to work — or bury the user in captchas

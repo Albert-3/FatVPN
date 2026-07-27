@@ -3,10 +3,11 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/auth_session.dart';
+import 'secure_store.dart';
 
 class TokenStorage {
   TokenStorage({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = SecureStore(storage: storage);
 
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
@@ -16,7 +17,7 @@ class TokenStorage {
   static const _keyCodeKey = 'active_key_code';
   static const _sessionKindKey = 'last_session_kind';
 
-  final FlutterSecureStorage _storage;
+  final SecureStore _storage;
 
   /// Whether we've already tried to auto-grant a free trial on this install.
   /// Set once the attempt reaches a definitive outcome (granted, or the device

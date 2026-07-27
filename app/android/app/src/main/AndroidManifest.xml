@@ -9,11 +9,20 @@
          Using SCHEDULE_EXACT_ALARM (not USE_EXACT_ALARM) to stay within Google
          Play policy for a non-alarm app. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Backup is off: session tokens and connection settings live in secure
+         storage, encrypted with a Keystore key that cannot leave the device.
+         Backing the ciphertext up without its key is worse than not backing it
+         up at all — the restored install reads garbage (see SecureStore) — and
+         a session token is not something to clone onto another phone anyway.
+         dataExtractionRules covers the Android 12+ device-to-device transfer,
+         which allowBackup alone does not. -->
     <application
         android:label="fatvpn_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

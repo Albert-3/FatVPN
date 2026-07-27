@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../l10n/strings.dart';
+import 'secure_store.dart';
 
 class LocaleController extends ChangeNotifier {
   static const _storageKey = 'app_language';
-  final _storage = const FlutterSecureStorage();
+  final _storage = SecureStore();
 
   AppLanguage _language = AppLanguage.ru;
   AppLanguage get language => _language;

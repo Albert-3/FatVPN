@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ counterpart to android:allowBackup="false".
+
+     allowBackup stops cloud backup, but not the device-to-device transfer a
+     user runs when setting up a new phone. That transfer moves the encrypted
+     SharedPreferences while the Keystore key stays behind on the old device,
+     which is exactly the case that used to strand the app on its splash
+     screen. Nothing here is worth carrying across devices — a session is
+     re-established by pairing — so both channels are excluded outright. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

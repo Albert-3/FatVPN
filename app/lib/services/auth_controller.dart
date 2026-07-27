@@ -119,25 +119,37 @@ class AuthController extends ChangeNotifier {
   bool get pairingActive => _pairing != null;
 
   Future<void> start() async {
-    final stored = await _tokenStorage.read();
-    if (stored != null) {
-      _session = stored;
-      _keyCode = await _tokenStorage.readKeyCode();
-      log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
-    } else {
-      log.i('No stored session — starting onboarding');
-      await _refreshTrialResumable();
-      // No local session, but this device already had a trial (e.g. it
-      // signed out) — the trial's own expiry lives server-side, not in local
-      // storage, so the only way to find out whether it's still running is
-      // to ask. This cold-start check is silent; the sign-out screen instead
-      // shows an explicit "continue trial" button (see [resumeTrial]).
-      if (_trialResumable) {
-        await _tryRecoverTrialSession();
+    AuthSession? stored;
+    try {
+      stored = await _tokenStorage.read();
+      if (stored != null) {
+        _session = stored;
+        _keyCode = await _tokenStorage.readKeyCode();
+        log.i('Restored stored session (expires ${stored.expiresAt.toIso8601String()})');
+      } else {
+        log.i('No stored session — starting onboarding');
+        await _refreshTrialResumable();
+        // No local session, but this device already had a trial (e.g. it
+        // signed out) — the trial's own expiry lives server-side, not in local
+        // storage, so the only way to find out whether it's still running is
+        // to ask. This cold-start check is silent; the sign-out screen instead
+        // shows an explicit "continue trial" button (see [resumeTrial]).
+        if (_trialResumable) {
+          await _tryRecoverTrialSession();
+        }
       }
+      // Trial button shows only for a device that hasn't used its trial yet.
+      _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
+    } catch (error, stack) {
+      // Whatever failed, the app still has to leave the splash screen: the
+      // gate in main.dart watches [initializing], so an escaping exception
+      // here means a splash that never resolves and an app the user can only
+      // fix by reinstalling. Onboarding without a session is a place they can
+      // act from. Anything already restored above is kept — a later step
+      // failing is no reason to throw away a session that read fine.
+      log.e('Startup session restore failed — continuing to onboarding',
+          error, stack);
     }
-    // Trial button shows only for a device that hasn't used its trial yet.
-    _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
     _initializing = false;
     notifyListeners();
 
