@@ -26,7 +26,9 @@ workflows:
   ios-release:
     name: iOS release (TestFlight)
     instance_type: mac_mini_m2
-    max_build_duration: 60
+    # 120 rather than 60: when the committed framework is stale this workflow
+    # builds it here (see the step below), which alone eats ~20-30 minutes.
+    max_build_duration: 120
     integrations:
       app_store_connect: Codemagic-Admin
     environment:
@@ -41,9 +43,45 @@ workflows:
         script: |
           git lfs install
           git lfs pull
-      - name: Check the framework carries the Xray bridge
+      - name: Check the framework carries the Xray bridge (build it if not)
         script: |
-          bash app/packages/singbox_mm/tool/check_xray_bridge.sh
+          # Libbox.xcframework is a committed build artifact, so it can lag the
+          # Go module behind it — it did from the day the second core was
+          # written. Failing here would mean a manual round trip (run the
+          # ios-libbox-xcframework workflow, download the zip, unzip, commit)
+          # before any TestFlight build, so build it on this runner instead.
+          #
+          # This only runs when the check fails, and it uploads the framework
+          # it built as an artifact: commit that zip and the step is a no-op
+          # again, at no cost to build time.
+          echo "Note: if the check below fails, the framework is built right"
+          echo "here — the guard's 'run the ios-libbox-xcframework workflow'"
+          echo "hint does not apply to this workflow."
+          if bash app/packages/singbox_mm/tool/check_xray_bridge.sh; then
+            exit 0
+          fi
+          echo "Building Libbox.xcframework (sing-box + Xray) on this runner..."
+          # The runner image can ship a Go older than fatcore/go.mod asks for,
+          # which surfaces deep inside gomobile. Check it up front instead.
+          REQUIRED_GO="$(sed -n 's/^go //p' app/packages/singbox_mm/tool/fatcore/go.mod | head -n1)"
+          go_ok() {
+            command -v go >/dev/null 2>&1 || return 1
+            [ "$(printf '%s\n%s\n' "$REQUIRED_GO" "$(go env GOVERSION | sed 's/^go//')" \
+                 | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" = "$REQUIRED_GO" ]
+          }
+          go_ok || brew install go || brew upgrade go || true
+          go_ok || {
+            echo "Go $REQUIRED_GO or newer is required to build the core;" >&2
+            echo "this runner has: $(go version 2>/dev/null || echo 'no Go at all')." >&2
+            exit 1
+          }
+          go version
+          bash app/packages/singbox_mm/tool/build_fatcore_ios.sh
+          cd app/packages/singbox_mm/ios/Frameworks
+          # -y keeps the symlinks inside the framework bundle instead of
+          # storing the binary three times — same reason as in the dedicated
+          # ios-libbox-xcframework workflow above.
+          zip -ry Libbox.xcframework.zip Libbox.xcframework
       - name: Flutter pub get
         script: |
           cd app
@@ -75,6 +113,10 @@ workflows:
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - app/build/ios/ipa/*.ipa
+      # Only produced when the step above had to rebuild the framework.
+      # Download it, unzip over app/packages/singbox_mm/ios/Frameworks/ and
+      # commit it (Git LFS) so later builds skip that ~20-30 minute step.
+      - app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework.zip
     publishing:
       app_store_connect:
         auth: integration
@@ -87,7 +129,8 @@ workflows:
   ios-unsigned:
     name: iOS build (unsigned validation)
     instance_type: mac_mini_m2
-    max_build_duration: 60
+    # Same reason as ios-release: a stale framework is built here.
+    max_build_duration: 120
     environment:
       flutter: stable
       xcode: latest
@@ -97,9 +140,45 @@ workflows:
         script: |
           git lfs install
           git lfs pull
-      - name: Check the framework carries the Xray bridge
+      - name: Check the framework carries the Xray bridge (build it if not)
         script: |
-          bash app/packages/singbox_mm/tool/check_xray_bridge.sh
+          # Libbox.xcframework is a committed build artifact, so it can lag the
+          # Go module behind it — it did from the day the second core was
+          # written. Failing here would mean a manual round trip (run the
+          # ios-libbox-xcframework workflow, download the zip, unzip, commit)
+          # before any TestFlight build, so build it on this runner instead.
+          #
+          # This only runs when the check fails, and it uploads the framework
+          # it built as an artifact: commit that zip and the step is a no-op
+          # again, at no cost to build time.
+          echo "Note: if the check below fails, the framework is built right"
+          echo "here — the guard's 'run the ios-libbox-xcframework workflow'"
+          echo "hint does not apply to this workflow."
+          if bash app/packages/singbox_mm/tool/check_xray_bridge.sh; then
+            exit 0
+          fi
+          echo "Building Libbox.xcframework (sing-box + Xray) on this runner..."
+          # The runner image can ship a Go older than fatcore/go.mod asks for,
+          # which surfaces deep inside gomobile. Check it up front instead.
+          REQUIRED_GO="$(sed -n 's/^go //p' app/packages/singbox_mm/tool/fatcore/go.mod | head -n1)"
+          go_ok() {
+            command -v go >/dev/null 2>&1 || return 1
+            [ "$(printf '%s\n%s\n' "$REQUIRED_GO" "$(go env GOVERSION | sed 's/^go//')" \
+                 | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" = "$REQUIRED_GO" ]
+          }
+          go_ok || brew install go || brew upgrade go || true
+          go_ok || {
+            echo "Go $REQUIRED_GO or newer is required to build the core;" >&2
+            echo "this runner has: $(go version 2>/dev/null || echo 'no Go at all')." >&2
+            exit 1
+          }
+          go version
+          bash app/packages/singbox_mm/tool/build_fatcore_ios.sh
+          cd app/packages/singbox_mm/ios/Frameworks
+          # -y keeps the symlinks inside the framework bundle instead of
+          # storing the binary three times — same reason as in the dedicated
+          # ios-libbox-xcframework workflow above.
+          zip -ry Libbox.xcframework.zip Libbox.xcframework
       - name: Flutter pub get
         script: |
           cd app
@@ -126,3 +205,5 @@ workflows:
           flutter build ios --debug --no-codesign
     artifacts:
       - app/build/ios/iphoneos/*.app
+      # See ios-release: present only if the framework was rebuilt here.
+      - app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework.zip
