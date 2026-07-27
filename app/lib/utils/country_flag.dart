@@ -1,18 +1,32 @@
+/// Group key for subscription entries that belong to no country: the panel's
+/// bypass hosts ("🌍 Белые списки #1", "Авто 🔥 [GRPC]") front a whitelisted
+/// address rather than a location, so their remark carries no flag.
+const String unknownCountryCode = '??';
+
+/// Emoji shown for [unknownCountryCode] — the panel names those hosts with a
+/// globe too, so the app matches what the user sees there.
+const String unknownCountryEmoji = '🌍';
+
 /// Converts a 2-letter ISO country code (e.g. "DE") into its flag emoji by
-/// mapping each letter to a Regional Indicator Symbol. Falls back to the
-/// raw code if it isn't a plausible 2-letter code (the BFF doesn't always
-/// have one, e.g. for unrecognized Remnawave node locations).
+/// mapping each letter to a Regional Indicator Symbol. Anything that isn't a
+/// plausible 2-letter code — [unknownCountryCode], or a Remnawave node location
+/// the BFF couldn't resolve — renders as the globe rather than as raw text.
 String countryCodeToFlagEmoji(String code) {
   final normalized = code.trim().toUpperCase();
   if (normalized.length != 2 ||
       !RegExp(r'^[A-Z]{2}$').hasMatch(normalized)) {
-    return code;
+    return unknownCountryEmoji;
   }
   final base = 0x1F1E6 - 'A'.codeUnitAt(0);
   return String.fromCharCodes(
     normalized.codeUnits.map((c) => base + c),
   );
 }
+
+/// Label for a country group: the code itself, or [unknownLabel] (a localized
+/// "Other") for the flagless bucket, which has no code worth showing.
+String countryLabel(String code, String unknownLabel) =>
+    code == unknownCountryCode ? unknownLabel : code;
 
 /// Inverse of [countryCodeToFlagEmoji]: pulls the 2-letter ISO code out of the
 /// first flag emoji found anywhere in [text], or null when there is none.

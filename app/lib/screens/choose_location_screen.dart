@@ -281,7 +281,7 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          country.country,
+                          countryLabel(country.country, s.otherLocations),
                           style: const TextStyle(
                             color: AppColors.textPrimary,
                             fontSize: 15,

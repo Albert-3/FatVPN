@@ -62,15 +62,18 @@ void main() {
       expect(entries.map((e) => e.host), ['ok.example.com']);
     });
 
-    test('drops XHTTP hosts sing-box cannot speak', () {
+    test('keeps XHTTP hosts, which are the shutdown-bypass ones', () {
       // Real shape of the panel's "🌍 Белые списки #1" host: an Xray XHTTP
-      // inbound behind a CDN. Remnawave's own sing-box render omits it too.
+      // inbound fronting a whitelisted address. sing-box has no XHTTP transport
+      // and the plugin normalizes it onto `http`, so the connection may still
+      // fail — but hiding the host costs the user the one server that survives
+      // a mobile-internet shutdown, so it has to be offered.
       final entries = parseConfigEntries(subscription([
         'vless://uuid@81.222.127.189:443?type=xhttp&path=/api/v1/assets&mode=packet-up&security=tls#WL',
         'vless://uuid@95.85.224.3:8443?type=grpc&security=tls#EE',
       ]));
 
-      expect(entries.map((e) => e.host), ['95.85.224.3']);
+      expect(entries.map((e) => e.host), ['81.222.127.189', '95.85.224.3']);
     });
 
     test('returns empty on content that is not base64', () {
@@ -97,6 +100,15 @@ void main() {
     test('returns null when there is no flag', () {
       expect(countryCodeFromFlagEmoji('DE-1'), isNull);
       expect(countryCodeFromFlagEmoji(''), isNull);
+    });
+
+    test('renders the globe for entries that belong to no country', () {
+      // The bypass hosts ("🌍 Белые списки #1", "Авто 🔥 [GRPC]") land in this
+      // bucket; showing "??" as a flag looked like a rendering fault.
+      expect(countryCodeToFlagEmoji(unknownCountryCode), '🌍');
+      expect(countryCodeToFlagEmoji('unknown'), '🌍');
+      expect(countryLabel(unknownCountryCode, 'Особые'), 'Особые');
+      expect(countryLabel('DE', 'Особые'), 'DE');
     });
 
     test('round-trips with countryCodeToFlagEmoji', () {

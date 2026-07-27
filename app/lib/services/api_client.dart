@@ -237,7 +237,7 @@ class ApiClient {
       final match = nodeByAddress[entry.host];
       final country = match?.$1 ??
           countryCodeFromFlagEmoji(entry.tag) ??
-          _unknownCountry;
+          unknownCountryCode;
       // Keep the node's own identity/name when we have one, so nodes that were
       // already listed look exactly as before; otherwise fall back to the
       // host's remark, which is all the panel gives us for this entry.
@@ -265,11 +265,6 @@ class ApiClient {
         .toList();
     return usable.isEmpty ? servers : usable;
   }
-
-  /// Bucket for a subscription entry whose remark carries no flag emoji and
-  /// whose host matches no node — rare, but it must stay visible rather than be
-  /// dropped, which is exactly the failure this method exists to undo.
-  static const _unknownCountry = '??';
 
   Future<AccountStatus> getMe(String accessToken) async {
     final response = await _authedGet('/me', accessToken);
