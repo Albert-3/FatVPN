@@ -87,6 +87,7 @@ List<ConfigEntry> parseConfigEntries(String rawConfigContent) {
   for (final uri in parseConfigUris(rawConfigContent)) {
     final parsed = Uri.tryParse(uri);
     if (parsed == null || parsed.host.isEmpty) continue;
+    if (_isXhttp(parsed)) continue;
     entries.add(ConfigEntry(
       uri: uri,
       host: parsed.host,
@@ -97,16 +98,28 @@ List<ConfigEntry> parseConfigEntries(String rawConfigContent) {
   return entries;
 }
 
-// XHTTP note: `?type=xhttp` hosts — the panel's "🌍 Белые списки #1" among them
-// — used to be filtered out here, because official sing-box ships no XHTTP
-// transport and Remnawave's own sing-box render drops them. They are kept now:
-// those hosts are precisely the ones that survive a mobile-internet shutdown
-// (they front a whitelisted address), so hiding them costs the user the only
-// server that still works. The plugin normalizes xhttp onto sing-box's `http`
-// transport, the closest official equivalent — it interoperates with an Xray
-// XHTTP inbound in single-stream shape, but not with split modes, so such a
-// host can still fail to connect. That shows up as a normal unreachable server
-// rather than as a missing one.
+/// True for Xray's XHTTP transport (`?type=xhttp`), which sing-box cannot
+/// speak.
+///
+/// This costs us the panel's "🌍 Белые списки #1" — the host that fronts a
+/// whitelisted CDN address and so survives a mobile-internet shutdown — which
+/// is worth being precise about, since it was briefly listed and then hidden
+/// again. Its inbound was read straight off the panel: `mode: "packet-up"`,
+/// uplink over separate `DELETE` requests carrying the data in the body, xmux,
+/// and padding obfuscation (`xPaddingHeader: X-Signature`, placed in the
+/// query). Official sing-box implements none of that, and the `http` transport
+/// our plugin remaps xhttp onto only ever speaks a single stream — so the
+/// connection cannot succeed, whatever the client does.
+///
+/// A listed host that always fails is worse than an absent one: it pings fine
+/// (the CDN answers) and looks like every other server, so the failure reads as
+/// the app being broken. It stays hidden until the panel publishes the same
+/// front over a transport sing-box speaks; such a host needs no change here,
+/// the subscription simply starts carrying it.
+bool _isXhttp(Uri uri) {
+  final type = uri.queryParameters['type']?.toLowerCase();
+  return type == 'xhttp';
+}
 
 /// Fragments arrive percent-encoded (the augmenter and Remnawave both escape
 /// them). A malformed escape must not cost us the whole entry, so fall back to

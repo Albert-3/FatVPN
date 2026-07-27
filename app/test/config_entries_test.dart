@@ -62,18 +62,17 @@ void main() {
       expect(entries.map((e) => e.host), ['ok.example.com']);
     });
 
-    test('keeps XHTTP hosts, which are the shutdown-bypass ones', () {
-      // Real shape of the panel's "🌍 Белые списки #1" host: an Xray XHTTP
-      // inbound fronting a whitelisted address. sing-box has no XHTTP transport
-      // and the plugin normalizes it onto `http`, so the connection may still
-      // fail — but hiding the host costs the user the one server that survives
-      // a mobile-internet shutdown, so it has to be offered.
+    test('drops XHTTP hosts sing-box cannot speak', () {
+      // Real shape of the panel's "🌍 Белые списки #1" host, read off the panel
+      // itself: an Xray XHTTP inbound in packet-up mode behind a CDN. sing-box
+      // has no XHTTP at all, so this one can never connect — and a listed host
+      // that always fails pings fine and reads as the app being broken.
       final entries = parseConfigEntries(subscription([
         'vless://uuid@81.222.127.189:443?type=xhttp&path=/api/v1/assets&mode=packet-up&security=tls#WL',
         'vless://uuid@95.85.224.3:8443?type=grpc&security=tls#EE',
       ]));
 
-      expect(entries.map((e) => e.host), ['81.222.127.189', '95.85.224.3']);
+      expect(entries.map((e) => e.host), ['95.85.224.3']);
     });
 
     test('returns empty on content that is not base64', () {
