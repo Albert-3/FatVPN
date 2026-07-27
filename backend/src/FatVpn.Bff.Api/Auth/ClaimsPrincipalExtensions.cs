@@ -5,16 +5,19 @@ namespace FatVpn.Bff.Api.Auth;
 
 public static class ClaimsPrincipalExtensions
 {
-    public static Guid GetTokenId(this ClaimsPrincipal user)
-    {
-        var value = user.FindFirstValue(FatVpnClaimTypes.TokenId)
-            ?? throw new InvalidOperationException("Missing token id claim.");
-        return Guid.Parse(value);
-    }
+    /// <summary>
+    /// The legacy deep-link / trial session id, or null when the JWT carries no
+    /// usable one. Never throws: a token that is valid by signature but missing
+    /// or malformed in its claims is an authentication problem (401), not a
+    /// server fault (500).
+    /// </summary>
+    public static Guid? TryGetTokenId(this ClaimsPrincipal user) =>
+        Parse(user.FindFirstValue(FatVpnClaimTypes.TokenId));
 
-    public static Guid? TryGetAccountId(this ClaimsPrincipal user)
-    {
-        var value = user.FindFirstValue(FatVpnClaimTypes.AccountId);
-        return value is null ? null : Guid.Parse(value);
-    }
+    /// <summary>The pairing-session account id, or null when this is not an account session.</summary>
+    public static Guid? TryGetAccountId(this ClaimsPrincipal user) =>
+        Parse(user.FindFirstValue(FatVpnClaimTypes.AccountId));
+
+    private static Guid? Parse(string? value) =>
+        Guid.TryParse(value, out var parsed) ? parsed : null;
 }

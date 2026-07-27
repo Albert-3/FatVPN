@@ -1,8 +1,11 @@
+using System.ComponentModel.DataAnnotations;
+using FatVpn.Bff.Api.Infrastructure;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
 using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -10,18 +13,26 @@ namespace FatVpn.Bff.Api.Controllers;
 
 [ApiController]
 [Route("auth")]
+// Brute-force surface: short key codes on /token, opaque secrets on /refresh.
+[EnableRateLimiting(RateLimitPolicies.Auth)]
 public class AuthController(
     FatVpnDbContext db,
     IJwtTokenService jwtTokenService,
     IRefreshTokenService refreshTokenService,
-    IOptions<TrialOptions> trialOptions) : ControllerBase
+    IOptions<TrialOptions> trialOptions,
+    IOptions<JwtOptions> jwtOptions,
+    ILogger<AuthController> logger) : ControllerBase
 {
     [HttpPost("token")]
     public async Task<IActionResult> ExchangeToken([FromBody] ExchangeTokenRequest request, CancellationToken ct)
     {
-        var token = await db.Tokens.SingleOrDefaultAsync(t => t.ShortToken == request.ShortToken, ct);
+        var token = await db.Tokens.AsNoTracking()
+            .SingleOrDefaultAsync(t => t.ShortToken == request.ShortToken, ct);
         if (token is null || token.ExpiresAt <= DateTimeOffset.UtcNow)
         {
+            // No audit trail existed on this endpoint at all, so a key being
+            // brute-forced looked exactly like normal traffic in the logs.
+            logger.LogWarning("Rejected /auth/token: unknown or expired key");
             return NotFound();
         }
 
@@ -32,12 +43,16 @@ public class AuthController(
         if (!string.IsNullOrEmpty(request.AttestationToken))
         {
             var deviceHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
-            if (token.BoundDeviceKeyHash is null)
+            // Bind in one statement: reading "unbound" and then writing let two
+            // phones redeeming the same fresh key at once both bind and both walk
+            // away with a session. The database decides who was first.
+            var bound = await db.Tokens
+                .Where(t => t.Id == token.Id
+                    && (t.BoundDeviceKeyHash == null || t.BoundDeviceKeyHash == deviceHash))
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.BoundDeviceKeyHash, deviceHash), ct);
+            if (bound != 1)
             {
-                token.BoundDeviceKeyHash = deviceHash;
-            }
-            else if (!string.Equals(token.BoundDeviceKeyHash, deviceHash, StringComparison.Ordinal))
-            {
+                logger.LogWarning("Rejected /auth/token for {TokenId}: key already bound to another device", token.Id);
                 return Conflict();
             }
         }
@@ -47,7 +62,17 @@ public class AuthController(
         db.RefreshTokens.Add(refreshEntity);
         await db.SaveChangesAsync(ct);
 
-        return Ok(new { accessToken, refreshToken = refreshRaw, expiresAt = token.ExpiresAt });
+        return Ok(new
+        {
+            accessToken,
+            refreshToken = refreshRaw,
+            // expiresAt is the subscription's expiry and always has been; the two
+            // explicit fields are additive so existing clients keep working while
+            // new ones can stop refreshing on the wrong clock.
+            expiresAt = token.ExpiresAt,
+            subscriptionExpiresAt = token.ExpiresAt,
+            accessTokenExpiresAt = DateTimeOffset.UtcNow + jwtOptions.Value.AccessTokenLifetime,
+        });
     }
 
     /// <summary>Exchanges a refresh token for a fresh access token, rotating the
@@ -59,23 +84,66 @@ public class AuthController(
     {
         var now = DateTimeOffset.UtcNow;
         var hash = refreshTokenService.Hash(request.RefreshToken);
-        var stored = await db.RefreshTokens.SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
+
+        // Claim the token atomically instead of read-check-write: the app can
+        // easily fire two /auth/refresh calls at once, and both used to see
+        // RevokedAt == null and mint a session. Exactly one caller can flip it.
+        // The cast keeps the value's type identical to the nullable column's;
+        // without it EF builds a conversion node it cannot translate to SQL.
+        var revokedAt = (DateTimeOffset?)now;
+        // Expiry is checked below rather than in this predicate: an already-expired
+        // token being marked revoked here is harmless (it was unusable anyway), and
+        // keeping timestamps out of the UPDATE's WHERE keeps it translatable on
+        // every provider the tests run against.
+        var claimed = await db.RefreshTokens
+            .Where(r => r.TokenHash == hash && r.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RevokedAt, revokedAt), ct);
+
+        var stored = await db.RefreshTokens.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
         if (stored is null)
         {
             return Unauthorized();
         }
 
-        if (!stored.IsActive(now))
+        if (claimed == 1 && stored.ExpiresAt <= now)
         {
-            // A revoked-but-unexpired token being presented means an already-rotated
-            // (or logged-out) secret is in play — likely a stolen/replayed token.
-            // Revoke the whole session family so the thief and the victim both have
-            // to re-pair, rather than letting the attacker keep refreshing.
-            if (stored.RevokedAt is not null)
-            {
-                await RevokeFamilyAsync(stored, now, ct);
-            }
+            // We claimed it, but it was past its lifetime — nothing to rotate.
             return Unauthorized();
+        }
+
+        if (claimed != 1)
+        {
+            // We did not get the token. Either it was already spent, or it expired.
+            var rotatedAgo = stored.RevokedAt is null ? (TimeSpan?)null : now - stored.RevokedAt.Value;
+            var benignRace = rotatedAgo is not null
+                && rotatedAgo >= TimeSpan.Zero
+                && rotatedAgo <= jwtOptions.Value.RefreshGraceWindow
+                && stored.ExpiresAt > now;
+
+            if (!benignRace)
+            {
+                // A revoked-but-unexpired token presented long after its rotation
+                // means an already-spent secret is in play — likely stolen or
+                // replayed. Revoke the whole family so the thief and the victim
+                // both have to re-pair, rather than letting an attacker keep going.
+                if (stored.RevokedAt is not null)
+                {
+                    logger.LogWarning(
+                        "Refresh-token reuse detected {RotatedAgo} after rotation; revoking the session family",
+                        rotatedAgo);
+                    await RevokeFamilyAsync(stored, now, ct);
+                }
+
+                return Unauthorized();
+            }
+
+            // Inside the grace window this is the app racing itself, not theft.
+            // Fall through and hand out another token for the same family. It is
+            // a fresh secret rather than a replay of the one the winning call
+            // returned — refresh tokens are only ever stored hashed, so the
+            // original cannot be reconstructed here. Both belong to the same
+            // client and the same family; whichever it keeps keeps working.
         }
 
         // Re-issue an access token for the same identity, if it still exists.
@@ -106,13 +174,22 @@ public class AuthController(
             return Unauthorized();
         }
 
-        // Rotate: revoke the presented token and issue a fresh one.
-        stored.RevokedAt = now;
-        var (refreshRaw, refreshEntity) = refreshTokenService.Create(stored.AccountId, stored.TokenId);
+        // The presented token was already revoked by the atomic claim above. The
+        // session's original start travels with the rotation so an absolute
+        // lifetime, when configured, can't be reset by simply refreshing.
+        var (refreshRaw, refreshEntity) = refreshTokenService.Create(
+            stored.AccountId, stored.TokenId, stored.SessionStartedAt);
         db.RefreshTokens.Add(refreshEntity);
         await db.SaveChangesAsync(ct);
 
-        return Ok(new { accessToken, refreshToken = refreshRaw, expiresAt });
+        return Ok(new
+        {
+            accessToken,
+            refreshToken = refreshRaw,
+            expiresAt,
+            subscriptionExpiresAt = expiresAt,
+            accessTokenExpiresAt = now + jwtOptions.Value.AccessTokenLifetime,
+        });
     }
 
     /// <summary>Best-effort revocation of a refresh token on sign-out. Always
@@ -121,12 +198,10 @@ public class AuthController(
     public async Task<IActionResult> Logout([FromBody] RefreshRequest request, CancellationToken ct)
     {
         var hash = refreshTokenService.Hash(request.RefreshToken);
-        var stored = await db.RefreshTokens.SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
-        if (stored is not null && stored.RevokedAt is null)
-        {
-            stored.RevokedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ct);
-        }
+        var revokedAt = (DateTimeOffset?)DateTimeOffset.UtcNow;
+        await db.RefreshTokens
+            .Where(r => r.TokenHash == hash && r.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RevokedAt, revokedAt), ct);
 
         return NoContent();
     }
@@ -134,26 +209,21 @@ public class AuthController(
     /// <summary>Revokes every still-active refresh token belonging to the same
     /// session identity (account or legacy token) as <paramref name="member"/>.
     /// Used on detected token reuse to invalidate a possibly-compromised family.</summary>
-    private async Task RevokeFamilyAsync(RefreshToken member, DateTimeOffset now, CancellationToken ct)
+    private Task RevokeFamilyAsync(RefreshToken member, DateTimeOffset now, CancellationToken ct)
     {
-        var family = await db.RefreshTokens
+        var revokedAt = (DateTimeOffset?)now;
+        return db.RefreshTokens
             .Where(r => r.RevokedAt == null
                 && ((member.AccountId != null && r.AccountId == member.AccountId)
                     || (member.TokenId != null && r.TokenId == member.TokenId)))
-            .ToListAsync(ct);
-
-        foreach (var token in family)
-        {
-            token.RevokedAt = now;
-        }
-
-        if (family.Count > 0)
-        {
-            await db.SaveChangesAsync(ct);
-        }
+            // One statement rather than materialising the family and updating it
+            // row by row — this runs on the fastest-growing table in the schema.
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RevokedAt, revokedAt), ct);
     }
 }
 
-public sealed record ExchangeTokenRequest(string ShortToken, string? AttestationToken = null);
+public sealed record ExchangeTokenRequest(
+    [property: StringLength(128)] string ShortToken,
+    [property: StringLength(512)] string? AttestationToken = null);
 
-public sealed record RefreshRequest(string RefreshToken);
+public sealed record RefreshRequest([property: StringLength(512)] string RefreshToken);

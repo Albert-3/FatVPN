@@ -1,5 +1,6 @@
 using FatVpn.Bff.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace FatVpn.Bff.Infrastructure;
 
@@ -22,5 +23,44 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
         modelBuilder.Entity<PairingCode>().HasIndex(p => p.Code).IsUnique();
         modelBuilder.Entity<PairingCode>().HasIndex(p => p.PollToken).IsUnique();
         modelBuilder.Entity<RefreshToken>().HasIndex(r => r.TokenHash).IsUnique();
+
+        // RefreshTokens is the fastest-growing table (one row per /auth/refresh,
+        // ~48/device/day). Without these, revoking a session family and the
+        // nightly cleanup both sequentially scan it.
+        modelBuilder.Entity<RefreshToken>().HasIndex(r => new { r.AccountId, r.RevokedAt });
+        modelBuilder.Entity<RefreshToken>().HasIndex(r => new { r.TokenId, r.RevokedAt });
+        modelBuilder.Entity<RefreshToken>().HasIndex(r => r.ExpiresAt);
+
+        // One trial per device, enforced by the database rather than by a
+        // read-then-write: without it a racing pair of /trial calls leaves two
+        // rows, and SingleOrDefaultAsync then throws forever for that device.
+        modelBuilder.Entity<Trial>().HasIndex(t => t.DeviceId).IsUnique();
+
+        modelBuilder.Entity<PairingCode>().HasIndex(p => p.ExpiresAt);
+
+        // Npgsql refuses to write a DateTimeOffset with a non-zero offset into a
+        // timestamptz column. Every timestamp we take from outside — the bot sends
+        // Moscow time, the panel sends its own — would otherwise throw at
+        // SaveChanges and surface as a 500. Normalise on the way in, once, for
+        // every entity, so a future write path can't reintroduce it.
+        var toUtc = new ValueConverter<DateTimeOffset, DateTimeOffset>(
+            v => v.ToUniversalTime(), v => v);
+        var toUtcNullable = new ValueConverter<DateTimeOffset?, DateTimeOffset?>(
+            v => v == null ? null : v.Value.ToUniversalTime(), v => v);
+
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.ClrType == typeof(DateTimeOffset))
+                {
+                    property.SetValueConverter(toUtc);
+                }
+                else if (property.ClrType == typeof(DateTimeOffset?))
+                {
+                    property.SetValueConverter(toUtcNullable);
+                }
+            }
+        }
     }
 }

@@ -24,12 +24,17 @@ public class TrialControllerTests
         OnCreateTrial = expiry => new RemnawaveTrialUser("short-uuid", expiry),
     };
 
+    /// Real clients send a 64-char hex per-install key. The controller now
+    /// enforces a minimum length (an empty token used to hash to one shared
+    /// device identity), so fixtures have to look like the real thing.
+    private static string DeviceKey(string seed) => seed.PadRight(32, '0');
+
     [Fact]
     public async Task GrantTrial_NewDevice_CreatesTrialTokenAndDevice()
     {
         using var db = TestHelpers.NewDb();
         var result = await NewController(db, OkRemna())
-            .GrantTrial(new TrialRequest("attest-abc", "android"), default);
+            .GrantTrial(new TrialRequest(DeviceKey("attest-abc"), "android"), default);
 
         Assert.IsType<OkObjectResult>(result);
         Assert.Equal(1, await db.Devices.CountAsync());
@@ -37,6 +42,29 @@ public class TrialControllerTests
         Assert.Equal(1, await db.Tokens.CountAsync());
         Assert.Equal(1, await db.RefreshTokens.CountAsync());
         Assert.StartsWith("TRIAL-", (await db.Tokens.SingleAsync()).ShortToken);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("too-short")]
+    public async Task GrantTrial_MalformedAttestation_BadRequest_NoPanelCall(string attestation)
+    {
+        // An empty token hashes to SHA256(salt) — the same device identity for
+        // everyone — so the first caller's trial would be resumed for every later
+        // caller. The panel must not even be contacted.
+        using var db = TestHelpers.NewDb();
+        var remna = new FakeRemnawaveClient
+        {
+            OnCreateTrial = _ => throw new InvalidOperationException("panel must not be called"),
+        };
+
+        var result = await NewController(db, remna)
+            .GrantTrial(new TrialRequest(attestation, "android"), default);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(0, await db.Devices.CountAsync());
+        Assert.Equal(0, await db.Trials.CountAsync());
     }
 
     [Fact]
@@ -47,9 +75,9 @@ public class TrialControllerTests
         // for the same trial instead of a bare 409 that strands the client.
         using var db = TestHelpers.NewDb();
         var remna = OkRemna();
-        await NewController(db, remna).GrantTrial(new TrialRequest("dup-device", "android"), default);
+        await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dup-device"), "android"), default);
 
-        var second = await NewController(db, remna).GrantTrial(new TrialRequest("dup-device", "android"), default);
+        var second = await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dup-device"), "android"), default);
 
         Assert.IsType<OkObjectResult>(second);
         Assert.Equal(1, await db.Trials.CountAsync()); // no second trial granted
@@ -66,9 +94,9 @@ public class TrialControllerTests
         {
             OnCreateTrial = _ => new RemnawaveTrialUser("short-uuid", DateTimeOffset.UtcNow.AddMinutes(-5)),
         };
-        await NewController(db, remna).GrantTrial(new TrialRequest("dup-device-expired", "android"), default);
+        await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dup-device-expired"), "android"), default);
 
-        var second = await NewController(db, remna).GrantTrial(new TrialRequest("dup-device-expired", "android"), default);
+        var second = await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dup-device-expired"), "android"), default);
 
         Assert.IsType<ConflictResult>(second);
         Assert.Equal(1, await db.Trials.CountAsync()); // no second trial granted
@@ -79,8 +107,8 @@ public class TrialControllerTests
     {
         // Different attestation tokens must not collide; same one must.
         using var db1 = TestHelpers.NewDb();
-        await NewController(db1, OkRemna()).GrantTrial(new TrialRequest("device-A", "android"), default);
-        await NewController(db1, OkRemna()).GrantTrial(new TrialRequest("device-B", "android"), default);
+        await NewController(db1, OkRemna()).GrantTrial(new TrialRequest(DeviceKey("device-A"), "android"), default);
+        await NewController(db1, OkRemna()).GrantTrial(new TrialRequest(DeviceKey("device-B"), "android"), default);
         Assert.Equal(2, await db1.Devices.CountAsync()); // distinct devices
     }
 
@@ -93,7 +121,7 @@ public class TrialControllerTests
             OnCreateTrial = _ => throw new HttpRequestException("panel down"),
         };
 
-        var result = await NewController(db, remna).GrantTrial(new TrialRequest("dev", "android"), default);
+        var result = await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dev"), "android"), default);
 
         var status = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status502BadGateway, status.StatusCode);
@@ -108,7 +136,7 @@ public class TrialControllerTests
         var panelExpiry = DateTimeOffset.UtcNow.AddDays(7); // panel disagrees with requested
         var remna = new FakeRemnawaveClient { OnCreateTrial = _ => new RemnawaveTrialUser("uuid", panelExpiry) };
 
-        await NewController(db, remna).GrantTrial(new TrialRequest("dev", "android"), default);
+        await NewController(db, remna).GrantTrial(new TrialRequest(DeviceKey("dev"), "android"), default);
 
         Assert.Equal(panelExpiry, (await db.Tokens.SingleAsync()).ExpiresAt);
         Assert.Equal(panelExpiry, (await db.Trials.SingleAsync()).ExpiresAt);
@@ -187,6 +215,11 @@ public class ProtectedEndpointTests
     /// defaults it on) so these tests can assert the subscription is proxied
     /// through unchanged; the splicing itself is covered by
     /// <see cref="SubscriptionAugmenterTests"/>.
+    /// A cache per controller, so one test's node list can't answer another's.
+    private static Microsoft.Extensions.Caching.Memory.IMemoryCache NewCache()
+        => new Microsoft.Extensions.Caching.Memory.MemoryCache(
+            new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+
     private static Microsoft.Extensions.Options.IOptions<RemnawaveOptions> RemnawaveOptionsFor(
         bool augmentHysteria = false)
         => Microsoft.Extensions.Options.Options.Create(
@@ -282,7 +315,7 @@ public class ProtectedEndpointTests
         db.Accounts.Add(account);
         await db.SaveChangesAsync();
 
-        var controller = new ServersController(db, new FakeRemnawaveClient());
+        var controller = new ServersController(db, new FakeRemnawaveClient(), NewCache());
         controller.WithUser(AccountClaim(account.Id));
 
         var result = Assert.IsType<StatusCodeResult>(await controller.GetServers(default));
@@ -301,7 +334,7 @@ public class ProtectedEndpointTests
         {
             OnGetNodes = () => new List<ServerCountry> { new("DE", "🇩🇪", 1, new List<ServerNode>()) },
         };
-        var controller = new ServersController(db, remna);
+        var controller = new ServersController(db, remna, NewCache());
         controller.WithUser(AccountClaim(account.Id));
 
         Assert.IsType<OkObjectResult>(await controller.GetServers(default));

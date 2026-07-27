@@ -1,0 +1,18 @@
+# Build output — the image builds from source, and copying stale bin/obj in can
+# make the publish pick up assemblies from the host's SDK.
+**/bin/
+**/obj/
+
+# Never ship developer configuration into a runtime image: a single
+# ASPNETCORE_ENVIRONMENT=Development on the server would otherwise make the BFF
+# sign JWTs with a well-known dev secret.
+**/appsettings.Development.json
+**/appsettings.Local.json
+.env
+
+# Not needed to build the API.
+tests/
+.git/
+.vs/
+.vscode/
+**/*.user

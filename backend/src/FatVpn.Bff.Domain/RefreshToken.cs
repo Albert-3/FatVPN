@@ -17,6 +17,15 @@ public class RefreshToken
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
+    /// <summary>
+    /// When the session this token belongs to first started, carried across every
+    /// rotation. Rotation used to hand out a full lifetime each time, so a phone
+    /// that opened the app once a week stayed signed in forever; this is what
+    /// <c>Jwt:AbsoluteSessionLifetime</c> measures against. Zero on rows written
+    /// before the column existed — treated as "no known start", i.e. uncapped.
+    /// </summary>
+    public DateTimeOffset SessionStartedAt { get; set; }
+
     /// <summary>Set when the token is rotated out or explicitly revoked; a
     /// non-null value means the token is no longer usable.</summary>
     public DateTimeOffset? RevokedAt { get; set; }

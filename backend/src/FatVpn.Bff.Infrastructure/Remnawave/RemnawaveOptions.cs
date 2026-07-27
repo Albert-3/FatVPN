@@ -41,4 +41,25 @@ public sealed class RemnawaveOptions
     /// that is node capacity, not the protocol.
     /// </remarks>
     public bool AugmentHysteria { get; set; } = true;
+
+    /// <summary>
+    /// The Hysteria2 hosts to splice in. They were hardcoded in the augmenter,
+    /// which meant a node move needed a rebuild and a redeploy; the defaults keep
+    /// current behaviour and config can override them.
+    /// </summary>
+    public HysteriaHostOptions[] HysteriaHosts { get; set; } =
+    [
+        new() { Host = "h2-fr.arpozan.cloud", Port = 443, Name = "\U0001F1EB\U0001F1F7 Франция • H2" },
+        new() { Host = "h3-us.arpozan.cloud", Port = 443, Name = "\U0001F1FA\U0001F1F8 США • H2" },
+        new() { Host = "h1-fi.arpozan.cloud", Port = 443, Name = "\U0001F1EB\U0001F1EE Финляндия • H2" },
+    ];
+}
+
+public sealed class HysteriaHostOptions
+{
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; } = 443;
+
+    /// <summary>What the app shows in its server list.</summary>
+    public string Name { get; set; } = string.Empty;
 }

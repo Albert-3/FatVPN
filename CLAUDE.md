@@ -33,7 +33,14 @@ dotnet user-secrets set "Remnawave:ApiToken" "<token>"
 
 Manual API testing: `src/FatVpn.Bff.Api/FatVpn.Bff.Api.http` has VS Code REST Client requests for every endpoint.
 
-Tests: `dotnet test tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj` (xUnit + EF Core InMemory + a `FakeRemnawaveClient`; 67 tests covering auth/refresh + reuse-detection, pairing (single-use codes), trial, subscription resolution, and protected-endpoint gating).
+Tests: `dotnet test tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj` — 102 tests.
+
+- Unit/controller tests run on **SQLite in memory**, not the EF InMemory provider: InMemory ignores
+  unique indexes and cannot execute `ExecuteUpdate`, so it could not exercise the atomic
+  claim-and-rotate paths at all.
+- `ConcurrencyIntegrationTests` spin up a real PostgreSQL via **Testcontainers** and hammer
+  `/pair/status`, `/auth/refresh`, `/trial`, `/auth/token` and the account upsert with parallel
+  callers. They need Docker running and **skip** (not fail) without it.
 
 ### Flutter app (`app/`)
 
@@ -124,7 +131,15 @@ Docker network `fatvpn_default` is shared between `fatvpn-bot` and `fatvpn-bff` 
 
 `BOT_SECRET` is set in BFF container env (`Bot__Secret`), not in a file — retrieve with `docker inspect fatvpn-bff`.
 
-⚠️ **TODO before `/trial` goes live on prod:** `Trial__DeviceKeySalt` container env must be set to a real random value — it's empty in `appsettings.json` by default (falls back to an unsalted hash, not a hard failure, but weakens device-key privacy). Set it the same way as `Bot__Secret` (container env, not a file). See `docs/api-contract.md` for details.
+⛔ **Set `TRIAL_DEVICE_KEY_SALT` before the next deploy.** Startup now validates configuration
+(`ValidateOnStart`) and **refuses to boot** outside Development without `Trial__DeviceKeySalt`,
+`Jwt__Secret` (≥32 bytes), `Bot__Secret` (≥16 chars) and `Remnawave__ApiToken`. `docker-compose.yml`
+passes the salt as `${TRIAL_DEVICE_KEY_SALT}`; without it the container crash-loops. Full list of
+required and new optional settings: `docs/api-contract.md`.
+
+`appsettings.Development.json` is no longer tracked in git (template: `appsettings.Development.example.json`)
+— treat the secrets it used to hold as public, and note the app now refuses to run the Development
+configuration on a non-loopback address.
 
 ✅ **Server hardening done (2026-07-06):** Postgres moved to `127.0.0.1:5433` (BFF compose), `ufw` enabled (`22`/`5030`/`4444`). Postgres creds are still weak (`fatvpn`/`fatvpn_dev`) — rotate before real prod. Note: Docker-published ports bypass `ufw`, so the BFF (`5030`) stays reachable regardless; the real protection for Postgres is the localhost bind.
 

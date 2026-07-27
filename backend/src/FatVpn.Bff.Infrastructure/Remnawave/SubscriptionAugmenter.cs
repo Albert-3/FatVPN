@@ -18,24 +18,21 @@ namespace FatVpn.Bff.Infrastructure.Remnawave;
 /// </summary>
 public static class SubscriptionAugmenter
 {
-    // Hysteria2 hosts Remnawave won't render. Hardcoded because the panel exposes
-    // them only through /api/hosts joined to a config profile, which is an extra
-    // round trip per /config; revisit if these hosts start changing.
-    private static readonly (string Host, int Port, string Name)[] HysteriaHosts =
-    [
-        ("h2-fr.arpozan.cloud", 443, "\U0001F1EB\U0001F1F7 Франция • H2"),
-        ("h3-us.arpozan.cloud", 443, "\U0001F1FA\U0001F1F8 США • H2"),
-        ("h1-fi.arpozan.cloud", 443, "\U0001F1EB\U0001F1EE Финляндия • H2"),
-    ];
+    // The hosts come from configuration (RemnawaveOptions.HysteriaHosts) rather
+    // than the panel: it exposes them only through /api/hosts joined to a config
+    // profile, which would be an extra round trip on every /config.
+    private static readonly HysteriaHostOptions[] DefaultHosts = new RemnawaveOptions().HysteriaHosts;
 
     /// <summary>
     /// Appends synthesized hysteria2:// links to a base64 v2ray subscription.
     /// Returns the input unchanged when it isn't base64 or has no vless line to
     /// derive the auth from, so a non-standard/empty config is never corrupted.
     /// </summary>
-    public static string AppendHysteriaHosts(string base64Config)
+    public static string AppendHysteriaHosts(string base64Config, IReadOnlyList<HysteriaHostOptions>? hosts = null)
     {
         if (string.IsNullOrWhiteSpace(base64Config)) return base64Config;
+
+        var hysteriaHosts = hosts is { Count: > 0 } ? hosts : DefaultHosts;
 
         string decoded;
         try
@@ -54,11 +51,11 @@ public static class SubscriptionAugmenter
         if (auth is null) return base64Config;
 
         var sb = new StringBuilder(decoded.TrimEnd('\n'));
-        foreach (var (host, port, name) in HysteriaHosts)
+        foreach (var entry in hysteriaHosts)
         {
-            var tag = Uri.EscapeDataString(name);
+            var tag = Uri.EscapeDataString(entry.Name);
             sb.Append('\n')
-              .Append($"hysteria2://{auth}@{host}:{port}?sni={host}&alpn=h3#{tag}");
+              .Append($"hysteria2://{auth}@{entry.Host}:{entry.Port}?sni={entry.Host}&alpn=h3#{tag}");
         }
 
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));

@@ -119,7 +119,7 @@ public class PairControllerTests
         Assert.Equal("expired", Str(second.Value!, "status"));
 
         Assert.Equal(1, await db.RefreshTokens.CountAsync()); // no second session minted
-        Assert.Equal(PairingStatus.Consumed, (await db.PairingCodes.SingleAsync()).Status);
+        Assert.Equal(PairingStatus.Consumed, (await db.PairingCodes.AsNoTracking().SingleAsync()).Status);
     }
 
     [Fact]
@@ -143,20 +143,14 @@ public class InternalPairControllerTests
 {
     private const string Secret = "bot-secret";
 
-    private static InternalPairController NewController(Infrastructure.FatVpnDbContext db, string? header)
+    // The bot secret is no longer checked inside the action — it is an
+    // authorization policy now, covered by BotSecretAuthorizationHandlerTests.
+    private static InternalPairController NewController(Infrastructure.FatVpnDbContext db, string? header = null)
     {
-        var c = new InternalPairController(db, TestHelpers.Opt(new BotOptions { Secret = Secret }));
+        var c = new InternalPairController(db);
         if (header is not null) c.WithHeader(BotSecretValidator.HeaderName, header);
         else c.WithUser();
         return c;
-    }
-
-    [Fact]
-    public async Task Complete_WrongSecret_Unauthorized()
-    {
-        using var db = TestHelpers.NewDb();
-        var req = new CompletePairingRequest("CODE", 42, "sub", DateTimeOffset.UtcNow.AddDays(1));
-        Assert.IsType<UnauthorizedResult>(await NewController(db, "wrong").Complete(req, default));
     }
 
     [Fact]

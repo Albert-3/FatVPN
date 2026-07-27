@@ -26,6 +26,13 @@ services:
       Remnawave__BaseUrl: "https://z.fatvdsnvv.space"
       Remnawave__ApiToken: "${REMNAWAVE_API_TOKEN}"
       Bot__Secret: "${BOT_SECRET}"
+      # Without this the device-key hash is unsalted, so a leaked database gives
+      # up its per-install identifiers to a rainbow table. Startup refuses to run
+      # without it outside Development.
+      Trial__DeviceKeySalt: "${TRIAL_DEVICE_KEY_SALT}"
+      # Caddy terminates TLS on the Docker bridge; without this every request
+      # looks like it came from the proxy and shares one rate-limit bucket.
+      ReverseProxy__KnownNetworks__0: "172.16.0.0/12"
       ASPNETCORE_ENVIRONMENT: "Production"
     depends_on:
       - postgres

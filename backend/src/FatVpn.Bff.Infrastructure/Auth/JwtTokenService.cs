@@ -9,6 +9,14 @@ namespace FatVpn.Bff.Infrastructure.Auth;
 
 public sealed class JwtTokenService(IOptions<JwtOptions> options) : IJwtTokenService
 {
+    // Built once instead of per issued token: deriving the key and spinning up a
+    // handler on every login and every refresh is pure waste on the hottest path.
+    private readonly SigningCredentials _credentials = new(
+        new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Value.Secret)),
+        SecurityAlgorithms.HmacSha256);
+
+    private static readonly JwtSecurityTokenHandler Handler = new();
+
     public string CreateAccessToken(Token token)
     {
         return CreateToken(new Claim(FatVpnClaimTypes.TokenId, token.Id.ToString()));
@@ -25,16 +33,13 @@ public sealed class JwtTokenService(IOptions<JwtOptions> options) : IJwtTokenSer
     private string CreateToken(Claim claim)
     {
         var opts = options.Value;
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(opts.Secret));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
         var jwt = new JwtSecurityToken(
             issuer: opts.Issuer,
             audience: opts.Audience,
             claims: [claim],
             expires: (DateTimeOffset.UtcNow + opts.AccessTokenLifetime).UtcDateTime,
-            signingCredentials: credentials);
+            signingCredentials: _credentials);
 
-        return new JwtSecurityTokenHandler().WriteToken(jwt);
+        return Handler.WriteToken(jwt);
     }
 }

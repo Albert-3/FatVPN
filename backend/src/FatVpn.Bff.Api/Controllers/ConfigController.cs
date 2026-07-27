@@ -32,22 +32,19 @@ public class ConfigController(
             return StatusCode(StatusCodes.Status402PaymentRequired);
         }
 
-        try
+        // Deliberately not cached: unlike /servers this response is per-user and
+        // carries the subscription's credentials, and it is fetched once per
+        // connect rather than on every screen refresh.
+        var (content, contentType) = await remnawaveClient.GetSubscriptionConfigAsync(subscription.SubscriptionId, ct);
+        // Remnawave renders our Hysteria2 (FR/US/FI "H2") nodes only into its
+        // xray-json output, never into the base64/sing-box/clash formats the app
+        // consumes — so we splice them in ourselves. On by default; the links are
+        // verified to carry traffic (see RemnawaveOptions.AugmentHysteria).
+        if (remnawaveOptions.Value.AugmentHysteria)
         {
-            var (content, contentType) = await remnawaveClient.GetSubscriptionConfigAsync(subscription.SubscriptionId, ct);
-            // Remnawave renders our Hysteria2 (FR/US/FI "H2") nodes only into its
-            // xray-json output, never into the base64/sing-box/clash formats the app
-            // consumes — so we splice them in ourselves. On by default; the links are
-            // verified to carry traffic (see RemnawaveOptions.AugmentHysteria).
-            if (remnawaveOptions.Value.AugmentHysteria)
-            {
-                content = SubscriptionAugmenter.AppendHysteriaHosts(content);
-            }
-            return Content(content, contentType);
+            content = SubscriptionAugmenter.AppendHysteriaHosts(content, remnawaveOptions.Value.HysteriaHosts);
         }
-        catch (HttpRequestException)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway);
-        }
+
+        return Content(content, contentType);
     }
 }

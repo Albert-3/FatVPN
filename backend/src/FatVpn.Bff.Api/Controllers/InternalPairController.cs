@@ -1,26 +1,22 @@
+using System.ComponentModel.DataAnnotations;
 using FatVpn.Bff.Api.Auth;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
-using FatVpn.Bff.Infrastructure.Bot;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace FatVpn.Bff.Api.Controllers;
 
 [ApiController]
 [Route("internal/pair")]
-public class InternalPairController(FatVpnDbContext db, IOptions<BotOptions> botOptions) : ControllerBase
+[Authorize(Policy = BotSecretRequirement.PolicyName)]
+public class InternalPairController(FatVpnDbContext db) : ControllerBase
 {
     /// <summary>Bot redeems a pairing code and binds the user's account to it.</summary>
     [HttpPost("complete")]
     public async Task<IActionResult> Complete([FromBody] CompletePairingRequest request, CancellationToken ct)
     {
-        if (!BotSecretValidator.IsValid(Request.Headers[BotSecretValidator.HeaderName], botOptions.Value.Secret))
-        {
-            return Unauthorized();
-        }
-
         var pairing = await db.PairingCodes.SingleOrDefaultAsync(p => p.Code == request.PairCode, ct);
         if (pairing is null)
         {
@@ -50,5 +46,8 @@ public class InternalPairController(FatVpnDbContext db, IOptions<BotOptions> bot
 }
 
 public sealed record CompletePairingRequest(
-    string PairCode, long TelegramUserId, string SubscriptionId, DateTimeOffset ExpiresAt,
-    string? KeyCode = null);
+    [property: StringLength(32)] string PairCode,
+    long TelegramUserId,
+    [property: StringLength(64)] string SubscriptionId,
+    DateTimeOffset ExpiresAt,
+    [property: StringLength(64)] string? KeyCode = null);

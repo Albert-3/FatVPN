@@ -5,6 +5,9 @@ backend/**/obj/
 
 # Secrets
 backend/.env
+# Local dev secrets — the file used to be committed, so treat the values that
+# were in it as public. See appsettings.Development.example.json.
+backend/src/FatVpn.Bff.Api/appsettings.Development.json
 
 # Flutter / Dart
 app/**/.dart_tool/

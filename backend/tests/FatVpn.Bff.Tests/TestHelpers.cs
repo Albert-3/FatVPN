@@ -13,13 +13,24 @@ namespace FatVpn.Bff.Tests;
 /// <summary>Shared fixtures for controller/service tests.</summary>
 internal static class TestHelpers
 {
-    /// <summary>A fresh in-memory DbContext with a unique store per test.</summary>
+    /// <summary>
+    /// A fresh, empty database per test — SQLite in memory rather than the EF
+    /// InMemory provider. InMemory is not a relational store: it silently ignores
+    /// unique indexes and rejects ExecuteUpdate/ExecuteDelete, so it cannot
+    /// exercise the atomic claim-and-rotate paths at all. SQLite enforces the
+    /// constraints and speaks the same relational surface as Npgsql.
+    /// </summary>
     public static FatVpnDbContext NewDb()
     {
         var options = new DbContextOptionsBuilder<FatVpnDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .UseSqlite("DataSource=:memory:")
             .Options;
-        return new FatVpnDbContext(options);
+        var db = new FatVpnDbContext(options);
+        // The database lives only as long as the connection; hold it open for the
+        // life of the context (EF owns it, so disposing the context closes it).
+        db.Database.OpenConnection();
+        db.Database.EnsureCreated();
+        return db;
     }
 
     public static JwtOptions Jwt() => new()
@@ -62,6 +73,16 @@ internal sealed class FakeRemnawaveClient : IRemnawaveClient
     public Func<DateTimeOffset, RemnawaveTrialUser>? OnCreateTrial { get; set; }
     public Func<(string, string)>? OnGetConfig { get; set; }
     public Func<IReadOnlyList<ServerCountry>>? OnGetNodes { get; set; }
+
+    /// <summary>Panel users this fake was asked to delete — how a test asserts a
+    /// failed trial compensated instead of orphaning a user in the panel.</summary>
+    public List<string> DeletedUsers { get; } = [];
+
+    public Task DeleteUserAsync(string uuid, CancellationToken ct = default)
+    {
+        DeletedUsers.Add(uuid);
+        return Task.CompletedTask;
+    }
 
     public Task<RemnawaveTrialUser> CreateTrialUserAsync(DateTimeOffset expiresAt, CancellationToken ct = default)
     {

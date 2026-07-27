@@ -187,15 +187,23 @@ public class ClaimsPrincipalExtensionsTests
         => new(new ClaimsIdentity(claims, "Test"));
 
     [Fact]
-    public void GetTokenId_ReturnsParsedGuid()
+    public void TryGetTokenId_ReturnsParsedGuid()
     {
         var id = Guid.NewGuid();
-        Assert.Equal(id, Principal(new Claim(FatVpnClaimTypes.TokenId, id.ToString())).GetTokenId());
+        Assert.Equal(id, Principal(new Claim(FatVpnClaimTypes.TokenId, id.ToString())).TryGetTokenId());
     }
 
     [Fact]
-    public void GetTokenId_MissingClaim_Throws()
-        => Assert.Throws<InvalidOperationException>(() => Principal().GetTokenId());
+    public void TryGetTokenId_MissingClaim_ReturnsNull()
+        => Assert.Null(Principal().TryGetTokenId());
+
+    [Fact]
+    public void TryGetTokenId_MalformedClaim_ReturnsNull()
+        => Assert.Null(Principal(new Claim(FatVpnClaimTypes.TokenId, "not-a-guid")).TryGetTokenId());
+
+    [Fact]
+    public void TryGetAccountId_MalformedClaim_ReturnsNull()
+        => Assert.Null(Principal(new Claim(FatVpnClaimTypes.AccountId, "not-a-guid")).TryGetAccountId());
 
     [Fact]
     public void TryGetAccountId_Present_ReturnsGuid()

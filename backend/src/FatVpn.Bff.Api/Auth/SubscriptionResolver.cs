@@ -24,7 +24,10 @@ public static class SubscriptionResolver
         var accountId = user.TryGetAccountId();
         if (accountId is not null)
         {
-            var account = await db.Accounts.FindAsync([accountId.Value], ct);
+            // AsNoTracking on both branches: this runs on /me, /servers and
+            // /config — the three hottest endpoints — and none of them writes.
+            var account = await db.Accounts.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == accountId.Value, ct);
             return account is null
                 ? null
                 : new SubscriptionInfo(
@@ -33,7 +36,15 @@ public static class SubscriptionResolver
                     NullIfEmpty(account.CurrentKeyCode ?? string.Empty));
         }
 
-        var token = await db.Tokens.FindAsync([user.GetTokenId()], ct);
+        var tokenId = user.TryGetTokenId();
+        if (tokenId is null)
+        {
+            // Signed by us, but carrying neither claim — treat as an unknown
+            // session (401) rather than blowing up with a 500.
+            return null;
+        }
+
+        var token = await db.Tokens.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tokenId.Value, ct);
         return token is null
             ? null
             : new SubscriptionInfo(token.ExpiresAt, NullIfEmpty(token.RemnawaveSubscriptionId));
