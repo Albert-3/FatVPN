@@ -131,10 +131,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _handleVpnChange() {
     // An auto-switch can land the session in a different country with no user
     // action behind it; keep the location card honest about where the tunnel
-    // actually is. Only ever follows the tunnel — in explicit-country mode the
-    // pool is that country's nodes, so this resolves to the same country the
-    // user picked.
-    final node = _vpn.connectedNode;
+    // actually is.
+    //
+    // Never in explicit-country mode, though. There the country is the user's
+    // standing instruction rather than a display of where we happen to be, and
+    // the pool the session may move within is that country's nodes anyway — so
+    // following the tunnel can only ever repeat what is already shown, or
+    // overwrite a fresh choice with the node it replaces. The latter is what
+    // used to happen: a country picked while connected was reverted by the
+    // teardown events of the old tunnel, and the reconnect went straight back
+    // to the server the user had just left.
+    final node = _serverExplicitlySelected ? null : _vpn.connectedNode;
     if (node != null) {
       final country = _countryOf(node);
       if (country != null && country.country != _selectedServer?.country) {

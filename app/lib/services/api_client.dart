@@ -39,20 +39,30 @@ class ApiClient {
   /// retried once, or null if the session can't be renewed.
   final Future<String?> Function()? _onUnauthorized;
 
+  /// Ceiling on every authed request. Without it these calls inherit the OS TCP
+  /// timeout, and since the app's own traffic goes through the tunnel, a request
+  /// issued while a tunnel is dying (switching location, leaving a dead node)
+  /// hangs for over two minutes with the UI stuck on "Connecting" — measured at
+  /// 2 m 16 s before this was added. Failing fast is what lets [getConfig] fall
+  /// back to the cached subscription and the reconnect proceed.
+  static const _requestTimeout = Duration(seconds: 15);
+
   /// GET with a Bearer token that transparently refreshes the access token once
   /// on 401 and retries. 402 (lapsed subscription) is left for the caller to
   /// surface — it is not an auth failure.
   Future<http.Response> _authedGet(String path, String accessToken) async {
     final uri = Uri.parse('$_baseUrl$path');
     log.d('GET $path');
-    var response =
-        await _httpClient.get(uri, headers: {'Authorization': 'Bearer $accessToken'});
+    var response = await _httpClient
+        .get(uri, headers: {'Authorization': 'Bearer $accessToken'})
+        .timeout(_requestTimeout);
     if (response.statusCode == 401 && _onUnauthorized != null) {
       log.i('GET $path → 401, refreshing access token and retrying');
       final fresh = await _onUnauthorized();
       if (fresh != null) {
-        response =
-            await _httpClient.get(uri, headers: {'Authorization': 'Bearer $fresh'});
+        response = await _httpClient
+            .get(uri, headers: {'Authorization': 'Bearer $fresh'})
+            .timeout(_requestTimeout);
       }
     }
     if (response.statusCode >= 400) {

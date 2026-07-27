@@ -331,9 +331,12 @@ class VpnController extends ChangeNotifier {
   }
 
   /// True for low-level connectivity failures (no signal, airplane mode,
-  /// DNS unreachable) reaching the BFF — as opposed to app/server-level
-  /// errors, which already carry a user-facing message.
-  bool _isNetworkError(Object e) => e is SocketException || e is http.ClientException;
+  /// DNS unreachable, or a request that ran out of time) reaching the BFF — as
+  /// opposed to app/server-level errors, which already carry a user-facing
+  /// message. A timeout belongs here: with the app's traffic inside the tunnel,
+  /// that is what a request through a dying one looks like.
+  bool _isNetworkError(Object e) =>
+      e is SocketException || e is http.ClientException || e is TimeoutException;
 
   /// Endpoint the post-connect probe hits. Google's captive-portal check:
   /// an empty 204, served from everywhere, and designed for exactly this.
@@ -848,8 +851,15 @@ class VpnController extends ChangeNotifier {
     // The watchdog belongs to the session being torn down; the next connect
     // arms a fresh one for whatever it establishes.
     _disarmAutoSwitch();
-    await _vpn.stop();
+    // Drop the node *before* the teardown, not after. Stopping the tunnel takes
+    // a moment and emits state events all the way through, and every listener
+    // that reads connectedNode during that window used to be told we were still
+    // on the node being abandoned. That cost a user-visible bug: picking a new
+    // country while connected made the home screen follow the old node back
+    // (see _handleVpnChange) and reconnect to the very server the user was
+    // leaving — which also stranded anyone trying to escape a dead one.
     _connectedNode = null;
+    await _vpn.stop();
   }
 
   @override
