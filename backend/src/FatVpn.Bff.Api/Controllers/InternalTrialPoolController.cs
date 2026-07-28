@@ -65,4 +65,4 @@ public class InternalTrialPoolController(FatVpnDbContext db) : ControllerBase
 }
 
 public sealed record AddTrialSlotsRequest(
-    [property: MaxLength(500)] IReadOnlyList<string> RemnawaveSubscriptionIds);
+    [MaxLength(500)] IReadOnlyList<string> RemnawaveSubscriptionIds);

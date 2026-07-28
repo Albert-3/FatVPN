@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using FatVpn.Bff.Api.Controllers;
 using FatVpn.Bff.Domain;
@@ -66,6 +67,48 @@ public class BotPayloadContractTests
 
         Assert.False(request.MakeActive);
         Assert.Null(request.ReplacesSubscriptionId);
+    }
+
+    [Fact]
+    public void EveryRequestRecord_KeepsItsValidationOnTheConstructorParameter()
+    {
+        // MVC refuses to bind a positional record whose validation metadata sits
+        // on the generated property instead of the primary-constructor
+        // parameter: ModelMetadata.ThrowIfRecordTypeHasValidationOnProperties
+        // throws before the action runs, and the caller gets a bare 500.
+        //
+        // This is invisible to every other test in this project, because they
+        // all construct the records directly and never go through binding. It
+        // shipped that way: `[property: StringLength(...)]` on these records
+        // killed /auth/token, /auth/refresh, /trial and all of /internal/* the
+        // moment they were first deployed. On a record positional parameter an
+        // attribute already targets the parameter — the `property:` prefix is
+        // what moves it to the wrong place.
+        var offenders = new List<string>();
+
+        foreach (var type in typeof(AuthController).Assembly.GetTypes())
+        {
+            if (!type.IsClass || type.IsAbstract) continue;
+            var constructors = type.GetConstructors();
+            if (constructors.Length != 1) continue;
+
+            foreach (var parameter in constructors[0].GetParameters())
+            {
+                if (parameter.Name is null) continue;
+                // A parameter with a same-named property is what makes this a
+                // record as far as the binder is concerned.
+                var property = type.GetProperty(parameter.Name);
+                if (property is null) continue;
+                if (property.GetCustomAttributes(typeof(ValidationAttribute), inherit: true).Length > 0)
+                {
+                    offenders.Add($"{type.Name}.{parameter.Name}");
+                }
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Validation must sit on the constructor parameter, not the property — "
+            + "these would 500 on every request: " + string.Join(", ", offenders));
     }
 }
 
