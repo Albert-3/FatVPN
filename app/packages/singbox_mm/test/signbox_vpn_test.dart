@@ -76,6 +76,15 @@ class FakeSignboxVpnPlatform
   }
 
   @override
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) async {}
+
+  @override
+  Future<void> clearPersistedState() async {}
+
+  @override
   Future<void> setXrayConfig(String? configJson) async {
     latestXrayConfig = configJson;
     xrayConfigCalls++;
@@ -316,8 +325,24 @@ void main() {
     expect(tunInbound.containsKey('sniffing'), isFalse);
     expect(tunInbound.containsKey('sniff'), isFalse);
     expect(tunInbound.containsKey('sniff_override_destination'), isFalse);
-    expect(tunInbound['mtu'], 1100);
-    expect(tunInbound.containsKey('inet6_address'), isFalse);
+    // Was pinned to the hardcoded 1100; see docs/improvement-plan-ios.md §3.4.
+    // The default is now platform-dependent, so this shape test only guards
+    // that *some* workable MTU is emitted — the per-platform values are pinned
+    // in ios_audit_tun_stack_and_mtu_test.dart.
+    expect(tunInbound['mtu'], isA<int>());
+    expect(tunInbound['mtu'], greaterThanOrEqualTo(576));
+    expect(tunInbound['mtu'], lessThanOrEqualTo(9000));
+    // Was `containsKey('inet6_address')`, which could never fail: the builder
+    // has no such key — every address goes into `address`. Assert the thing the
+    // name promised instead. This runs on the default (non-iOS) platform, where
+    // the tunnel stays IPv4-only; the iOS side is pinned in
+    // ios_audit_ipv6_leak_test.dart.
+    expect(
+      (tunInbound['address'] as List<dynamic>).whereType<String>().where(
+        (String address) => address.contains(':'),
+      ),
+      isEmpty,
+    );
     expect(tunInbound['include_package'], <String>['com.example.browser']);
     expect(tunInbound['exclude_package'], <String>['com.example.bank']);
 
@@ -1962,7 +1987,17 @@ void main() {
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
-      expect(tunInbound.containsKey('inet6_address'), isFalse);
+      // Was `containsKey('inet6_address')`, which could never fail: the builder
+      // has no such key — every address goes into `address`. Assert the thing the
+      // name promised instead. This runs on the default (non-iOS) platform, where
+      // the tunnel stays IPv4-only; the iOS side is pinned in
+      // ios_audit_ipv6_leak_test.dart.
+      expect(
+        (tunInbound['address'] as List<dynamic>).whereType<String>().where(
+          (String address) => address.contains(':'),
+        ),
+        isEmpty,
+      );
     },
   );
 
@@ -1998,7 +2033,17 @@ void main() {
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
-      expect(tunInbound.containsKey('inet6_address'), isFalse);
+      // Was `containsKey('inet6_address')`, which could never fail: the builder
+      // has no such key — every address goes into `address`. Assert the thing the
+      // name promised instead. This runs on the default (non-iOS) platform, where
+      // the tunnel stays IPv4-only; the iOS side is pinned in
+      // ios_audit_ipv6_leak_test.dart.
+      expect(
+        (tunInbound['address'] as List<dynamic>).whereType<String>().where(
+          (String address) => address.contains(':'),
+        ),
+        isEmpty,
+      );
 
       final List<dynamic> outbounds = config['outbounds'] as List<dynamic>;
       final Map<String, dynamic> hy2Outbound =
@@ -2967,8 +3012,7 @@ void main() {
           jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
       final Map<String, dynamic> outbound =
           ((config['outbounds'] as List<dynamic>).firstWhere(
-                    (dynamic item) =>
-                        item is Map && item['tag'] == 'whitelist',
+                    (dynamic item) => item is Map && item['tag'] == 'whitelist',
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
@@ -3002,30 +3046,32 @@ void main() {
       expect(stream['network'], 'xhttp');
     });
 
-    test('leaves the tunnel routing exactly as a direct connect would', () async {
-      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
-      SignboxVpnPlatform.instance = fakePlatform;
-      final SignboxVpn vpn = SignboxVpn();
-      await vpn.initialize(const SingboxRuntimeOptions());
+    test(
+      'leaves the tunnel routing exactly as a direct connect would',
+      () async {
+        final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+        SignboxVpnPlatform.instance = fakePlatform;
+        final SignboxVpn vpn = SignboxVpn();
+        await vpn.initialize(const SingboxRuntimeOptions());
 
-      await vpn.connectManualConfigLink(configLink: whitelistLink);
+        await vpn.connectManualConfigLink(configLink: whitelistLink);
 
-      // Swapping the outbound is the whole of the change: everything still
-      // ends at the node's tag, so split tunnelling and DNS behave the same.
-      // Note there is no bypass rule for the node's own address here — none is
-      // emitted on the ordinary path either. Keeping the local engine's
-      // traffic out of the tun is the platform's job (VpnService.protect on
-      // Android), not this config's.
-      final Map<String, dynamic> config =
-          jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
-      final Map<String, dynamic> route =
-          (config['route'] as Map<dynamic, dynamic>).cast<String, dynamic>();
-      expect(route['final'], 'whitelist');
-      expect(route['auto_detect_interface'], isTrue);
-    });
+        // Swapping the outbound is the whole of the change: everything still
+        // ends at the node's tag, so split tunnelling and DNS behave the same.
+        // Note there is no bypass rule for the node's own address here — none is
+        // emitted on the ordinary path either. Keeping the local engine's
+        // traffic out of the tun is the platform's job (VpnService.protect on
+        // Android), not this config's.
+        final Map<String, dynamic> config =
+            jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
+        final Map<String, dynamic> route =
+            (config['route'] as Map<dynamic, dynamic>).cast<String, dynamic>();
+        expect(route['final'], 'whitelist');
+        expect(route['auto_detect_interface'], isTrue);
+      },
+    );
 
-    test('shuts the second core down for a node that does not need it',
-        () async {
+    test('shuts the second core down for a node that does not need it', () async {
       final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
       SignboxVpnPlatform.instance = fakePlatform;
       final SignboxVpn vpn = SignboxVpn();

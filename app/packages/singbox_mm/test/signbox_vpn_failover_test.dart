@@ -61,6 +61,15 @@ class _ManagedFakePlatform
   }
 
   @override
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) async {}
+
+  @override
+  Future<void> clearPersistedState() async {}
+
+  @override
   Future<void> setXrayConfig(String? configJson) async {}
 
   @override
@@ -609,8 +618,17 @@ vless://11111111-2222-3333-4444-555555555556@edge-b.example.com:443?security=non
         ((secondConfig['inbounds'] as List<dynamic>).first
                 as Map<String, dynamic>)['mtu']
             as int;
-    expect(firstMtu, 1100);
-    expect(secondMtu, 1100);
+    // Both assertions used to read `1100` — the value SingboxInboundBuilder
+    // hardcoded regardless of the policy, which meant this test passed while
+    // proving the opposite of its name: the probe stepped the MTU down and the
+    // emitted config never moved. See docs/improvement-plan-ios.md §3.4.
+    expect(firstMtu, greaterThanOrEqualTo(576));
+    expect(firstMtu, lessThanOrEqualTo(9000));
+    expect(secondMtu, greaterThanOrEqualTo(576));
+    expect(secondMtu, lessThanOrEqualTo(9000));
+    expect(secondMtu, lessThanOrEqualTo(firstMtu),
+        reason: 'MTU recovery steps down through mtuProbeCandidates; raising '
+            'the MTU in response to a failing path would be backwards');
 
     await vpn.dispose();
     await fakePlatform.dispose();
@@ -658,7 +676,10 @@ vless://11111111-2222-3333-4444-555555555556@edge-b.example.com:443?security=non
           ((firstConfig['inbounds'] as List<dynamic>).first
                   as Map<String, dynamic>)['mtu']
               as int;
-      expect(firstMtu, 1100);
+      // The configured baseline is 1380 (see throttlePolicy above); this
+      // asserted `1100` before docs/improvement-plan-ios.md §3.4, i.e. it
+      // asserted that the baseline is *not* preserved, against its own name.
+      expect(firstMtu, 1380);
 
       await vpn.dispose();
       await fakePlatform.dispose();

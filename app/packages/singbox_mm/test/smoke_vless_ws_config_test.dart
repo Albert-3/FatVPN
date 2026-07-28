@@ -54,6 +54,15 @@ class _CapturePlatform
   }
 
   @override
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) async {}
+
+  @override
+  Future<void> clearPersistedState() async {}
+
+  @override
   Future<void> setXrayConfig(String? configJson) async {}
 
   @override

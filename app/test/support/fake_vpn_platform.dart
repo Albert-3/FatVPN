@@ -5,6 +5,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 import 'package:singbox_mm/singbox_mm_platform_interface.dart';
@@ -36,6 +37,33 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
   String? capturedConfig;
   VpnConnectionState reportedState = VpnConnectionState.disconnected;
 
+  /// Every [setTunnelPreferences] call, in order — the on-demand / kill-switch
+  /// pair from docs/improvement-plan-ios.md §1.3.
+  final List<({bool onDemand, bool killSwitch})> tunnelPreferences =
+      <({bool onDemand, bool killSwitch})>[];
+
+  /// How many times the app asked the platform to erase the persisted config
+  /// and start-options snapshot (§1.6 / §2.1).
+  int clearPersistedStateCalls = 0;
+
+  /// Set to have [clearPersistedState] throw, so the best-effort contract
+  /// around it can be exercised.
+  bool clearPersistedStateThrows = false;
+
+  /// Set to have [setTunnelPreferences] throw. A real platform failure here
+  /// costs the user their auto-reconnect / kill-switch preference; it must not
+  /// cost them the connection.
+  bool setTunnelPreferencesThrows = false;
+
+  /// Set to have [setConfig] throw — a genuinely failed connect, used to prove
+  /// the preferences guard did not widen into one that hides real failures.
+  bool setConfigThrows = false;
+
+  /// Ordered names of the platform calls that have to happen in a particular
+  /// order (preferences must be written into the VPN profile before the tunnel
+  /// that uses them starts).
+  final List<String> callOrder = <String>[];
+
   void dispose() => states.close();
 
   @override
@@ -62,16 +90,48 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
   @override
   Future<void> setConfig(String configJson) async {
     capturedConfig = configJson;
+    if (setConfigThrows) {
+      throw PlatformException(
+        code: 'config_failed',
+        message: 'the core refused the config',
+      );
+    }
   }
 
   @override
   Future<void> setXrayConfig(String? configJson) async {}
 
   @override
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) async {
+    callOrder.add('setTunnelPreferences');
+    tunnelPreferences
+        .add((onDemand: onDemandEnabled, killSwitch: killSwitchEnabled));
+    if (setTunnelPreferencesThrows) {
+      throw PlatformException(
+        code: 'preferences_failed',
+        message: 'could not save the VPN profile',
+      );
+    }
+  }
+
+  @override
+  Future<void> clearPersistedState() async {
+    callOrder.add('clearPersistedState');
+    clearPersistedStateCalls++;
+    if (clearPersistedStateThrows) {
+      throw StateError('platform refused to clear persisted state');
+    }
+  }
+
+  @override
   Future<String> validateConfig(String configJson) async => configJson;
 
   @override
   Future<void> startVpn() async {
+    callOrder.add('startVpn');
     startVpnCalls++;
     reportedState = VpnConnectionState.connected;
     states.add(VpnConnectionState.connected);
