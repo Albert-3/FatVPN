@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:singbox_mm/singbox_mm.dart';
 
 import '../models/server_country.dart';
+import '../utils/parallel.dart';
+import '../utils/sanitize.dart';
 import 'api_client.dart';
 import 'app_logger.dart';
 import 'auto_switch_policy.dart';
@@ -23,8 +26,7 @@ class VpnController extends ChangeNotifier {
     ApiClient? apiClient,
     PingService? pingService,
     AutoSwitchPolicy? autoSwitchPolicy,
-    Future<String?> Function()? onUnauthorized,
-  })  : _apiClient = apiClient ?? ApiClient(onUnauthorized: onUnauthorized),
+  })  : _apiClient = apiClient ?? ApiClient(),
         _pingService = pingService ?? PingService(),
         _autoSwitchPolicy = autoSwitchPolicy ?? AutoSwitchPolicy();
 
@@ -42,11 +44,17 @@ class VpnController extends ChangeNotifier {
   static const _sessionStartKey = 'vpn_session_started_at';
   DateTime? _sessionStartedAt;
 
+  // Bearer token the running tunnel's control API demands, persisted for the
+  // same reason as the session start: the app can be relaunched onto a tunnel
+  // it didn't start, and without the secret it can't ask that tunnel anything.
+  static const _clashApiSecretKey = 'vpn_clash_api_secret';
+  String? _clashApiSecret;
+
   // Guards against overlapping runtime-state reconciliation polls (launch +
   // resume can both fire syncFromRuntime in quick succession).
   bool _reconciling = false;
 
-  bool _initialized = false;
+  Future<void>? _initFuture;
   // Set while a user-requested disconnect is in flight, so the
   // connected→disconnected transition it causes isn't misread as a runtime
   // tunnel failure by the diagnostics watcher below.
@@ -69,7 +77,6 @@ class VpnController extends ChangeNotifier {
   // [_sessionHealthTick] and [_evaluateAutoSwitch].
   Timer? _sessionHealthTimer;
   List<ServerNode> _autoSwitchPool = const [];
-  String? _autoSwitchAccessToken;
   String? _autoSwitchNetworkErrorMessage;
   bool _autoSwitchInProgress = false;
   DateTime? _lastAutoSwitchAt;
@@ -90,6 +97,11 @@ class VpnController extends ChangeNotifier {
   /// Notified when the session moves itself to a different node, so the UI can
   /// reflect the new location and tell the user why their connections blipped.
   void Function(ServerNode from, ServerNode to)? onAutoSwitched;
+
+  /// Localized text for "this subscription lists nothing we can connect to".
+  /// Supplied by the UI, which owns the language; without it the user was shown
+  /// the raw `Bad state: No available node in this subscription`.
+  String? noUsableNodesMessage;
 
   VpnConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
@@ -115,19 +127,34 @@ class VpnController extends ChangeNotifier {
   /// time rather than a per-second counter.
   DateTime? get sessionStartedAt => _sessionStartedAt;
 
-  Future<void> _ensureInitialized() async {
-    if (_initialized) return;
+  /// Runs initialization exactly once, however many callers race for it.
+  ///
+  /// Two awaits separate "not initialized yet" from "initialized", and the home
+  /// screen enters here twice on launch (`syncFromRuntime` and the trial
+  /// auto-connect). Without the shared future the second pass subscribed to the
+  /// broadcast state stream again and overwrote the handle to the first
+  /// subscription, leaking it and doubling every event for the rest of the
+  /// process.
+  Future<void> _ensureInitialized() => _initFuture ??= _doInitialize();
+
+  Future<void> _doInitialize() async {
     // Restore the persisted session start *before* subscribing to the state
     // stream. On relaunch with a live tunnel the stream emits `connected`
     // almost immediately; if we hadn't loaded the real start first,
     // `_trackSessionStart` would see a null start and clobber the stored value
     // with `now`, resetting the timer to zero. Priming it here means the
     // `connected` event finds a non-null start and leaves it untouched.
-    final storedStart = await _storage.read(key: _sessionStartKey);
+    final stored = await Future.wait([
+      _storage.read(key: _sessionStartKey),
+      _storage.read(key: _clashApiSecretKey),
+    ]);
+    final storedStart = stored[0];
     if (storedStart != null) {
       _sessionStartedAt = DateTime.tryParse(storedStart);
     }
+    _clashApiSecret = stored[1];
     await _vpn.initialize(const SingboxRuntimeOptions(logLevel: 'warn'));
+    await _stateSubscription?.cancel();
     _stateSubscription = _vpn.stateStream.listen((state) {
       final previous = _state;
       _state = state;
@@ -162,7 +189,6 @@ class VpnController extends ChangeNotifier {
         _tunnelNotPassingTraffic = false;
       }
     });
-    _initialized = true;
   }
 
   /// Reconciles the UI state with a tunnel that may already be running — e.g.
@@ -318,11 +344,10 @@ class VpnController extends ChangeNotifier {
   }
 
   Future<void> connectToBestNode(
-    ServerCountry country,
-    String accessToken, {
+    ServerCountry country, {
     required String networkErrorMessage,
   }) async {
-    await _connect(country.nodes, accessToken, networkErrorMessage: networkErrorMessage);
+    await _connect(country.nodes, networkErrorMessage: networkErrorMessage);
   }
 
   /// Connects to the fastest node across *all* countries — used when the
@@ -332,12 +357,11 @@ class VpnController extends ChangeNotifier {
   /// Returns the country the chosen node belongs to, so the caller can
   /// reflect the auto-picked location in the UI.
   Future<ServerCountry?> connectToBestOverall(
-    List<ServerCountry> countries,
-    String accessToken, {
+    List<ServerCountry> countries, {
     required String networkErrorMessage,
   }) async {
     final allNodes = countries.expand((c) => c.nodes).toList();
-    final node = await _connect(allNodes, accessToken, networkErrorMessage: networkErrorMessage);
+    final node = await _connect(allNodes, networkErrorMessage: networkErrorMessage);
     if (node == null) return null;
     return countries.firstWhere((c) => c.nodes.contains(node));
   }
@@ -441,21 +465,18 @@ class VpnController extends ChangeNotifier {
   /// True when traffic gets through, false when it demonstrably doesn't, null
   /// when the probe couldn't be carried out and nothing can be concluded.
   ///
-  /// The two platforms need opposite approaches, because the tunnel treats this
-  /// app's own traffic differently on each:
+  /// The two platforms need different approaches:
   ///
-  /// * **Android** — the tunnel service deliberately keeps this app's sockets
-  ///   out of the tun device ("prevent self-capture loops", see
-  ///   VpnTunBuilderConfigurator). A request issued from here therefore never
-  ///   touches the tunnel and comes back successful no matter how dead it is —
-  ///   which is exactly how a server that passed no traffic at all was measured
-  ///   as healthy during testing. So we ask sing-box itself over its local
-  ///   Clash API: its delay test dials the probe URL *through the active
-  ///   outbound*, which is the question we actually want answered.
-  /// * **iOS** — the container app's traffic does go through the packet tunnel,
-  ///   so a plain request is both possible and correct. The Clash API is not an
-  ///   option there: it listens inside the network extension, a separate
-  ///   process whose 127.0.0.1 this app cannot reach.
+  /// * **Android** — the tunnel carries this app's traffic like any other
+  ///   app's, so a plain request would be answered by *some* path but tells us
+  ///   nothing about the outbound in particular: the OS can still satisfy it
+  ///   over the underlay while the proxy is dead. Asking sing-box over its
+  ///   local Clash API is precise — its delay test dials the probe URL through
+  ///   the active outbound, which is the question we actually want answered.
+  /// * **iOS** — the Clash API is not an option: it listens inside the network
+  ///   extension, a separate process whose 127.0.0.1 this app cannot reach. The
+  ///   container app's traffic does go through the packet tunnel, so a plain
+  ///   request is both possible and correct there.
   Future<bool?> _probeThroughTunnel() {
     return Platform.isAndroid ? _probeViaSingboxApi() : _probeDirectly();
   }
@@ -469,6 +490,29 @@ class VpnController extends ChangeNotifier {
     } catch (_) {
       return false;
     }
+  }
+
+  /// A fresh bearer token for the control API. 128 bits from the platform
+  /// CSPRNG: this is the only thing standing between any app on the device and
+  /// the user's live connection list.
+  static String _newClashApiSecret() {
+    final random = Random.secure();
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
+
+  /// GET against the tunnel's local control API, carrying the secret the config
+  /// was built with (see [_clashApiSecret]).
+  Future<http.Response> _singboxApiGet(Uri uri, Duration timeout) {
+    final secret = _clashApiSecret;
+    return http
+        .get(uri, headers: {
+          if (secret != null && secret.isNotEmpty)
+            'Authorization': 'Bearer $secret',
+        })
+        .timeout(timeout);
   }
 
   Future<bool?> _probeViaSingboxApi() async {
@@ -486,9 +530,10 @@ class VpnController extends ChangeNotifier {
         'url': _trafficProbeUrl,
         'timeout': '${_trafficProbeTimeout.inMilliseconds}',
       });
-      final response = await http
-          .get(uri)
-          .timeout(_trafficProbeTimeout + const Duration(seconds: 4));
+      final response = await _singboxApiGet(
+        uri,
+        _trafficProbeTimeout + const Duration(seconds: 4),
+      );
       return response.statusCode == 200;
     } catch (_) {
       // A dead outbound makes this request hang rather than fail: sing-box
@@ -532,9 +577,10 @@ class VpnController extends ChangeNotifier {
 
   Future<int?> _receivedBytes() async {
     try {
-      final response = await http
-          .get(Uri.parse('$_singboxApiBase/connections'))
-          .timeout(const Duration(seconds: 5));
+      final response = await _singboxApiGet(
+        Uri.parse('$_singboxApiBase/connections'),
+        const Duration(seconds: 5),
+      );
       if (response.statusCode != 200) return null;
       final total =
           (jsonDecode(response.body) as Map<String, dynamic>)['downloadTotal'];
@@ -551,9 +597,10 @@ class VpnController extends ChangeNotifier {
   /// node name `/servers` reports.
   Future<String?> _activeOutboundTag() async {
     try {
-      final response = await http
-          .get(Uri.parse('$_singboxApiBase/proxies'))
-          .timeout(const Duration(seconds: 5));
+      final response = await _singboxApiGet(
+        Uri.parse('$_singboxApiBase/proxies'),
+        const Duration(seconds: 5),
+      );
       if (response.statusCode != 200) return null;
       final proxies = (jsonDecode(response.body) as Map<String, dynamic>)['proxies'];
       if (proxies is! Map<String, dynamic>) return null;
@@ -590,8 +637,7 @@ class VpnController extends ChangeNotifier {
   /// list still becomes the pool the session can later move within, so
   /// narrowing the connect to one node doesn't strand the session on it.
   Future<ServerNode?> _connect(
-    List<ServerNode> candidates,
-    String accessToken, {
+    List<ServerNode> candidates, {
     required String networkErrorMessage,
     ServerNode? preferred,
   }) async {
@@ -610,13 +656,13 @@ class VpnController extends ChangeNotifier {
       // than one — which is how the Hysteria2 entries stayed unreachable even
       // once they were listed. Only fall back to an address lookup for nodes
       // that came straight from `/servers`.
-      final (content, _) = await _apiClient.getConfig(accessToken);
+      final (content, _) = await _apiClient.getConfig();
       final uris = parseConfigUris(content);
       String? uriFor(ServerNode n) => n.configUri ?? findUriForNode(uris, n);
 
       final usableNodes = candidates.where((n) => uriFor(n) != null).toList();
       if (usableNodes.isEmpty) {
-        throw StateError('No available node in this subscription');
+        throw _NoUsableNodes();
       }
 
       final node = preferred != null && usableNodes.contains(preferred)
@@ -629,17 +675,26 @@ class VpnController extends ChangeNotifier {
           'stack=${connectionSettings.networkStack.name}, '
           'split=${connectionSettings.splitTunnelEnabled}'
           '/${connectionSettings.splitTunnelMode.name})');
+      // A new tunnel gets a new control-API secret, so a secret that leaked
+      // (a support bundle, a shared log) stops working at the next connect.
+      final clashApiSecret = _newClashApiSecret();
       // Built fresh here so DNS / network-stack preference edits in Settings
       // take effect on this (re)connect.
       await _vpn.connectManualConfigLink(
         configLink: uri,
-        featureSettings: connectionSettings.buildFeatureSettings(),
+        featureSettings: connectionSettings.buildFeatureSettings(
+          clashApiSecret: clashApiSecret,
+        ),
+      );
+      _clashApiSecret = clashApiSecret;
+      unawaited(
+        _storage.write(key: _clashApiSecretKey, value: clashApiSecret),
       );
       _connectedNode = node;
       log.i('Tunnel established to "${node.name}"');
       // Watch this session from here on, so a node that degrades later doesn't
       // hold it for the rest of the day.
-      _armSessionHealth(usableNodes, accessToken, networkErrorMessage);
+      _armSessionHealth(usableNodes, networkErrorMessage);
       // Deliberately not awaited: the tunnel is up, so the UI should say so
       // immediately. The probe corrects that claim a few seconds later if
       // nothing actually gets through.
@@ -647,11 +702,12 @@ class VpnController extends ChangeNotifier {
       return node;
     } catch (e) {
       _state = VpnConnectionState.error;
-      _errorMessage = e is SignboxVpnException
-          ? e.message
-          : _isNetworkError(e)
-          ? networkErrorMessage
-          : e.toString();
+      _errorMessage = switch (e) {
+        SignboxVpnException() => e.message,
+        _NoUsableNodes() => noUsableNodesMessage ?? e.toString(),
+        _ when _isNetworkError(e) => networkErrorMessage,
+        _ => e.toString(),
+      };
       log.e('Connect failed', e.toString());
       notifyListeners();
       rethrow;
@@ -668,11 +724,9 @@ class VpnController extends ChangeNotifier {
   /// flag on screen stays true no matter what the watchdog does.
   void _armSessionHealth(
     List<ServerNode> pool,
-    String accessToken,
     String networkErrorMessage,
   ) {
     _autoSwitchPool = pool;
-    _autoSwitchAccessToken = accessToken;
     _autoSwitchNetworkErrorMessage = networkErrorMessage;
     // Evidence gathered about the previous node says nothing about this one.
     _autoSwitchPolicy.reset();
@@ -733,9 +787,8 @@ class VpnController extends ChangeNotifier {
     if (_autoSwitchInProgress) return;
     if (_state != VpnConnectionState.connected) return;
     final current = _connectedNode;
-    final accessToken = _autoSwitchAccessToken;
     final networkErrorMessage = _autoSwitchNetworkErrorMessage;
-    if (current == null || accessToken == null || networkErrorMessage == null) {
+    if (current == null || networkErrorMessage == null) {
       return;
     }
     final lastSwitch = _lastAutoSwitchAt;
@@ -748,8 +801,9 @@ class VpnController extends ChangeNotifier {
     _autoSwitchInProgress = true;
     try {
       final pool = _autoSwitchPool;
-      final measurements = await Future.wait(
-        pool.map((n) => _pingService.pingMs(n.address, n.port)),
+      final measurements = await mapConcurrently(
+        pool,
+        (n) => _pingService.pingMs(n.address, n.port),
       );
       final pingsByNodeId = <String, int>{};
       for (var i = 0; i < pool.length; i++) {
@@ -764,7 +818,7 @@ class VpnController extends ChangeNotifier {
         return;
       }
 
-      final usersByNodeId = await _liveUserCounts(accessToken, pool);
+      final usersByNodeId = await _liveUserCounts(pool);
 
       // Every round's raw numbers, so the crowding thresholds can be sanity-
       // checked against what this panel actually looks like in the field —
@@ -795,7 +849,6 @@ class VpnController extends ChangeNotifier {
         from: current,
         to: target,
         pool: pool,
-        accessToken: accessToken,
         networkErrorMessage: networkErrorMessage,
       );
     } catch (e) {
@@ -810,19 +863,18 @@ class VpnController extends ChangeNotifier {
   /// [ServerNode.usersOnline] — absent means unknown, and the policy abstains
   /// rather than reading it as an empty server).
   ///
-  /// Re-fetched each round rather than read off [pool]: those counts were taken
-  /// when the server list was loaded, possibly hours ago, and a snapshot from
-  /// then cannot show that a server filled up *during* this session — which is
-  /// the entire reason to consult load at all.
+  /// Fetched fresh each round, past the client's cache: the counts on [pool]
+  /// were taken when the server list was loaded, possibly hours ago, and a
+  /// snapshot from then cannot show that a server filled up *during* this
+  /// session — which is the entire reason to consult load at all. The cache's
+  /// five-minute TTL is longer than the gap between rounds, so without `force`
+  /// this round would mostly re-read the previous one's answer.
   ///
   /// Best-effort. `/servers` failing (offline, or 402 on a lapsed subscription)
   /// leaves the pool's own counts in place; those are what the connect-time
   /// decision ran on, so falling back to them is no worse than not having the
   /// signal.
-  Future<Map<String, int>> _liveUserCounts(
-    String accessToken,
-    List<ServerNode> pool,
-  ) async {
+  Future<Map<String, int>> _liveUserCounts(List<ServerNode> pool) async {
     final counts = <String, int>{};
     for (final node in pool) {
       final users = node.usersOnline;
@@ -830,7 +882,7 @@ class VpnController extends ChangeNotifier {
     }
     final poolIds = pool.map((n) => n.id).toSet();
     try {
-      final servers = await _apiClient.getServers(accessToken);
+      final servers = await _apiClient.getServers(force: true);
       for (final country in servers) {
         for (final node in country.nodes) {
           final users = node.usersOnline;
@@ -855,18 +907,16 @@ class VpnController extends ChangeNotifier {
     required ServerNode from,
     required ServerNode to,
     required List<ServerNode> pool,
-    required String accessToken,
     required String networkErrorMessage,
   }) async {
     _lastAutoSwitchAt = DateTime.now();
     // Not a user power-off: the VPN stays on across the swap, so the session
     // timer must keep running (see [disconnect]).
     await disconnect(endSession: false);
-    await _waitForDisconnected();
+    await waitForDisconnected();
     try {
       await _connect(
         pool,
-        accessToken,
         networkErrorMessage: networkErrorMessage,
         preferred: to,
       );
@@ -874,10 +924,9 @@ class VpnController extends ChangeNotifier {
     } catch (e) {
       log.w('Auto-switch to "${to.name}" failed, restoring "${from.name}": $e');
       try {
-        await _waitForDisconnected();
+        await waitForDisconnected();
         await _connect(
           pool,
-          accessToken,
           networkErrorMessage: networkErrorMessage,
           preferred: from,
         );
@@ -892,22 +941,44 @@ class VpnController extends ChangeNotifier {
   /// Blocks until the tunnel has actually torn down. A connect issued while the
   /// previous session is still going down gets dropped by the plugin, which
   /// would leave the session on the old node while we believe we moved it.
-  Future<void> _waitForDisconnected() async {
-    final deadline = DateTime.now().add(const Duration(seconds: 4));
-    while (_state != VpnConnectionState.disconnected &&
-        _state != VpnConnectionState.error &&
-        DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 150));
+  ///
+  /// The window is sized against the service's own teardown budget
+  /// (`VpnCoreServiceCoordinator.RESTART_CLOSE_SUPPRESSION_MS` = 15 s): the old
+  /// four-second deadline expired silently on any teardown that took longer,
+  /// and the caller then went ahead and reconnected anyway — the exact outcome
+  /// this is here to prevent. Expiry is now logged rather than assumed benign.
+  Future<void> waitForDisconnected() async {
+    if (_isDown(_state)) return;
+    try {
+      await _vpn.stateStream
+          .firstWhere(_isDown)
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      log.w('Tunnel did not report disconnected within 10s; continuing anyway');
     }
   }
 
+  static bool _isDown(VpnConnectionState state) =>
+      state == VpnConnectionState.disconnected ||
+      state == VpnConnectionState.error;
+
+  /// Fastest node of [nodes], or the first one when none answered.
+  ///
+  /// Measured in parallel: this runs on every Connect tap, and in "Best server"
+  /// mode the candidates are every node of every country — serially, a handful
+  /// of unreachable ones alone cost three seconds each before the tunnel even
+  /// starts coming up.
   Future<ServerNode> _pickBestNode(List<ServerNode> nodes) async {
+    final measurements = await mapConcurrently(
+      nodes,
+      (n) => _pingService.pingMs(n.address, n.port),
+    );
     ServerNode? best;
     int? bestPing;
-    for (final node in nodes) {
-      final ms = await _pingService.pingMs(node.address, node.port);
+    for (var i = 0; i < nodes.length; i++) {
+      final ms = measurements[i];
       if (ms != null && (bestPing == null || ms < bestPing)) {
-        best = node;
+        best = nodes[i];
         bestPing = ms;
       }
     }
@@ -921,8 +992,12 @@ class VpnController extends ChangeNotifier {
     try {
       final err = await _vpn.getLastError();
       if (err != null && err.trim().isNotEmpty) {
-        _errorMessage = err;
-        log.e('Tunnel failed at runtime', err);
+        // Both the banner and the log end up somewhere the user can share, and
+        // the stderr tail quotes the outbound it was dialling — see
+        // [sanitizeDiagnostics].
+        final safe = sanitizeDiagnostics(err);
+        _errorMessage = safe;
+        log.e('Tunnel failed at runtime', safe);
         notifyListeners();
       } else {
         log.w('Tunnel dropped during connect but reported no diagnostics');
@@ -941,7 +1016,7 @@ class VpnController extends ChangeNotifier {
     try {
       final err = await _vpn.getLastError();
       if (err != null && err.trim().isNotEmpty) {
-        log.w('Tunnel diagnostics on live tunnel: $err');
+        log.w('Tunnel diagnostics on live tunnel: ${sanitizeDiagnostics(err)}');
       }
     } catch (e) {
       log.w('Failed to read tunnel diagnostics: $e');
@@ -978,4 +1053,12 @@ class VpnController extends ChangeNotifier {
     _stateSubscription?.cancel();
     super.dispose();
   }
+}
+
+/// The subscription carries no link this build can connect with. Its own type
+/// so [VpnController._connect] can swap in a localized message instead of
+/// rendering an exception at the user.
+class _NoUsableNodes implements Exception {
+  @override
+  String toString() => 'No available node in this subscription';
 }

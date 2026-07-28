@@ -10,32 +10,28 @@ import 'app_logger.dart';
 /// latency, so a TCP handshake to the real node address is the closest
 /// realistic proxy for "ping" available from the app.
 ///
-/// Where that handshake is issued from matters, and the two platforms differ:
-///
-/// * **Android** — the tunnel service deliberately keeps this app's sockets out
-///   of the tun device (see VpnTunBuilderConfigurator), so a connect from here
-///   already travels the real underlay whether or not the VPN is up.
-/// * **iOS** — the container app's traffic *is* carried by the packet tunnel.
-///   Measuring from here while connected gives "device → current server →
-///   candidate": every alternative inflated by the live tunnel's round-trip,
-///   and every one of them unreachable the moment that tunnel stops passing
-///   traffic — which is precisely when a replacement has to be found. So the
-///   measurement is delegated to the tunnel's own extension, whose sockets
-///   bypass the tunnel it provides.
+/// Where that handshake is issued from matters. Both platforms carry this app's
+/// own traffic in the tunnel — Android deliberately so, see
+/// VpnTunBuilderConfigurator — which makes a plain connect measure "device →
+/// current server → candidate": every alternative inflated by the live tunnel's
+/// round-trip, and every one of them unreachable the moment that tunnel stops
+/// passing traffic, which is precisely when a replacement has to be found. So
+/// the measurement goes through [SignboxVpnPlatform.pingServerOutsideTunnel],
+/// which steps around the tunnel (the packet-tunnel extension on iOS,
+/// `VpnService.protect()` on Android).
 class PingService {
   /// [measureOutsideProcess] overrides the platform decision; tests set it
   /// because the host VM is neither of the two platforms this class is about.
   PingService({SignboxVpnPlatform? platform, bool? measureOutsideProcess})
       : _plugin = platform ?? SignboxVpnPlatform.instance,
-        // Only iOS captures the app's own traffic; asking anywhere else would
-        // cross a platform channel to answer what a plain socket answers.
-        _needsExtensionMeasurement = measureOutsideProcess ?? Platform.isIOS;
+        _measureOutsideTunnel =
+            measureOutsideProcess ?? (Platform.isIOS || Platform.isAndroid);
 
   final SignboxVpnPlatform _plugin;
-  final bool _needsExtensionMeasurement;
+  final bool _measureOutsideTunnel;
 
   Future<int?> pingMs(String address, int port) async {
-    if (_needsExtensionMeasurement) {
+    if (_measureOutsideTunnel) {
       final (:answered, :latencyMs) = await _pingViaExtension(address, port);
       // An answer is a verdict about the node — including "unreachable", which
       // means the extension tried and the handshake didn't complete. Only the
@@ -63,7 +59,7 @@ class PingService {
     } catch (e) {
       // Plugin missing, extension unreachable, channel error — anything that
       // leaves us knowing nothing about the node itself.
-      log.w('Extension-side ping unavailable, measuring in-app instead: $e');
+      log.w('Out-of-tunnel ping unavailable, measuring in-app instead: $e');
       return (answered: false, latencyMs: null);
     }
   }

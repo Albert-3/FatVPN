@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +50,10 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   final _locale = LocaleController();
   final _connectionSettings = ConnectionSettingsController();
   final _notifications = NotificationService();
+  // Needed to raise the deep-link confirmation over whatever screen is up: the
+  // link can arrive at any moment, from onboarding or from Home.
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  bool _deepLinkPromptOpen = false;
 
   // Holds the animated splash for a minimum beat so it plays fully even when
   // the stored session resolves instantly. Flips true after [_minSplashTime].
@@ -65,6 +71,7 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     // language changes. syncFor no-ops until init() completes, then the first
     // sync runs once init resolves.
     _auth.addListener(_syncNotifications);
+    _auth.addListener(_maybePromptForDeepLinkKey);
     _locale.addListener(_syncNotifications);
     _auth.start();
     _locale.load();
@@ -73,11 +80,56 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   }
 
   void _syncNotifications() {
+    // Ask for the notification permission only once there is a subscription to
+    // remind the user about — see [NotificationService.requestPermission].
+    if (_auth.subscriptionActive) {
+      unawaited(_notifications.requestPermission());
+    }
     _notifications.syncFor(
       _auth.session?.expiresAt,
       _locale.strings,
       _locale.language,
     );
+  }
+
+  /// Asks before accepting a key that arrived over `fatvpn://` — see
+  /// [AuthController.pendingDeepLinkToken].
+  Future<void> _maybePromptForDeepLinkKey() async {
+    final token = _auth.pendingDeepLinkToken;
+    if (token == null || _deepLinkPromptOpen) return;
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    _deepLinkPromptOpen = true;
+    try {
+      final s = _locale.strings;
+      final accepted = await showDialog<bool>(
+        context: navigator.context,
+        builder: (context) => AlertDialog(
+          title: Text(s.deepLinkKeyTitle),
+          content: Text(s.deepLinkKeyBody(token)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(s.cancel),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(s.submitKey),
+            ),
+          ],
+        ),
+      );
+      if (accepted ?? false) {
+        await _auth.confirmPendingDeepLinkToken(
+          conflictMessage: s.keyBoundToOtherDevice,
+          genericMessage: s.couldNotReachServer,
+        );
+      } else {
+        _auth.dismissPendingDeepLinkToken();
+      }
+    } finally {
+      _deepLinkPromptOpen = false;
+    }
   }
 
   @override
@@ -86,6 +138,13 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     // reflected — e.g. the user renewed in Telegram and came back.
     if (state == AppLifecycleState.resumed) {
       _auth.refreshOnResume();
+      _auth.setPairingPaused(false);
+    } else if (state == AppLifecycleState.paused) {
+      // The user is in Telegram completing the pairing; polling from a
+      // suspended app is 30 requests a minute nobody is looking at. Flush the
+      // log too — a process killed in the background loses whatever is buffered.
+      _auth.setPairingPaused(true);
+      unawaited(AppLogger.instance.flush());
     }
   }
 
@@ -93,6 +152,7 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _auth.removeListener(_syncNotifications);
+    _auth.removeListener(_maybePromptForDeepLinkKey);
     _locale.removeListener(_syncNotifications);
     _auth.dispose();
     _locale.dispose();
@@ -121,6 +181,7 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
       controller: _locale,
       child: MaterialApp(
         title: 'FatVPN',
+        navigatorKey: _navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,

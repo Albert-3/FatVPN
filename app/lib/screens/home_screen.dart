@@ -14,6 +14,7 @@ import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
 import '../utils/haptics.dart';
+import '../utils/parallel.dart';
 import 'choose_location_screen.dart';
 import 'settings_screen.dart';
 
@@ -32,20 +33,23 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  late final _apiClient = ApiClient(
-    onUnauthorized: widget.auth.ensureFreshAccessToken,
-  );
+  late final _apiClient = widget.auth.api;
   late final _vpn = VpnController(
     connectionSettings: widget.connectionSettings,
-    onUnauthorized: widget.auth.ensureFreshAccessToken,
+    apiClient: widget.auth.api,
   );
   final _pingService = PingService();
 
   Timer? _timer;
   Timer? _connSettingsDebounce;
-  Duration _sessionTime = Duration.zero;
+  // Ticks once a second for the whole session. Kept out of setState so the
+  // clock repaints one Text instead of the header image, the power button's
+  // shadow and a re-sorted server list sixty times a minute.
+  final _sessionTime = ValueNotifier<Duration>(Duration.zero);
 
   List<ServerCountry> _servers = [];
+  // Sorting on every build meant sorting on every tick of the clock above.
+  List<ServerCountry> _rankedServers = [];
   ServerCountry? _selectedServer;
   bool _serverExplicitlySelected = false;
   bool _loadingServers = true;
@@ -75,6 +79,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.connectionSettings.addListener(_onConnSettingsChanged);
     _lastMintedAt = widget.auth.sessionMintedAt;
     widget.auth.addListener(_onAuthChanged);
+    // Signing out (by hand, or because the server rejected the refresh) must
+    // take the tunnel down with it — see [AuthController.onSessionDropped].
+    widget.auth.onSessionDropped = _stopTunnelOnSignOut;
     // Reflect a tunnel that's still running from a previous app session (the
     // app was swiped away without disconnecting) instead of showing the toggle
     // as off while the system VPN is active.
@@ -171,7 +178,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _tickSession() {
     final start = _vpn.sessionStartedAt;
     if (start == null || !mounted) return;
-    setState(() => _sessionTime = DateTime.now().difference(start));
+    _sessionTime.value = DateTime.now().difference(start);
+  }
+
+  /// Brings the tunnel down when the session behind it disappears.
+  Future<void> _stopTunnelOnSignOut() async {
+    if (_vpn.state == VpnConnectionState.disconnected) return;
+    await _vpn.disconnect();
   }
 
   @override
@@ -185,14 +198,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadServers() async {
+    // Signing out mid-load leaves no session to load with, and the two network
+    // calls behind this take up to 30 s — plenty of time for that to happen.
+    final session = widget.auth.session;
+    if (session == null) return;
     setState(() {
       _loadingServers = true;
       _serversError = null;
     });
     try {
-      final servers = await _apiClient.getUsableServers(widget.auth.session!.accessToken);
+      final servers = await _apiClient.getUsableServers();
+      if (!mounted) return;
       setState(() {
         _servers = servers;
+        _rankedServers = _rank(servers);
         _loadingServers = false;
       });
       unawaited(_measureBestPings(servers));
@@ -209,8 +228,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         widget.auth.notifyExpired();
         return;
       }
+      if (!mounted) return;
       setState(() {
-        _serversError = e.message;
+        _serversError = S.of(context).couldNotReachServer;
         _loadingServers = false;
       });
     } catch (_) {
@@ -224,26 +244,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Ranks countries by real latency (fastest node per country) instead of
   /// just showing whatever order `/servers` returned them in.
+  ///
+  /// Every node of every country is measured, so the list is flattened first
+  /// and put through one shared concurrency budget: nested `Future.wait`s
+  /// opened the whole cartesian product at once, and forty simultaneous
+  /// handshakes on a mobile radio distort the very numbers being collected.
   Future<void> _measureBestPings(List<ServerCountry> servers) async {
     setState(() {
       _measuringPings = true;
       _bestPingByCountry.clear();
     });
-    await Future.wait(servers.map((country) async {
-      final pings = await Future.wait(
-        country.nodes.map((n) => _pingService.pingMs(n.address, n.port)),
-      );
-      final reachable = pings.whereType<int>();
-      final best = reachable.isEmpty ? null : reachable.reduce((a, b) => a < b ? a : b);
-      if (!mounted) return;
-      setState(() => _bestPingByCountry[country.country] = best);
-    }));
+    final targets = <({String country, ServerNode node})>[
+      for (final country in servers)
+        for (final node in country.nodes) (country: country.country, node: node),
+    ];
+    final pings = await mapConcurrently(
+      targets,
+      (t) => _pingService.pingMs(t.node.address, t.node.port),
+    );
     if (!mounted) return;
-    setState(() => _measuringPings = false);
+    final best = <String, int?>{for (final c in servers) c.country: null};
+    for (var i = 0; i < targets.length; i++) {
+      final ms = pings[i];
+      if (ms == null) continue;
+      final current = best[targets[i].country];
+      if (current == null || ms < current) best[targets[i].country] = ms;
+    }
+    setState(() {
+      _bestPingByCountry.addAll(best);
+      _rankedServers = _rank(_servers);
+      _measuringPings = false;
+    });
   }
 
-  List<ServerCountry> get _rankedServers {
-    final ranked = [..._servers];
+  List<ServerCountry> _rank(List<ServerCountry> servers) {
+    final ranked = [...servers];
     ranked.sort((a, b) {
       final pa = _bestPingByCountry[a.country];
       final pb = _bestPingByCountry[b.country];
@@ -259,12 +294,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// "best server" (auto) — which clears the explicit selection so Connect goes
   /// back to picking the fastest node overall.
   Future<void> _openLocationPicker() async {
+    final session = widget.auth.session;
+    if (session == null) return;
     final choice = await Navigator.of(context).push<LocationSelection>(
       MaterialPageRoute(
         builder: (_) => ChooseLocationScreen(
           initialServers: _servers,
-          accessToken: widget.auth.session!.accessToken,
-          onUnauthorized: widget.auth.ensureFreshAccessToken,
+          apiClient: _apiClient,
           selectedCountry:
               _serverExplicitlySelected ? _selectedServer?.country : null,
         ),
@@ -320,12 +356,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Part of a reconnect (server/location switch or settings re-apply), not a
     // user power-off — keep the session timer running across the swap.
     await _vpn.disconnect(endSession: false);
-    final deadline = DateTime.now().add(const Duration(seconds: 4));
-    while (_vpn.state != VpnConnectionState.disconnected &&
-        _vpn.state != VpnConnectionState.error &&
-        DateTime.now().isBefore(deadline)) {
-      await Future.delayed(const Duration(milliseconds: 150));
-    }
+    await _vpn.waitForDisconnected();
   }
 
   /// One-off auto-connect to the fastest node overall (used after a trial
@@ -333,10 +364,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _autoConnect() async {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;
+    _vpn.noUsableNodesMessage = S.of(context).noUsableServers;
     try {
       final picked = await _vpn.connectToBestOverall(
         _servers,
-        session.accessToken,
         networkErrorMessage: S.of(context).couldNotReachServer,
       );
       if (picked != null && mounted) {
@@ -363,17 +394,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;
     final networkErrorMessage = S.of(context).couldNotReachServer;
+    _vpn.noUsableNodesMessage = S.of(context).noUsableServers;
     try {
       if (_serverExplicitlySelected && _selectedServer != null) {
         await _vpn.connectToBestNode(
           _selectedServer!,
-          session.accessToken,
           networkErrorMessage: networkErrorMessage,
         );
       } else {
         final picked = await _vpn.connectToBestOverall(
           _servers,
-          session.accessToken,
           networkErrorMessage: networkErrorMessage,
         );
         if (picked != null && mounted) {
@@ -392,16 +422,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _connSettingsDebounce?.cancel();
     widget.connectionSettings.removeListener(_onConnSettingsChanged);
     widget.auth.removeListener(_onAuthChanged);
+    widget.auth.onSessionDropped = null;
     _vpn.removeListener(_handleVpnChange);
     _vpn.onAutoSwitched = null;
     _vpn.dispose();
+    _sessionTime.dispose();
     super.dispose();
   }
 
-  String get _sessionLabel {
-    final h = _sessionTime.inHours.toString().padLeft(2, '0');
-    final m = (_sessionTime.inMinutes % 60).toString().padLeft(2, '0');
-    final s = (_sessionTime.inSeconds % 60).toString().padLeft(2, '0');
+  static String _sessionLabel(Duration elapsed) {
+    final h = elapsed.inHours.toString().padLeft(2, '0');
+    final m = (elapsed.inMinutes % 60).toString().padLeft(2, '0');
+    final s = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
     return '$h:$m:$s';
   }
 
@@ -601,12 +633,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
         const SizedBox(height: 6),
         if (_connected) ...[
-          Text(
-            _sessionLabel,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
+          ValueListenableBuilder<Duration>(
+            valueListenable: _sessionTime,
+            builder: (context, elapsed, _) => Text(
+              _sessionLabel(elapsed),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           Text(

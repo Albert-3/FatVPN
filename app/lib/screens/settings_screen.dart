@@ -8,7 +8,6 @@ import '../config/api_config.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../models/account_status.dart';
-import '../services/api_client.dart';
 import '../services/app_logger.dart';
 import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
@@ -32,9 +31,10 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final _apiClient = ApiClient(
-    onUnauthorized: widget.auth.ensureFreshAccessToken,
-  );
+  // The app's one client — see [AuthController.api]. A client per screen meant
+  // a fresh connection pool on every visit to Settings and its own copy of the
+  // subscription cache.
+  late final _apiClient = widget.auth.api;
 
   AccountStatus? _accountStatus;
   bool _loading = true;
@@ -73,14 +73,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _error = null;
     });
     try {
-      final status = await _apiClient.getMe(session.accessToken);
+      final status = await _apiClient.getMe();
+      if (!mounted) return;
       setState(() {
         _accountStatus = status;
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      setState(() {
-        _error = e.message;
         _loading = false;
       });
     } catch (_) {
@@ -111,7 +107,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final code = _keyController.text.trim();
     if (code.isEmpty || _submittingKey) return;
     setState(() => _submittingKey = true);
-    await widget.auth.exchangeShortToken(code, conflictMessage: s.keyBoundToOtherDevice);
+    await widget.auth.exchangeShortToken(
+      code,
+      conflictMessage: s.keyBoundToOtherDevice,
+      genericMessage: s.couldNotReachServer,
+    );
     if (!mounted) return;
     setState(() => _submittingKey = false);
     if (widget.auth.error == null) {

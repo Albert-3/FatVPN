@@ -38,12 +38,29 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final needsPairing = widget.renew || !widget.auth.trialAvailable;
-      if (needsPairing &&
-          widget.auth.pairCode == null &&
-          widget.auth.error == null) {
-        widget.auth.startPairing();
+      if (widget.auth.pairCode != null) {
+        // A code from an earlier visit is still live; resume the poll this
+        // screen's dispose stopped.
+        widget.auth.setPairingPaused(false);
+      } else if (needsPairing && widget.auth.error == null) {
+        _startPairing(S.of(context));
       }
     });
+  }
+
+  void _startPairing(Strings s) {
+    widget.auth.startPairing(
+      expiredMessage: s.pairingCodeExpired,
+      genericMessage: s.couldNotReachServer,
+    );
+  }
+
+  @override
+  void dispose() {
+    // Nothing is watching the code any more; without this the timer keeps
+    // hitting /pair/status for the rest of the process.
+    widget.auth.setPairingPaused(true);
+    super.dispose();
   }
 
   Future<void> _openBot() async {
@@ -296,7 +313,7 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                               _ErrorBlock(message: auth.error!),
                               const SizedBox(height: 12),
                               OutlinedButton(
-                                onPressed: auth.startPairing,
+                                onPressed: () => _startPairing(s),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: AppColors.accent,
                                   side: const BorderSide(
@@ -423,7 +440,11 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
     if (code.isEmpty || _submitting) return;
     final s = S.of(context);
     setState(() => _submitting = true);
-    await widget.auth.exchangeShortToken(code, conflictMessage: s.keyBoundToOtherDevice);
+    await widget.auth.exchangeShortToken(
+      code,
+      conflictMessage: s.keyBoundToOtherDevice,
+      genericMessage: s.couldNotReachServer,
+    );
     if (mounted) setState(() => _submitting = false);
   }
 

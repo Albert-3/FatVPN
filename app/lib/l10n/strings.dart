@@ -48,6 +48,7 @@ class Strings {
     required this.sessionTime,
     required this.connectionNotProtected,
     required this.tunnelNotPassingTraffic,
+    required this.noUsableServers,
     required this.bestServers,
     required this.seeAll,
     required this.chooseLocation,
@@ -77,6 +78,8 @@ class Strings {
     required this.trialNoCapacity,
     required this.trialFailed,
     required this.keyBoundToOtherDevice,
+    required this.deepLinkKeyTitle,
+    required this.deepLinkKeyBody,
     required this.subscriptionExpiredTitle,
     required this.subscriptionExpiredSubtitle,
     required this.renewViaTelegram,
@@ -166,6 +169,10 @@ class Strings {
   /// Shown while the tunnel is up but nothing gets through it — the state the
   /// app used to render as a plain green "connected" with no internet.
   final String tunnelNotPassingTraffic;
+
+  /// Shown when the subscription lists nothing this build can connect to —
+  /// previously surfaced as a raw `Bad state: …` from a StateError.
+  final String noUsableServers;
   final String bestServers;
   final String seeAll;
 
@@ -209,6 +216,12 @@ class Strings {
   final String trialNoCapacity;
   final String trialFailed;
   final String keyBoundToOtherDevice;
+
+  /// Confirmation shown before a key that arrived over the `fatvpn://`
+  /// deep link is exchanged — any app on the device can send one, and a
+  /// key the user didn't ask for moves their traffic to a stranger's exit.
+  final String deepLinkKeyTitle;
+  final String Function(String keyCode) deepLinkKeyBody;
   final String subscriptionExpiredTitle;
   final String subscriptionExpiredSubtitle;
   final String renewViaTelegram;
@@ -341,6 +354,7 @@ const Strings enStrings = Strings(
   sessionTime: 'SESSION TIME',
   connectionNotProtected: 'Your connection is not protected',
   tunnelNotPassingTraffic: 'This server is not responding. Pick another one.',
+  noUsableServers: 'No servers are available on this subscription. Try again or contact support.',
   bestServers: 'Best servers',
   seeAll: 'See all',
   chooseLocation: 'Choose location',
@@ -370,6 +384,8 @@ const Strings enStrings = Strings(
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
   keyBoundToOtherDevice: 'This key is already linked to another phone. Change your key in the bot to move it to this device.',
+  deepLinkKeyTitle: 'Use this key?',
+  deepLinkKeyBody: _enDeepLinkKeyBody,
   subscriptionExpiredTitle: 'Subscription expired',
   subscriptionExpiredSubtitle: 'Renew in Telegram to keep using FatVPN — the app reconnects automatically once your subscription is active again.',
   renewViaTelegram: 'Renew via Telegram',
@@ -423,6 +439,14 @@ String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
 String _enExpiresInHours(int n) => 'Expires in $n hour${n == 1 ? '' : 's'}';
 String _enServersCount(int n) => '$n server${n == 1 ? '' : 's'}';
 
+String _enDeepLinkKeyBody(String keyCode) =>
+    'Another app asked FatVPN to connect with the key $keyCode. '
+    'Only accept it if you opened this link yourself.';
+
+String _ruDeepLinkKeyBody(String keyCode) =>
+    'Другое приложение просит FatVPN подключиться по ключу $keyCode. '
+    'Соглашайтесь, только если вы сами открыли эту ссылку.';
+
 String _enSwitchedToFasterServer(String location) =>
     'Switched to a faster server: $location';
 
@@ -473,6 +497,7 @@ final Strings ruStrings = Strings(
   sessionTime: 'ВРЕМЯ СЕССИИ',
   connectionNotProtected: 'Ваше соединение не защищено',
   tunnelNotPassingTraffic: 'Сервер не отвечает. Выберите другой.',
+  noUsableServers: 'На этой подписке нет доступных серверов. Повторите попытку или напишите в поддержку.',
   bestServers: 'Лучшие серверы',
   seeAll: 'Смотреть все',
   chooseLocation: 'Выбор локации',
@@ -506,6 +531,8 @@ final Strings ruStrings = Strings(
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
   keyBoundToOtherDevice: 'Этот ключ уже привязан к другому телефону. Смените ключ в боте, чтобы перенести его на это устройство.',
+  deepLinkKeyTitle: 'Использовать этот ключ?',
+  deepLinkKeyBody: _ruDeepLinkKeyBody,
   subscriptionExpiredTitle: 'Подписка истекла',
   subscriptionExpiredSubtitle: 'Продлите подписку в Telegram, чтобы продолжить пользоваться FatVPN — приложение переподключится автоматически, как только подписка снова станет активной.',
   renewViaTelegram: 'Продлить через Telegram',

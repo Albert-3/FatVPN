@@ -11,33 +11,56 @@ import '../utils/country_flag.dart';
 import 'app_logger.dart';
 import 'vless_config_parser.dart';
 
+/// A request the BFF answered with something other than success.
+///
+/// Deliberately carries no prose: what the user reads has to be localized, and
+/// the app's default language is Russian. [code] is for logs and for the UI to
+/// switch on; [statusCode] is what callers actually branch on (401 auth, 402
+/// lapsed subscription, 409 conflict, 503 no capacity).
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
+  ApiException(this.code, {this.statusCode});
 
-  final String message;
+  /// Machine-readable identifier of the failing call, e.g. `servers_failed`.
+  final String code;
   final int? statusCode;
 
   @override
-  String toString() => 'ApiException($statusCode): $message';
+  String toString() => 'ApiException($statusCode): $code';
 }
 
 class ApiClient {
   ApiClient({
     http.Client? httpClient,
     String? baseUrl,
-    Future<String?> Function()? onUnauthorized,
+    this.readAccessToken,
+    this.onUnauthorized,
+    this.readSessionMintedAt,
   })  : _httpClient = httpClient ?? http.Client(),
-        _baseUrl = baseUrl ?? bffBaseUrl,
-        // ignore: prefer_initializing_formals -- private field, public param name
-        _onUnauthorized = onUnauthorized;
+        _baseUrl = baseUrl ?? bffBaseUrl;
 
   final http.Client _httpClient;
   final String _baseUrl;
 
+  /// Supplies the access token to use *right now*.
+  ///
+  /// A provider rather than an argument because callers hold on to this client
+  /// for a long time — the location screen for as long as it is open, the
+  /// tunnel's session watchdog for hours — and a token captured when they
+  /// started is stale by the time they use it. Every stale token costs a 401
+  /// and a refresh-token rotation, and every rotation is a chance to lose the
+  /// session (see AuthController).
+  Future<String?> Function()? readAccessToken;
+
   /// Called when an authed request gets a 401 (expired access token). Should
   /// return a fresh access token (via `/auth/refresh`) so the request can be
   /// retried once, or null if the session can't be renewed.
-  final Future<String?> Function()? _onUnauthorized;
+  Future<String?> Function()? onUnauthorized;
+
+  /// When the current session was last *replaced* (new key, trial, pairing).
+  /// Cached subscription data belongs to the session it was fetched under, so a
+  /// change here throws it away rather than letting a reconnect run on the
+  /// previous key's subscription.
+  DateTime? Function()? readSessionMintedAt;
 
   /// Ceiling on every authed request. Without it these calls inherit the OS TCP
   /// timeout, and since the app's own traffic goes through the tunnel, a request
@@ -47,18 +70,31 @@ class ApiClient {
   /// back to the cached subscription and the reconnect proceed.
   static const _requestTimeout = Duration(seconds: 15);
 
+  /// How long `/servers` and `/config` answers are reused.
+  ///
+  /// Opening the app, opening the location picker and tapping Connect used to
+  /// be five requests for two answers that cannot change between them; a
+  /// subscription changes when the user's key does, which [readSessionMintedAt]
+  /// already reports.
+  static const _cacheTtl = Duration(minutes: 5);
+
+  /// Releases the keep-alive connection pool. The app shares one client, so
+  /// this is only for its own teardown and for tests.
+  void close() => _httpClient.close();
+
   /// GET with a Bearer token that transparently refreshes the access token once
   /// on 401 and retries. 402 (lapsed subscription) is left for the caller to
   /// surface — it is not an auth failure.
-  Future<http.Response> _authedGet(String path, String accessToken) async {
+  Future<http.Response> _authedGet(String path) async {
     final uri = Uri.parse('$_baseUrl$path');
     log.d('GET $path');
+    final accessToken = await readAccessToken?.call() ?? '';
     var response = await _httpClient
         .get(uri, headers: {'Authorization': 'Bearer $accessToken'})
         .timeout(_requestTimeout);
-    if (response.statusCode == 401 && _onUnauthorized != null) {
+    if (response.statusCode == 401 && onUnauthorized != null) {
       log.i('GET $path → 401, refreshing access token and retrying');
-      final fresh = await _onUnauthorized();
+      final fresh = await onUnauthorized!();
       if (fresh != null) {
         response = await _httpClient
             .get(uri, headers: {'Authorization': 'Bearer $fresh'})
@@ -85,7 +121,7 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       log.w('POST /auth/refresh → ${response.statusCode}');
-      throw ApiException('Failed to refresh session', statusCode: response.statusCode);
+      throw ApiException('refresh_failed', statusCode: response.statusCode);
     }
 
     log.i('Session refreshed (token rotated)');
@@ -118,10 +154,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException(
-        'Token exchange failed',
-        statusCode: response.statusCode,
-      );
+      throw ApiException('token_exchange_failed', statusCode: response.statusCode);
     }
 
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
@@ -141,7 +174,7 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       log.w('POST /trial → ${response.statusCode}');
-      throw ApiException('Failed to start trial', statusCode: response.statusCode);
+      throw ApiException('trial_failed', statusCode: response.statusCode);
     }
 
     log.i('Trial granted for $platform');
@@ -156,7 +189,7 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       log.w('POST /pair/start → ${response.statusCode}');
-      throw ApiException('Failed to start pairing', statusCode: response.statusCode);
+      throw ApiException('pair_start_failed', statusCode: response.statusCode);
     }
 
     log.i('Pairing started');
@@ -165,31 +198,40 @@ class ApiClient {
 
   /// Polls pairing status; returns completed with a session once the bot links.
   Future<PairingStatus> pollPairing(String pollToken) async {
-    final response = await _httpClient
-        .get(Uri.parse('$_baseUrl/pair/status?pollToken=$pollToken'))
-        .timeout(const Duration(seconds: 10));
+    final uri = Uri.parse('$_baseUrl/pair/status')
+        .replace(queryParameters: <String, String>{'pollToken': pollToken});
+    final response =
+        await _httpClient.get(uri).timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 404) {
       return const PairingStatus(PairingState.expired);
     }
     if (response.statusCode != 200) {
-      throw ApiException('Failed to poll pairing', statusCode: response.statusCode);
+      throw ApiException('pair_status_failed', statusCode: response.statusCode);
     }
 
     return PairingStatus.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<List<ServerCountry>> getServers(String accessToken) async {
-    final response = await _authedGet('/servers', accessToken);
+  /// [force] skips the cache — for the explicit refresh action, where the
+  /// point of the tap is to go and ask.
+  Future<List<ServerCountry>> getServers({bool force = false}) async {
+    _dropStaleCaches();
+    final cached = force ? null : _servers?.take();
+    if (cached != null) return cached;
+
+    final response = await _authedGet('/servers');
 
     if (response.statusCode != 200) {
-      throw ApiException('Failed to load servers', statusCode: response.statusCode);
+      throw ApiException('servers_failed', statusCode: response.statusCode);
     }
 
     final body = jsonDecode(response.body) as List<dynamic>;
-    return body
+    final servers = body
         .map((e) => ServerCountry.fromJson(e as Map<String, dynamic>))
         .toList();
+    _servers = _Cached(servers, _mintedAt);
+    return servers;
   }
 
   /// The servers this subscription can actually reach.
@@ -213,12 +255,19 @@ class ApiClient {
   /// with a node, we take that node's country grouping and online count.
   /// Otherwise the country comes from the flag emoji in the host's own remark.
   /// Falls back to the raw `/servers` list if the config can't be fetched.
-  Future<List<ServerCountry>> getUsableServers(String accessToken) async {
-    final servers = await getServers(accessToken);
+  Future<List<ServerCountry>> getUsableServers({bool force = false}) async {
+    final servers = await getServers(force: force);
     List<ConfigEntry> entries;
     try {
-      final (content, _) = await getConfig(accessToken);
+      final (content, _) = await getConfig(force: force);
       entries = parseConfigEntries(content);
+    } on ApiException catch (e) {
+      // 401 and 402 are the server telling us about the session, not about the
+      // subscription's contents. Swallowing them here is what used to hide a
+      // lapsed subscription behind a full server list, so the user only met it
+      // as a raw error after tapping Connect instead of on the renew screen.
+      if (e.statusCode == 401 || e.statusCode == 402) rethrow;
+      return servers;
     } catch (_) {
       return servers;
     }
@@ -266,30 +315,47 @@ class ApiClient {
     return usable.isEmpty ? servers : usable;
   }
 
-  Future<AccountStatus> getMe(String accessToken) async {
-    final response = await _authedGet('/me', accessToken);
+  Future<AccountStatus> getMe() async {
+    final response = await _authedGet('/me');
 
     if (response.statusCode != 200) {
-      throw ApiException('Failed to load account status', statusCode: response.statusCode);
+      throw ApiException('account_status_failed', statusCode: response.statusCode);
     }
 
     return AccountStatus.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  /// Last subscription we successfully fetched, kept so a reconnect can proceed
-  /// when the network is momentarily unusable. See [getConfig].
-  (String, String)? _lastGoodConfig;
+  /// Server list and subscription of the current session, reused within
+  /// [_cacheTtl]. The subscription doubles as the offline fallback below.
+  _Cached<List<ServerCountry>>? _servers;
+  _Cached<(String, String)>? _config;
 
-  Future<(String content, String contentType)> getConfig(String accessToken) async {
+  DateTime? get _mintedAt => readSessionMintedAt?.call();
+
+  /// Drops everything cached under a superseded session.
+  void _dropStaleCaches() {
+    final minted = _mintedAt;
+    if (_servers != null && _servers!.mintedAt != minted) _servers = null;
+    if (_config != null && _config!.mintedAt != minted) _config = null;
+  }
+
+  Future<(String content, String contentType)> getConfig({
+    bool force = false,
+  }) async {
+    _dropStaleCaches();
+    final cached = force ? null : _config?.take();
+    if (cached != null) return cached;
     try {
-      final response = await _authedGet('/config', accessToken);
+      final response = await _authedGet('/config');
 
       if (response.statusCode != 200) {
-        throw ApiException('Failed to load config', statusCode: response.statusCode);
+        throw ApiException('config_failed', statusCode: response.statusCode);
       }
 
       final contentType = response.headers['content-type'] ?? 'text/plain';
-      return _lastGoodConfig = (response.body, contentType);
+      final value = (response.body, contentType);
+      _config = _Cached(value, _mintedAt);
+      return value;
     } catch (e) {
       // Falling back matters most in the one situation where this call is least
       // likely to succeed: the user is on a server that stopped passing traffic
@@ -302,10 +368,24 @@ class ApiClient {
       // between two taps, and a wrong guess only costs one failed connect that
       // the next successful fetch corrects. Only network-level failures qualify
       // — an ApiException is the server talking, and its answer is the truth.
-      final cached = _lastGoodConfig;
-      if (e is ApiException || cached == null) rethrow;
+      final stale = _config;
+      if (e is ApiException || stale == null) rethrow;
       log.w('GET /config unreachable ($e) — reusing the last known subscription');
-      return cached;
+      return stale.value;
     }
   }
+}
+
+/// A value with the session it belongs to and the moment it was taken.
+class _Cached<T> {
+  _Cached(this.value, this.mintedAt) : _at = DateTime.now();
+
+  final T value;
+  final DateTime? mintedAt;
+  final DateTime _at;
+
+  bool get _fresh => DateTime.now().difference(_at) < ApiClient._cacheTtl;
+
+  /// The value while it is still worth reusing, otherwise null.
+  T? take() => _fresh ? value : null;
 }

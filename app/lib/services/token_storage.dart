@@ -12,6 +12,10 @@ class TokenStorage {
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
   static const _expiresAtKey = 'access_token_expires_at';
+  // The JWT's own lifetime, as opposed to _expiresAtKey, which despite its name
+  // holds the subscription's. Kept so a cold start knows whether the stored
+  // access token is still usable instead of refreshing (and rotating) blindly.
+  static const _accessJwtExpiresAtKey = 'access_jwt_expires_at';
   static const _deviceKeyKey = 'device_attestation_key';
   static const _autoTrialKey = 'auto_trial_attempted';
   static const _keyCodeKey = 'active_key_code';
@@ -55,12 +59,22 @@ class TokenStorage {
   Future<String?> readSessionKind() => _storage.read(key: _sessionKindKey);
 
   Future<void> save(AuthSession session) async {
-    await _storage.write(key: _accessTokenKey, value: session.accessToken);
-    await _storage.write(key: _refreshTokenKey, value: session.refreshToken);
-    await _storage.write(
-      key: _expiresAtKey,
-      value: session.expiresAt.toIso8601String(),
-    );
+    final accessTokenExpiresAt = session.accessTokenExpiresAt;
+    await Future.wait([
+      _storage.write(key: _accessTokenKey, value: session.accessToken),
+      _storage.write(key: _refreshTokenKey, value: session.refreshToken),
+      _storage.write(
+        key: _expiresAtKey,
+        value: session.expiresAt.toIso8601String(),
+      ),
+      if (accessTokenExpiresAt != null)
+        _storage.write(
+          key: _accessJwtExpiresAtKey,
+          value: accessTokenExpiresAt.toIso8601String(),
+        )
+      else
+        _storage.delete(key: _accessJwtExpiresAtKey),
+    ]);
   }
 
   /// The key code the user pasted to connect (the "код ключа" from the bot),
@@ -74,23 +88,40 @@ class TokenStorage {
 
   Future<String?> readKeyCode() => _storage.read(key: _keyCodeKey);
 
+  /// Reads the stored session. The four values are fetched together: each one
+  /// crosses a platform channel and is decrypted with a Keystore key, which on
+  /// a budget device is 5-15 ms — and this sits directly in front of the first
+  /// frame, alongside a dozen other reads.
   Future<AuthSession?> read() async {
-    final accessToken = await _storage.read(key: _accessTokenKey);
-    final expiresAtRaw = await _storage.read(key: _expiresAtKey);
+    final values = await Future.wait([
+      _storage.read(key: _accessTokenKey),
+      _storage.read(key: _expiresAtKey),
+      _storage.read(key: _refreshTokenKey),
+      _storage.read(key: _accessJwtExpiresAtKey),
+    ]);
+    final accessToken = values[0];
+    final expiresAtRaw = values[1];
     if (accessToken == null || expiresAtRaw == null) {
       return null;
     }
+    final accessJwtExpiresAtRaw = values[3];
     return AuthSession(
       accessToken: accessToken,
-      refreshToken: await _storage.read(key: _refreshTokenKey) ?? '',
+      refreshToken: values[2] ?? '',
       expiresAt: DateTime.parse(expiresAtRaw),
+      accessTokenExpiresAt: accessJwtExpiresAtRaw != null
+          ? DateTime.tryParse(accessJwtExpiresAtRaw)
+          : null,
     );
   }
 
   Future<void> clear() async {
-    await _storage.delete(key: _accessTokenKey);
-    await _storage.delete(key: _refreshTokenKey);
-    await _storage.delete(key: _expiresAtKey);
-    await _storage.delete(key: _keyCodeKey);
+    await Future.wait([
+      _storage.delete(key: _accessTokenKey),
+      _storage.delete(key: _refreshTokenKey),
+      _storage.delete(key: _expiresAtKey),
+      _storage.delete(key: _accessJwtExpiresAtKey),
+      _storage.delete(key: _keyCodeKey),
+    ]);
   }
 }

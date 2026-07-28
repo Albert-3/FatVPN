@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/ping_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
+import '../utils/parallel.dart';
 
 /// Result of picking a location: either the automatic "best server" mode, or a
 /// specific [country]. Returned via `Navigator.pop`; a plain `null` still means
@@ -22,17 +23,16 @@ class LocationSelection {
 class ChooseLocationScreen extends StatefulWidget {
   const ChooseLocationScreen({
     super.key,
-    required this.accessToken,
+    required this.apiClient,
     this.initialServers = const [],
     this.selectedCountry,
-    this.onUnauthorized,
   });
 
-  final String accessToken;
+  /// The app's shared client. Taken rather than built here: this screen can
+  /// stay open for a long time, and one of its own would start a second
+  /// connection pool and re-fetch a subscription the caller already holds.
+  final ApiClient apiClient;
   final List<ServerCountry> initialServers;
-
-  /// Refreshes the access token on a 401 (passed through to [ApiClient]).
-  final Future<String?> Function()? onUnauthorized;
 
   /// Country code currently active, or null when "best server" (auto) is active
   /// — used to highlight the current choice.
@@ -43,7 +43,7 @@ class ChooseLocationScreen extends StatefulWidget {
 }
 
 class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
-  late final _apiClient = ApiClient(onUnauthorized: widget.onUnauthorized);
+  late final _apiClient = widget.apiClient;
   final _pingService = PingService();
 
   late List<ServerCountry> _servers = widget.initialServers;
@@ -61,20 +61,18 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
     }
   }
 
-  Future<void> _loadServers() async {
+  /// [force] comes from the refresh button: the whole point of that tap is to
+  /// go and ask, so it must not be answered out of the cache.
+  Future<void> _loadServers({bool force = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final servers = await _apiClient.getUsableServers(widget.accessToken);
+      final servers = await _apiClient.getUsableServers(force: force);
+      if (!mounted) return;
       setState(() {
         _servers = servers;
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      setState(() {
-        _error = e.message;
         _loading = false;
       });
     } catch (_) {
@@ -94,13 +92,23 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
     }
   }
 
+  /// Measures the country's nodes in parallel and paints the whole batch at
+  /// once. One at a time meant a six-node country trickled numbers in over nine
+  /// seconds, rebuilding the whole list for each.
   Future<void> _measurePings(ServerCountry country) async {
-    for (final node in country.nodes) {
-      if (_pingByNodeId.containsKey(node.id)) continue;
-      final ms = await _pingService.pingMs(node.address, node.port);
-      if (!mounted) return;
-      setState(() => _pingByNodeId[node.id] = ms);
-    }
+    final pending =
+        country.nodes.where((n) => !_pingByNodeId.containsKey(n.id)).toList();
+    if (pending.isEmpty) return;
+    final pings = await mapConcurrently(
+      pending,
+      (n) => _pingService.pingMs(n.address, n.port),
+    );
+    if (!mounted) return;
+    setState(() {
+      for (var i = 0; i < pending.length; i++) {
+        _pingByNodeId[pending[i].id] = pings[i];
+      }
+    });
   }
 
   @override
@@ -242,7 +250,7 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
             ),
           ),
           IconButton(
-            onPressed: _loadServers,
+            onPressed: () => _loadServers(force: true),
             icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
           ),
         ],

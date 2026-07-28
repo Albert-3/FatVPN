@@ -17,10 +17,23 @@ class AuthController extends ChangeNotifier {
   AuthController({ApiClient? apiClient, TokenStorage? tokenStorage, AppLinks? appLinks})
       : _apiClient = apiClient ?? ApiClient(),
         _tokenStorage = tokenStorage ?? TokenStorage(),
-        _appLinks = appLinks ?? AppLinks();
+        _appLinks = appLinks ?? AppLinks() {
+    // One client for the whole app (see [api]), so it has to read the session
+    // from here rather than be handed a token that goes stale in the caller's
+    // hands.
+    _apiClient
+      ..readAccessToken = currentAccessToken
+      ..onUnauthorized = ensureFreshAccessToken
+      ..readSessionMintedAt = () => _sessionMintedAt;
+  }
 
   final ApiClient _apiClient;
   final TokenStorage _tokenStorage;
+
+  /// The app's single [ApiClient]. Shared so the `/servers` + `/config` cache
+  /// and the last-known subscription are one thing rather than one per screen,
+  /// and so a screen opening doesn't start a fresh connection pool.
+  ApiClient get api => _apiClient;
   final AppLinks _appLinks;
   StreamSubscription<Uri>? _linkSubscription;
 
@@ -108,6 +121,14 @@ class AuthController extends ChangeNotifier {
   /// True while [resumeTrial] is in flight (button spinner).
   bool get trialResumeBusy => _trialResumeBusy;
 
+  /// Invoked when the session goes away — the user signing out, or a refresh
+  /// the server rejected outright. The tunnel was authorised by that session,
+  /// so it has to come down with it: otherwise the app shows onboarding while
+  /// the user's whole traffic still leaves through a subscription they no
+  /// longer hold, VPN icon and all. Wired by [HomeScreen], which owns the
+  /// [VpnController]; null when no tunnel can be running.
+  Future<void> Function()? onSessionDropped;
+
   /// Pairing code to show/QR-encode, or null while none is active.
   String? get pairCode => _pairing?.pairCode;
 
@@ -175,6 +196,32 @@ class AuthController extends ChangeNotifier {
     return _refreshNow();
   }
 
+  /// Margin before [AuthSession.accessTokenExpiresAt] at which a token is
+  /// treated as spent. Wide enough to cover a slow request and a clock that
+  /// disagrees with the server's by a little.
+  static const _accessTokenLeeway = Duration(minutes: 2);
+
+  /// The access token to use for the next request, refreshed only when the
+  /// current one is about to run out.
+  ///
+  /// This is what [ApiClient] reads before every call. Refreshing on a timer
+  /// instead — or refreshing because a screen has been open a while — rotates
+  /// the refresh token for no reason, and each rotation is an opportunity to
+  /// lose the whole session family to reuse detection.
+  Future<String?> currentAccessToken() async {
+    final session = _session;
+    if (session == null) return null;
+    final expiry = session.accessTokenExpiresAt;
+    if (expiry != null &&
+        expiry.difference(DateTime.now()) > _accessTokenLeeway) {
+      return session.accessToken;
+    }
+    // Unknown expiry (a session stored by an older build) or genuinely spent:
+    // rotate, and fall back to what we hold if the network says no — a 401 then
+    // triggers the retry path in ApiClient.
+    return await _refreshNow() ?? session.accessToken;
+  }
+
   /// Refreshes on app resume so an extended (or lapsed) subscription is picked
   /// up without the user doing anything.
   Future<void> refreshOnResume() async {
@@ -210,10 +257,16 @@ class AuthController extends ChangeNotifier {
     }
     try {
       final fresh = await _apiClient.refreshSession(refreshToken);
+      // Disk before memory. The server has already revoked the token we just
+      // presented, so a rotation that lives only in RAM is one process kill
+      // away from replaying a revoked token — which reuse detection answers by
+      // revoking the whole family and forcing a re-pair. Letting the write
+      // failure abort the refresh keeps the old token authoritative, and the
+      // BFF's grace window covers the immediate retry.
+      await _tokenStorage.save(fresh);
       _session = fresh;
       _subscriptionExpired = fresh.isExpired;
       notifyListeners();
-      unawaited(_tokenStorage.save(fresh).catchError((_) {}));
       return fresh.accessToken;
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
@@ -224,7 +277,7 @@ class AuthController extends ChangeNotifier {
       }
       return null;
     } catch (err) {
-      log.w('Refresh network error — keeping session for retry ($err)');
+      log.w('Refresh failed — keeping session for retry ($err)');
       return null;
     }
   }
@@ -249,8 +302,7 @@ class AuthController extends ChangeNotifier {
     // A trial supersedes any in-flight pairing attempt — stop its poll timer so
     // it doesn't keep hitting /pair/status in the background after we navigate
     // to Home (pairing-complete does the same cleanup).
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    _stopPolling();
     _pairing = null;
     _session = session;
     // A trial has no user-entered key code — drop any stale one from storage.
@@ -347,6 +399,17 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// A key that arrived over `fatvpn://token/<code>` and is waiting for the
+  /// user to say yes. Null when there is nothing pending.
+  ///
+  /// Not exchanged on arrival: any app on the device can fire that intent, and
+  /// a key it chose would silently move the victim's whole traffic onto a
+  /// subscription the attacker controls. The exchange itself is authenticated
+  /// by the BFF, so the only defence against being handed *someone else's* key
+  /// is asking the person holding the phone.
+  String? get pendingDeepLinkToken => _pendingDeepLinkToken;
+  String? _pendingDeepLinkToken;
+
   Future<void> _handleUri(Uri uri) async {
     if (uri.scheme != deepLinkScheme) {
       return;
@@ -355,10 +418,37 @@ class AuthController extends ChangeNotifier {
     if (shortToken.isEmpty) {
       return;
     }
-    await exchangeShortToken(shortToken);
+    _pendingDeepLinkToken = shortToken;
+    notifyListeners();
   }
 
-  Future<void> exchangeShortToken(String shortToken, {String? conflictMessage}) async {
+  /// Accepts the key from [pendingDeepLinkToken].
+  Future<void> confirmPendingDeepLinkToken({
+    required String conflictMessage,
+    required String genericMessage,
+  }) async {
+    final token = _pendingDeepLinkToken;
+    if (token == null) return;
+    _pendingDeepLinkToken = null;
+    await exchangeShortToken(
+      token,
+      conflictMessage: conflictMessage,
+      genericMessage: genericMessage,
+    );
+  }
+
+  void dismissPendingDeepLinkToken() {
+    if (_pendingDeepLinkToken == null) return;
+    log.i('Deep-linked key declined by the user');
+    _pendingDeepLinkToken = null;
+    notifyListeners();
+  }
+
+  Future<void> exchangeShortToken(
+    String shortToken, {
+    required String conflictMessage,
+    required String genericMessage,
+  }) async {
     try {
       _error = null;
       final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
@@ -380,12 +470,10 @@ class AuthController extends ChangeNotifier {
         await _tokenStorage.saveSessionKind('key');
       } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
-      _error = (e.statusCode == 409 && conflictMessage != null)
-          ? conflictMessage
-          : e.message;
+      _error = e.statusCode == 409 ? conflictMessage : genericMessage;
       notifyListeners();
     } catch (_) {
-      _error = 'Could not reach the server. Check your connection and try again.';
+      _error = genericMessage;
       notifyListeners();
     }
   }
@@ -426,29 +514,95 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Back-off schedule for `/pair/status`. The user is off in Telegram paying
+  /// for a subscription, so the first seconds are worth polling tightly and the
+  /// minutes after that are not — a flat 2 s meant 30 requests a minute on
+  /// mobile radio for as long as the screen stayed open.
+  static const _pollIntervals = <Duration>[
+    Duration(seconds: 2),
+    Duration(seconds: 3),
+    Duration(seconds: 5),
+  ];
+
+  /// Consecutive failed polls before the attempt is abandoned. Without a limit
+  /// a malformed "completed" response (a version skew between BFF and app)
+  /// leaves the timer running forever behind a spinner that never resolves.
+  static const _maxPollFailures = 5;
+
+  int _pollTicks = 0;
+  int _pollFailures = 0;
+  String _pairingExpiredMessage = '';
+  String _pairingGenericMessage = '';
+
   /// Requests a fresh pairing code and starts polling for completion. Safe to
-  /// call again to retry after a code expires.
-  Future<void> startPairing() async {
+  /// call again to retry after a code expires. Error strings are passed in by
+  /// the caller so they can be localized.
+  Future<void> startPairing({
+    required String expiredMessage,
+    required String genericMessage,
+  }) async {
     if (_pairingBusy) return;
     _pairingBusy = true;
-    _pollTimer?.cancel();
+    _stopPolling();
     _pairing = null;
     _error = null;
+    _pairingExpiredMessage = expiredMessage;
+    _pairingGenericMessage = genericMessage;
     notifyListeners();
 
     try {
       _pairing = await _apiClient.startPairing();
       notifyListeners();
-      _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollOnce());
-    } on ApiException catch (e) {
-      _error = e.message;
-      notifyListeners();
+      _schedulePoll();
     } catch (_) {
-      _error = 'Could not reach the server. Check your connection and try again.';
+      _error = genericMessage;
       notifyListeners();
     } finally {
       _pairingBusy = false;
     }
+  }
+
+  /// Pauses polling while the app is in the background (the user is in Telegram
+  /// completing the pairing) and resumes with an immediate check on return, so
+  /// a completion that happened meanwhile shows up at once.
+  void setPairingPaused(bool paused) {
+    if (_pairing == null) return;
+    if (paused) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      return;
+    }
+    if (_pollTimer == null) {
+      unawaited(_pollOnce());
+      _schedulePoll();
+    }
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pollTicks = 0;
+    _pollFailures = 0;
+  }
+
+  void _schedulePoll() {
+    _pollTimer?.cancel();
+    final interval = _pollIntervals[
+        _pollTicks < _pollIntervals.length ? _pollTicks : _pollIntervals.length - 1];
+    _pollTimer = Timer(interval, () {
+      _pollTicks++;
+      unawaited(_pollOnce());
+      if (_pairing != null) _schedulePoll();
+    });
+  }
+
+  /// Ends the attempt and tells the user why. [expired] distinguishes the code
+  /// running out from repeated failures.
+  void _failPairing({required bool expired}) {
+    _stopPolling();
+    _pairing = null;
+    _error = expired ? _pairingExpiredMessage : _pairingGenericMessage;
+    notifyListeners();
   }
 
   Future<void> _pollOnce() async {
@@ -456,15 +610,22 @@ class AuthController extends ChangeNotifier {
     if (_pollInFlight) return;
     final pairing = _pairing;
     if (pairing == null) return;
+    // The server stops honouring the code at this point, so polling past it is
+    // guaranteed-useless traffic that the user reads as a hung screen.
+    if (DateTime.now().isAfter(pairing.expiresAt)) {
+      log.i('Pairing code expired locally — stopping the poll');
+      _failPairing(expired: true);
+      return;
+    }
     _pollInFlight = true;
 
     try {
       final status = await _apiClient.pollPairing(pairing.pollToken);
+      _pollFailures = 0;
       switch (status.state) {
         case PairingState.completed:
           log.i('Pairing completed — session established');
-          _pollTimer?.cancel();
-          _pollTimer = null;
+          _stopPolling();
           _pairing = null;
           _session = status.session;
           // Pairing has no user-entered key code — drop any stale one.
@@ -481,16 +642,18 @@ class AuthController extends ChangeNotifier {
             await _tokenStorage.saveSessionKind('pairing');
           } catch (_) {/* UI already advanced; a later refresh re-persists */}
         case PairingState.expired:
-          _pollTimer?.cancel();
-          _pollTimer = null;
-          _pairing = null;
-          _error = 'Pairing code expired. Tap to get a new one.';
-          notifyListeners();
+          _failPairing(expired: true);
         case PairingState.pending:
           break;
       }
-    } catch (_) {
-      // Transient network blip — keep polling; the next tick may succeed.
+    } catch (err) {
+      // A blip is normal and the next tick may succeed; a run of them is not,
+      // and used to leave the user watching a spinner forever.
+      _pollFailures++;
+      log.w('Pairing poll failed ($_pollFailures/$_maxPollFailures): $err');
+      if (_pollFailures >= _maxPollFailures) {
+        _failPairing(expired: false);
+      }
     } finally {
       _pollInFlight = false;
     }
@@ -498,8 +661,14 @@ class AuthController extends ChangeNotifier {
 
   Future<void> signOut() async {
     log.i('Signing out');
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    // Before anything else, so the UI never reaches onboarding over a tunnel
+    // that is still up.
+    try {
+      await onSessionDropped?.call();
+    } catch (err) {
+      log.w('Could not stop the tunnel on sign-out ($err)');
+    }
+    _stopPolling();
     _pairing = null;
     final refreshToken = _session?.refreshToken;
     if (refreshToken != null && refreshToken.isNotEmpty) {
@@ -519,8 +688,9 @@ class AuthController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _stopPolling();
     _linkSubscription?.cancel();
+    _apiClient.close();
     super.dispose();
   }
 }
