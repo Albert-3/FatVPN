@@ -88,12 +88,22 @@ Future<bool> _attemptMtuProbeRecoveryInternal(SignboxVpn client) async {
     return false;
   }
 
+  final int? probeCursor = client._endpointMtuProbeCursorByTag[profile.tag];
+  final int? configuredMtu = client._endpointThrottlePolicy.tunMtu;
+  if (probeCursor == null && configuredMtu == null) {
+    // Nothing named an MTU and nothing has probed, so the tunnel is running on
+    // [defaultTunMtu] — 1100 or 1280, at or below the smallest candidate here.
+    // There is nothing to step *down* to: entering the ladder at index 0 would
+    // raise the MTU in response to a path that is already failing, which is
+    // backwards. Let the caller move to another endpoint instead.
+    return false;
+  }
+
   final int configuredMtuIndex = max(
     0,
-    candidates.indexOf(client._endpointThrottlePolicy.tunMtu),
+    candidates.indexOf(configuredMtu ?? -1),
   );
-  final int currentIndex =
-      client._endpointMtuProbeCursorByTag[profile.tag] ?? configuredMtuIndex;
+  final int currentIndex = probeCursor ?? configuredMtuIndex;
   if (currentIndex >= candidates.length - 1) {
     return false;
   }

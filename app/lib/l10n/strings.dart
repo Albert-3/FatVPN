@@ -11,6 +11,10 @@ class Strings {
     required this.connectionSettings,
     required this.dnsServer,
     required this.networkStack,
+    required this.autoReconnect,
+    required this.autoReconnectSubtitle,
+    required this.killSwitch,
+    required this.killSwitchSubtitle,
     required this.appliesOnNextConnection,
     required this.customDnsHint,
     required this.routing,
@@ -128,6 +132,10 @@ class Strings {
   final String connectionSettings;
   final String dnsServer;
   final String networkStack;
+  final String autoReconnect;
+  final String autoReconnectSubtitle;
+  final String killSwitch;
+  final String killSwitchSubtitle;
   final String appliesOnNextConnection;
   final String customDnsHint;
   final String routing;
@@ -317,6 +325,12 @@ const Strings enStrings = Strings(
   connectionSettings: 'CONNECTION SETTINGS',
   dnsServer: 'DNS Server',
   networkStack: 'Network stack',
+  autoReconnect: 'Reconnect automatically',
+  autoReconnectSubtitle:
+      'Let the system bring the VPN back after a crash or a restart',
+  killSwitch: 'Block traffic without VPN',
+  killSwitchSubtitle:
+      'Nothing leaves the device while the tunnel is down',
   appliesOnNextConnection: 'Changes apply automatically',
   customDnsHint: 'Custom resolver (DoH URL, tls:// or IP)',
   routing: 'ROUTING',
@@ -460,6 +474,11 @@ final Strings ruStrings = Strings(
   connectionSettings: 'НАСТРОЙКИ ПОДКЛЮЧЕНИЯ',
   dnsServer: 'DNS-сервер',
   networkStack: 'Сетевой стек',
+  autoReconnect: 'Переподключаться автоматически',
+  autoReconnectSubtitle:
+      'Система сама поднимет VPN после сбоя или перезагрузки',
+  killSwitch: 'Блокировать трафик без VPN',
+  killSwitchSubtitle: 'Пока туннель не работает, ничего не уходит с устройства',
   appliesOnNextConnection: 'Изменения применяются автоматически',
   customDnsHint: 'Свой резолвер (DoH-URL, tls:// или IP)',
   routing: 'МАРШРУТИЗАЦИЯ',

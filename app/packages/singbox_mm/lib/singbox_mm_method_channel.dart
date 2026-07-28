@@ -126,6 +126,48 @@ class MethodChannelSignboxVpn extends SignboxVpnPlatform {
   }
 
   @override
+  /// Records how the OS should treat the tunnel — see
+  /// [SignboxVpnPlatform.setTunnelPreferences].
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) {
+    return _invokeOptional('setTunnelPreferences', <String, Object?>{
+      'onDemandEnabled': onDemandEnabled,
+      'killSwitchEnabled': killSwitchEnabled,
+    });
+  }
+
+  @override
+  /// Erases the platform's stored copy of the config and any tunnel artifacts —
+  /// see [SignboxVpnPlatform.clearPersistedState].
+  Future<void> clearPersistedState() {
+    return _invokeOptional('clearPersistedState', null);
+  }
+
+  /// Calls a method the host platform may not implement.
+  ///
+  /// Both calls above describe something only one platform has (iOS network
+  /// extension lifecycle, iOS App Group artifacts). An older or a different
+  /// native side answers `notImplemented`, which the channel raises as a
+  /// [MissingPluginException] — a hard failure for a request whose whole
+  /// meaning is "if you can, do this".
+  ///
+  /// Only that one exception is absorbed. A [PlatformException] means the
+  /// platform *does* implement the call and it went wrong — the config was not
+  /// erased, the VPN profile was not updated — and callers have to be able to
+  /// see that: swallowing it here made the "could not clear persisted tunnel
+  /// state" warning in VpnController unreachable, which is the same silent
+  /// failure this audit is fixing everywhere else.
+  Future<void> _invokeOptional(String method, Map<String, Object?>? arguments) async {
+    try {
+      await methodChannel.invokeMethod<void>(method, arguments);
+    } on MissingPluginException {
+      return;
+    }
+  }
+
+  @override
   /// Starts VPN service.
   Future<void> startVpn() {
     return methodChannel.invokeMethod<void>('startVpn');

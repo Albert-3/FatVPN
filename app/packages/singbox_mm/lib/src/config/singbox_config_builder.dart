@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import 'internal/singbox_dns_builder.dart';
 import 'internal/singbox_inbound_builder.dart';
 import 'internal/singbox_route_rules_builder.dart';
@@ -96,6 +98,9 @@ class SingboxConfigBuilder {
       settings: settings,
       tunInterfaceName: tunInterfaceName,
       tunInet4Address: tunInet4Address,
+      // Carries `tunMtu` — the value the adaptive probe recomputes, and which
+      // never reached the emitted config before.
+      throttlePolicy: throttlePolicy,
     );
 
     final Map<String, Object?> dns = _dnsBuilder.build(
@@ -172,6 +177,9 @@ class SingboxConfigBuilder {
     if (settings.rawConfigPatch.isNotEmpty) {
       _deepMergeMap(config, settings.rawConfigPatch);
     }
+    // After the patch, never before: the patch is the one thing that can move
+    // the control API somewhere it must not go.
+    _enforceLoopbackControlApi(config);
 
     _migrateLegacyDnsRouteRules(config);
     _sanitizeFinalOutbounds(
@@ -803,6 +811,61 @@ class SingboxConfigBuilder {
     outbound['transport'] = transport;
   }
 
+  /// Pins the core's control API to loopback, with a secret, whatever the
+  /// config ended up saying.
+  ///
+  /// `external_controller` is reachable through `rawConfigPatch`, and the
+  /// config as a whole is assembled from a subscription link the server hands
+  /// us. Left as given, `attacker.example:80` would have the VPN process itself
+  /// beacon out on a timer — the native health probes poll this address, and
+  /// they run inside the tunnel service — while sing-box simultaneously bound
+  /// control of the core to a routable address, offering the local network a
+  /// switch for the user's traffic. A port we cannot make sense of drops the
+  /// control API entirely: the health probes degrade to "unknown", which is the
+  /// safe verdict, and nothing else depends on it.
+  void _enforceLoopbackControlApi(Map<String, Object?> config) {
+    final Map<String, Object?> experimental = _asObjectMap(
+      config['experimental'],
+    );
+    if (experimental.isEmpty) {
+      return;
+    }
+    final Map<String, Object?> clashApi = _asObjectMap(experimental['clash_api']);
+    if (clashApi.isEmpty) {
+      return;
+    }
+
+    void drop() {
+      experimental.remove('clash_api');
+      config['experimental'] = experimental;
+    }
+
+    final String? external = _normalizedNonEmptyString(
+      clashApi['external_controller'],
+    );
+    if (external == null) {
+      drop();
+      return;
+    }
+    final int separator = external.lastIndexOf(':');
+    final int? port = separator < 0
+        ? null
+        : int.tryParse(external.substring(separator + 1).trim());
+    if (port == null || port <= 0 || port > 65535) {
+      drop();
+      return;
+    }
+
+    clashApi['external_controller'] = '127.0.0.1:$port';
+    // Loopback is shared by every app on the device on both platforms, so an
+    // unauthenticated control API is an open door to the user's live connection
+    // list and to the routing itself. An omitted secret fails closed.
+    final String? secret = _normalizedNonEmptyString(clashApi['secret']);
+    clashApi['secret'] = secret ?? _randomSecret();
+    experimental['clash_api'] = clashApi;
+    config['experimental'] = experimental;
+  }
+
   /// 128 bits from the platform CSPRNG, hex-encoded.
   String _randomSecret() {
     final Random random = Random.secure();
@@ -1214,7 +1277,30 @@ class SingboxConfigBuilder {
     }
   }
 
+  /// The level sing-box logs at, clamped so a release build can never be talked
+  /// into `debug`.
+  ///
+  /// At `debug`/`trace` the core writes the destination domain and address of
+  /// every connection the user makes. That log is read back by the app, shown
+  /// on screen and folded into the support bundle the user shares with whoever
+  /// they like — so in a shipped build it is a browsing history with a share
+  /// button, and no setting reachable from the UI (or from a config patch) may
+  /// switch it on.
   String _resolveLogLevel({
+    required String runtimeLogLevel,
+    required AdvancedOptions settings,
+  }) {
+    final String resolved = _requestedLogLevel(
+      runtimeLogLevel: runtimeLogLevel,
+      settings: settings,
+    );
+    if (kReleaseMode && (resolved == 'debug' || resolved == 'trace')) {
+      return 'warn';
+    }
+    return resolved;
+  }
+
+  String _requestedLogLevel({
     required String runtimeLogLevel,
     required AdvancedOptions settings,
   }) {

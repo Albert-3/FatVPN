@@ -87,7 +87,15 @@ class VpnController extends ChangeNotifier {
   /// the user's battery on a tighter loop — the tunnel's own watchdog, which
   /// runs inside the VPN service and so survives the app being backgrounded,
   /// is what catches a dead tunnel quickly.
-  static const _sessionHealthInterval = Duration(minutes: 3);
+  ///
+  /// Slower still on iOS, where the packet-tunnel extension runs a watchdog of
+  /// its own around the clock: two independent loops asking the same question
+  /// is the one place this app spends battery for nothing, and the extension's
+  /// is both the better-informed and the unavoidable one.
+  static Duration get _sessionHealthInterval =>
+      defaultTargetPlatform == TargetPlatform.iOS
+          ? const Duration(minutes: 6)
+          : const Duration(minutes: 3);
 
   /// Minimum quiet period after a switch. Without it a pair of nodes whose
   /// latencies straddle the threshold could bounce the session back and forth,
@@ -675,9 +683,38 @@ class VpnController extends ChangeNotifier {
           'stack=${connectionSettings.networkStack.name}, '
           'split=${connectionSettings.splitTunnelEnabled}'
           '/${connectionSettings.splitTunnelMode.name})');
+      // How the OS itself should treat this tunnel — whether it may bring it
+      // back on its own after a crash, a memory kill or a reboot, and whether
+      // traffic is allowed out while it is down. Pushed before the start
+      // because that is when the platform writes them into the VPN profile.
+      //
+      // Caught rather than allowed to abort the connect: failing here costs the
+      // user their auto-reconnect preference, and refusing to connect at all
+      // over that would be a far worse trade. Logged, not swallowed — the
+      // symptom is otherwise invisible ("I turned the kill switch on and
+      // nothing happens").
+      try {
+        await _vpn.setTunnelPreferences(
+          onDemandEnabled: connectionSettings.autoReconnect,
+          killSwitchEnabled: connectionSettings.killSwitch,
+        );
+      } catch (e) {
+        log.w('Could not apply tunnel preferences (auto-reconnect / '
+            'kill switch); connecting without them: $e');
+      }
       // A new tunnel gets a new control-API secret, so a secret that leaked
       // (a support bundle, a shared log) stops working at the next connect.
       final clashApiSecret = _newClashApiSecret();
+      // Adopted *before* the connect, not after. `connectManualConfigLink` can
+      // throw after the config is already installed and the tunnel started (the
+      // second-core fallback does exactly that), and a throw past this point
+      // would leave a running tunnel holding the new secret while this field
+      // still held the old one: every probe would answer 401, the outbound tag
+      // would read as null, and a dead tunnel would stop being detectable.
+      _clashApiSecret = clashApiSecret;
+      unawaited(
+        _storage.write(key: _clashApiSecretKey, value: clashApiSecret),
+      );
       // Built fresh here so DNS / network-stack preference edits in Settings
       // take effect on this (re)connect.
       await _vpn.connectManualConfigLink(
@@ -685,10 +722,6 @@ class VpnController extends ChangeNotifier {
         featureSettings: connectionSettings.buildFeatureSettings(
           clashApiSecret: clashApiSecret,
         ),
-      );
-      _clashApiSecret = clashApiSecret;
-      unawaited(
-        _storage.write(key: _clashApiSecretKey, value: clashApiSecret),
       );
       _connectedNode = node;
       log.i('Tunnel established to "${node.name}"');
@@ -1045,6 +1078,32 @@ class VpnController extends ChangeNotifier {
     // leaving — which also stranded anyone trying to escape a dead one.
     _connectedNode = null;
     await _vpn.stop();
+    if (endSession) {
+      await forgetPersistedTunnelState();
+    }
+  }
+
+  /// Erases everything the platform still holds about the subscription that was
+  /// just running: the stored sing-box config, and on iOS the extension's
+  /// start-options snapshot and its diagnostics.
+  ///
+  /// The snapshot is the one that matters. It exists so the OS can bring the
+  /// tunnel back without the app — which is right while the user wants a VPN,
+  /// and wrong the moment they don't: after a power-off, a logout or an expired
+  /// subscription it would reconnect them to the last node they used, on
+  /// credentials the panel may have revoked since. The config and the
+  /// diagnostics go with it because both quote those credentials verbatim.
+  ///
+  /// Best-effort by design: failing to clean up must not turn a sign-out into
+  /// an error the user is shown.
+  Future<void> forgetPersistedTunnelState() async {
+    _clashApiSecret = null;
+    unawaited(_storage.delete(key: _clashApiSecretKey));
+    try {
+      await _vpn.clearPersistedState();
+    } catch (e) {
+      log.w('Could not clear persisted tunnel state: $e');
+    }
   }
 
   @override

@@ -183,7 +183,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Brings the tunnel down when the session behind it disappears.
   Future<void> _stopTunnelOnSignOut() async {
-    if (_vpn.state == VpnConnectionState.disconnected) return;
+    if (_vpn.state == VpnConnectionState.disconnected) {
+      // Nothing to stop, but there is still plenty to erase: the stored config
+      // and (on iOS) the snapshot the OS would reconnect from both outlive the
+      // tunnel, and a signed-out user must not leave their subscription
+      // credentials behind on the device.
+      await _vpn.forgetPersistedTunnelState();
+      return;
+    }
     await _vpn.disconnect();
   }
 

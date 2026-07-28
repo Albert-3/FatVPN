@@ -10,7 +10,7 @@ class TrafficThrottlePolicy {
     this.tcpBrutalDownloadMbps = 240,
     this.tcpFastOpen = true,
     this.udpFragment = true,
-    this.tunMtu = 1400,
+    this.tunMtu,
     this.dnsStrategy = 'prefer_ipv4',
     this.enableAutoMtuProbe = true,
     this.mtuProbeCandidates = const <int>[1400, 1380, 1360, 1340, 1320],
@@ -19,7 +19,7 @@ class TrafficThrottlePolicy {
        assert(multiplexMaxStreams >= multiplexMinStreams),
        assert(tcpBrutalUploadMbps > 0),
        assert(tcpBrutalDownloadMbps > 0),
-       assert(tunMtu >= 1280);
+       assert(tunMtu == null || tunMtu >= 1280);
 
   final bool enableMultiplex;
   final bool multiplexPadding;
@@ -31,7 +31,17 @@ class TrafficThrottlePolicy {
   final int tcpBrutalDownloadMbps;
   final bool tcpFastOpen;
   final bool udpFragment;
-  final int tunMtu;
+
+  /// TUN MTU this policy asks for, or null to take the platform default
+  /// ([defaultTunMtu]).
+  ///
+  /// The single source of truth for the emitted `tun.mtu`: presets set it, the
+  /// adaptive probe recomputes it (see `_effectiveThrottlePolicyForProfile`),
+  /// and the config builder now reads it. Null rather than a fixed 1400 so
+  /// "nobody asked for a particular MTU" stays distinguishable from "1400 was
+  /// chosen" — the platform default differs between iOS and Android, and a
+  /// non-null default here would silently override it everywhere.
+  final int? tunMtu;
   final String dnsStrategy;
   final bool enableAutoMtuProbe;
   final List<int> mtuProbeCandidates;

@@ -159,6 +159,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'dns_preset': cs.dnsPreset.name,
       'custom_dns': cs.customDns.isEmpty ? '(none)' : cs.customDns,
       'network_stack': cs.networkStack.name,
+      // Both change what happens when the tunnel is *not* up, which is the
+      // situation most support reports are actually about.
+      'auto_reconnect': cs.autoReconnect.toString(),
+      'kill_switch': cs.killSwitch.toString(),
       'split_tunnel_enabled': cs.splitTunnelEnabled.toString(),
       // The mode decides what the two counts below mean, so it has to travel
       // with them — the same "2 apps, 3 hosts" is a narrow bypass in one mode
@@ -260,6 +264,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             s.networkStack,
                             _stackLabel(cs.networkStack),
                             () => _showStackPicker(s),
+                          ),
+                          // Both of these hand control of the tunnel to the
+                          // OS, which is why neither is on by default: with
+                          // auto-reconnect the system re-establishes the VPN
+                          // whenever there is a network (including after a
+                          // reboot), and the kill switch cuts the device off
+                          // entirely whenever the tunnel cannot come up. They
+                          // are also the only answer to an extension the OS
+                          // killed — nothing in the app can restart it.
+                          const Divider(color: AppColors.disabled, height: 24),
+                          _switchRow(
+                            s.autoReconnect,
+                            s.autoReconnectSubtitle,
+                            cs.autoReconnect,
+                            cs.setAutoReconnect,
+                          ),
+                          const Divider(color: AppColors.disabled, height: 24),
+                          _switchRow(
+                            s.killSwitch,
+                            s.killSwitchSubtitle,
+                            cs.killSwitch,
+                            cs.setKillSwitch,
                           ),
                         ],
                       );
@@ -744,6 +770,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
       ),
+    );
+  }
+
+  /// A labelled on/off row. The subtitle is not decoration: both switches that
+  /// use it change what happens when the VPN is *not* working, which the title
+  /// alone cannot convey.
+  Widget _switchRow(
+    String label,
+    String subtitle,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Switch(
+          value: value,
+          activeTrackColor: AppColors.accent,
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
 

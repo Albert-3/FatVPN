@@ -11,6 +11,15 @@
 /// under-redacting costs the user their subscription.
 library;
 
+/// Field names that carry a credential, in whichever notation the diagnostic
+/// happens to use.
+///
+/// Kept as one list because the two shapes below must never drift apart: a key
+/// added to one and forgotten in the other is a secret that leaks through
+/// whichever path the platform happens to take.
+const _secretKeys = r'uuid|password|pbk|sid|short_id|obfs[-_]?password|'
+    r'auth|auth_str|secret|private_key|pre_shared_key|public_key';
+
 final _patterns = <(RegExp, String)>[
   // UUIDs — the vless/vmess user id.
   (
@@ -20,11 +29,24 @@ final _patterns = <(RegExp, String)>[
     ),
     '<redacted-uuid>'
   ),
-  // Query-style secrets: password=, pbk= (Reality public key), sid= (short id).
+  // URI form — how a config *link* spells its credentials: `?password=…&sid=…`.
   (
-    RegExp(r'\b(password|pbk|sid|obfs-password|auth)=[^\s&"' r"']+",
-        caseSensitive: false),
+    RegExp('\\b($_secretKeys)=[^\\s&"\']+', caseSensitive: false),
     r'$1=<redacted>'
+  ),
+  // JSON form — how sing-box spells them, which is what actually reaches this
+  // function on iOS. The core quotes the fragment of the config it could not
+  // load ("decode config at 12: json: cannot unmarshal {…}"), and that config
+  // is JSON: `{"password":"…"}` matched none of the URI patterns above, so the
+  // whole outbound went to the user's screen and into the support bundle they
+  // share. The value alternation covers a quoted string (escapes included) and
+  // a bare literal, so a number or an unquoted token is redacted too.
+  (
+    RegExp(
+      '"($_secretKeys)"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*"|[^,}\\s\\]]+)',
+      caseSensitive: false,
+    ),
+    r'"$1": "<redacted>"'
   ),
   // `user:secret@host` / `<credential>@host:port` — everything before the `@`
   // is a credential in every link scheme the app parses.

@@ -18,9 +18,24 @@ TrafficThrottlePolicy _effectiveThrottlePolicyForProfileInternal(
     return base;
   }
 
-  final int configuredMtuIndex = max(0, mtuCandidates.indexOf(base.tunMtu));
-  final int cursor =
-      client._endpointMtuProbeCursorByTag[profile.tag] ?? configuredMtuIndex;
+  final int? probeCursor = client._endpointMtuProbeCursorByTag[profile.tag];
+  if (probeCursor == null && base.tunMtu == null) {
+    // Nobody has asked for a particular MTU and nothing has probed yet, so
+    // there is nothing to tune: pinning the highest candidate here would
+    // override the platform default ([defaultTunMtu]) on every ordinary
+    // connect, which is not the probe's job — it exists to step *down* from a
+    // baseline once a path proves it cannot carry one.
+    if (enforceUdpFragment && !base.udpFragment) {
+      return base.copyWith(udpFragment: true);
+    }
+    return base;
+  }
+
+  final int configuredMtuIndex = max(
+    0,
+    mtuCandidates.indexOf(base.tunMtu ?? -1),
+  );
+  final int cursor = probeCursor ?? configuredMtuIndex;
   final int safeIndex = max(0, min(cursor, mtuCandidates.length - 1));
   final int tunedMtu = mtuCandidates[safeIndex];
   final bool tunedUdpFragment = enforceUdpFragment ? true : base.udpFragment;
@@ -28,19 +43,35 @@ TrafficThrottlePolicy _effectiveThrottlePolicyForProfileInternal(
 }
 
 List<int> _resolveMtuCandidatesInternal(TrafficThrottlePolicy policy) {
-  final Set<int> values = <int>{policy.tunMtu, ...policy.mtuProbeCandidates}
-    ..removeWhere((int value) => value < 1280);
+  final Set<int> values = <int>{
+    ?policy.tunMtu,
+    ...policy.mtuProbeCandidates,
+  }..removeWhere((int value) => value < 1280);
   final List<int> sorted = values.toList(growable: false)
     ..sort((int a, int b) => b.compareTo(a));
   return sorted;
 }
 
-int _resolveInitialMtuProbeCursorInternal(TrafficThrottlePolicy policy) {
+/// Where the MTU probe starts for [policy], or null when there is nothing to
+/// start from.
+///
+/// Null is not "start at zero". Index 0 is the *largest* candidate, so seeding
+/// it for a policy that never named an MTU would pin 1400 on every ordinary
+/// connect and silently override the platform default ([defaultTunMtu]) — and
+/// it would do so past the guard in [_effectiveThrottlePolicyForProfileInternal],
+/// which can only tell "nothing configured" from "probed" by the *absence* of a
+/// cursor. Leaving it unseeded is what keeps the two paths (pool and manual
+/// connect) agreeing about what an unconfigured MTU means.
+int? _resolveInitialMtuProbeCursorInternal(TrafficThrottlePolicy policy) {
+  final int? configured = policy.tunMtu;
+  if (configured == null) {
+    return null;
+  }
   final List<int> candidates = _resolveMtuCandidatesInternal(policy);
   if (candidates.isEmpty) {
     return 0;
   }
-  return max(0, candidates.indexOf(policy.tunMtu));
+  return max(0, candidates.indexOf(configured));
 }
 
 bool _shouldForceUdpFragmentForProfileInternal(VpnProfile profile) {

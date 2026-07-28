@@ -13,6 +13,27 @@ extension SignboxVpnRuntimeApi on SignboxVpn {
     return _requestNotificationPermissionInternal(this);
   }
 
+  /// Records how the OS should treat the tunnel — auto-reconnect and kill
+  /// switch. Takes effect on the next [start]; see
+  /// [SignboxVpnPlatform.setTunnelPreferences].
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) {
+    return _setTunnelPreferencesInternal(
+      this,
+      onDemandEnabled: onDemandEnabled,
+      killSwitchEnabled: killSwitchEnabled,
+    );
+  }
+
+  /// Erases the platform's stored config and tunnel artifacts. Call on user
+  /// sign-out and on a deliberate power-off — see
+  /// [SignboxVpnPlatform.clearPersistedState].
+  Future<void> clearPersistedState() {
+    return _clearPersistedStateInternal(this);
+  }
+
   Future<void> start() async {
     await _startInternal(this);
   }

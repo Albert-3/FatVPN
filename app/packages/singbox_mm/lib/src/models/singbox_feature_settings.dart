@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'singbox_rule_set.dart';
 
 /// SingboxServiceMode enum.
@@ -5,6 +7,60 @@ enum SingboxServiceMode { vpn, proxyOnly }
 
 /// SingboxTunImplementation enum.
 enum SingboxTunImplementation { system, gvisor }
+
+/// TUN MTU used when [InboundOptions.mtu] names none.
+///
+/// 1100 everywhere used to be hardcoded in the config builder — very
+/// conservative next to the 1280–1420 a VPN tunnel normally carries, and every
+/// byte below the real path MTU is throughput given away: ~20% more packets
+/// than 1400 needs, each of them another trip through the userspace stack,
+/// which on iOS is also another slice of a battery and of a 50 MB memory
+/// budget.
+///
+/// Raised on iOS only. 1280 is the IPv6 minimum link MTU, so nothing on a v6
+/// path may fragment below it, and it still leaves room for the outbound's own
+/// encapsulation. Android keeps 1100: that is the value the current release was
+/// device-tested against, and the config builder is shared between the two.
+int get defaultTunMtu =>
+    defaultTargetPlatform == TargetPlatform.iOS ? 1280 : 1100;
+
+/// IPv6 address given to the TUN interface, or null to leave it IPv4-only.
+///
+/// Non-null on iOS, and this is a leak fix rather than a feature. The config
+/// already blocks `::/0` inside sing-box (see `SingboxRouteRulesBuilder`, under
+/// `ipv6RouteMode == disable`) — but a rule can only act on packets that reach
+/// the core, and iOS routes nothing of a family the tunnel interface holds no
+/// address for. With no inet6 address the whole v6 half of the device's traffic
+/// went around the tunnel on an IPv6-enabled carrier, in the clear, with the
+/// user's real address: a leak a DNS-leak test cannot see, because DNS is not
+/// what leaks. Giving the interface an address is what puts `::/0` in front of
+/// the block rule.
+///
+/// The prefix is sing-box's own documented TUN default, chosen from the unique
+/// local range so it cannot collide with anything routable.
+///
+/// Android keeps IPv4-only: the same gap exists there, but this file is shared
+/// and the Android build is the device-tested one — closing it there is its own
+/// change, with its own testing.
+String? get defaultTunInet6Address =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? 'fdfe:dcba:9876::1/126'
+    : null;
+
+/// TUN stack used when the caller expresses no preference.
+///
+/// gvisor is a complete userspace TCP/IP stack in Go: a buffer set and a
+/// goroutine per connection, with its own GC pressure. Inside an iOS network
+/// extension capped at ~50 MB that is the largest thing running, and the
+/// likeliest reason the tunnel is jetsam-killed under load — a browser or a
+/// video stream opens connections by the hundred. `system` hands packets to the
+/// kernel path instead: less memory, more throughput. Android keeps gvisor,
+/// which is what its released build was tested on and where no such ceiling
+/// applies.
+SingboxTunImplementation get defaultTunImplementation =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? SingboxTunImplementation.system
+    : SingboxTunImplementation.gvisor;
 
 /// SingboxIpv6RouteMode enum.
 enum SingboxIpv6RouteMode { disable, prefer, only }
@@ -427,6 +483,7 @@ class InboundOptions {
     this.serviceMode = SingboxServiceMode.vpn,
     this.strictRoute = true,
     this.tunImplementation = SingboxTunImplementation.gvisor,
+    this.mtu,
     this.mixedPort,
     this.transparentProxyPort,
     this.localDnsPort,
@@ -434,7 +491,8 @@ class InboundOptions {
     this.splitTunnelingEnabled,
     this.includePackages = const <String>[],
     this.excludePackages = const <String>[],
-  }) : assert(mixedPort == null || (mixedPort > 0 && mixedPort <= 65535)),
+  }) : assert(mtu == null || (mtu >= 576 && mtu <= 9000)),
+       assert(mixedPort == null || (mixedPort > 0 && mixedPort <= 65535)),
        assert(
          transparentProxyPort == null ||
              (transparentProxyPort > 0 && transparentProxyPort <= 65535),
@@ -451,6 +509,14 @@ class InboundOptions {
 
   /// Documented field.
   final SingboxTunImplementation tunImplementation;
+
+  /// TUN MTU, or null to take the platform default.
+  ///
+  /// Deliberately overridable rather than fixed: the safe value differs by
+  /// platform (see `SingboxInboundBuilder.defaultMtu`) and by transport — a
+  /// WireGuard outbound pays its own header overhead on top of whatever is set
+  /// here, so a value that is right for VLESS-over-TCP is not right for it.
+  final int? mtu;
 
   /// Documented field.
   final int? mixedPort;
@@ -479,6 +545,7 @@ class InboundOptions {
       'serviceMode': serviceMode.name,
       'strictRoute': strictRoute,
       'tunImplementation': tunImplementation.name,
+      'mtu': mtu,
       'mixedPort': mixedPort,
       'transparentProxyPort': transparentProxyPort,
       'localDnsPort': localDnsPort,
@@ -517,6 +584,7 @@ class InboundOptions {
         SingboxTunImplementation.values,
         SingboxTunImplementation.gvisor,
       ),
+      mtu: _readInt(raw['mtu']),
       mixedPort: _readInt(raw['mixedPort']),
       transparentProxyPort: _readInt(raw['transparentProxyPort']),
       localDnsPort: _readInt(raw['localDnsPort']),

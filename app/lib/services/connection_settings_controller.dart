@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 
+import 'app_logger.dart';
 import 'secure_store.dart';
 
 /// Which way round the split-tunnel lists are read.
@@ -42,6 +43,8 @@ class ConnectionSettingsController extends ChangeNotifier {
   static const _splitTunnelHostsKey = 'conn_split_tunnel_hosts';
   static const _splitSeededKey = 'conn_split_hosts_seeded'; // legacy: 'true' = batch 1
   static const _splitSeedVersionKey = 'conn_split_hosts_seed_version';
+  static const _autoReconnectKey = 'conn_auto_reconnect';
+  static const _killSwitchKey = 'conn_kill_switch';
   final _storage = SecureStore();
 
   /// Domains every user gets in the host bypass list: the big Russian services
@@ -74,7 +77,22 @@ class ConnectionSettingsController extends ChangeNotifier {
 
   DnsProviderPreset _dnsPreset = DnsProviderPreset.cloudflare;
   String _customDns = '';
-  SingboxTunImplementation _networkStack = SingboxTunImplementation.gvisor;
+
+  /// Platform default rather than a fixed gVisor: see [defaultTunImplementation]
+  /// — the userspace stack is the largest single consumer inside an iOS network
+  /// extension's ~50 MB budget, and picking it there is what gets the tunnel
+  /// killed under load.
+  SingboxTunImplementation _networkStack = defaultTunImplementation;
+
+  /// Whether the OS may keep the tunnel up by itself (iOS on-demand rules) and
+  /// whether it should block traffic while the tunnel is down (kill switch).
+  ///
+  /// Both off by default. On-demand takes the VPN out of the user's hands —
+  /// the system re-establishes it whenever there is a network, including after
+  /// a reboot — and a kill switch cuts the device off entirely when the tunnel
+  /// cannot come up. Neither is a surprise anyone should get without asking.
+  bool _autoReconnect = false;
+  bool _killSwitch = false;
 
   // Split tunneling: when enabled, apps in [_bypassPackages] skip the VPN
   // (mapped to sing-box `exclude_package`). Empty set = nothing bypasses.
@@ -104,6 +122,15 @@ class ConnectionSettingsController extends ChangeNotifier {
   String get customDns => _customDns;
   SingboxTunImplementation get networkStack => _networkStack;
   bool get splitTunnelEnabled => _splitTunnelEnabled;
+
+  /// Whether the system may bring the tunnel back on its own. See
+  /// [_autoReconnect]; on iOS this is what recovers a network extension the OS
+  /// killed, which it otherwise never restarts.
+  bool get autoReconnect => _autoReconnect;
+
+  /// Whether traffic must be blocked while the tunnel is down. See
+  /// [_killSwitch].
+  bool get killSwitch => _killSwitch;
 
   /// Whether the lists name what skips the VPN or what is the only thing to
   /// use it. Each mode reads its own lists — see [activePackages].
@@ -143,12 +170,31 @@ class ConnectionSettingsController extends ChangeNotifier {
     DnsProviderPreset.custom,
   ];
 
-  /// "Mixed" (system stack) and gVisor are the only tun implementations the
-  /// plugin exposes; "Mixed" in the mockup maps to the native `system` stack.
-  static const networkStacks = <SingboxTunImplementation>[
-    SingboxTunImplementation.system,
-    SingboxTunImplementation.gvisor,
-  ];
+  /// TUN implementations the user may pick between. "Mixed" in the mockup is
+  /// the native `system` stack.
+  ///
+  /// iOS offers both: `system` is the default there — the userspace gvisor
+  /// stack is the largest single consumer inside a network extension capped at
+  /// ~50 MB (see [defaultTunImplementation]) — and gvisor stays as the
+  /// compatibility option.
+  ///
+  /// Android offers gvisor only. The setting was *inert* there until the config
+  /// generator stopped mapping both enum values onto gvisor
+  /// (`SingboxInboundBuilder._toTunStack`), so `system` on Android names a code
+  /// path the shipped, device-tested build has never actually run. Listing it
+  /// now would trade "the setting lies" for "the tunnel behaves unfamiliarly",
+  /// which is the worse of the two on a platform that is ready to release. The
+  /// option can come back once someone has run it on a device.
+  ///
+  /// This governs what can be *chosen*; a value already on disk never passes
+  /// through the picker, which is why [_coerceUnsupportedNetworkStack] exists.
+  static List<SingboxTunImplementation> get networkStacks =>
+      defaultTargetPlatform == TargetPlatform.iOS
+          ? const <SingboxTunImplementation>[
+              SingboxTunImplementation.system,
+              SingboxTunImplementation.gvisor,
+            ]
+          : const <SingboxTunImplementation>[SingboxTunImplementation.gvisor];
 
   /// Restores the saved preferences. Read as one batch rather than a chain of
   /// awaits: eleven round trips through the platform channel, each decrypting
@@ -167,6 +213,8 @@ class ConnectionSettingsController extends ChangeNotifier {
       _storage.read(key: _splitTunnelHostsKey),
       _storage.read(key: _splitSeededKey),
       _storage.read(key: _splitSeedVersionKey),
+      _storage.read(key: _autoReconnectKey),
+      _storage.read(key: _killSwitchKey),
     ]);
     final dns = values[0];
     final customDns = values[1];
@@ -179,7 +227,17 @@ class ConnectionSettingsController extends ChangeNotifier {
     final tunnelHosts = values[8];
     final splitSeeded = values[9];
     final splitSeedVersion = values[10];
+    final autoReconnect = values[11];
+    final killSwitch = values[12];
     var changed = false;
+    if (autoReconnect == 'true') {
+      _autoReconnect = true;
+      changed = true;
+    }
+    if (killSwitch == 'true') {
+      _killSwitch = true;
+      changed = true;
+    }
     if (dns != null) {
       final match = DnsProviderPreset.values.where((p) => p.name == dns);
       if (match.isNotEmpty) {
@@ -199,6 +257,9 @@ class ConnectionSettingsController extends ChangeNotifier {
         changed = true;
       }
     }
+    // After the read, and unconditionally: a stored value bypasses the picker
+    // entirely, so filtering [networkStacks] alone would leave it in force.
+    changed = await _coerceUnsupportedNetworkStack() || changed;
     if (splitEnabled == 'true') {
       _splitTunnelEnabled = true;
       changed = true;
@@ -237,6 +298,35 @@ class ConnectionSettingsController extends ChangeNotifier {
           changed;
     }
     if (changed) notifyListeners();
+  }
+
+  /// Moves a stored network stack this platform no longer offers back onto one
+  /// it does, and writes the correction through. Returns whether anything
+  /// changed.
+  ///
+  /// Only Android has anything to correct, and only because of history: while
+  /// `_toTunStack` mapped both enum values onto gvisor, picking "Mixed" there
+  /// changed the stored setting and nothing else. Installs therefore exist with
+  /// `system` on disk and gvisor in the tunnel, and honouring that value now
+  /// that the mapping is honest would move exactly those users onto a stack
+  /// Android has never been tested on — without them touching anything. So it
+  /// is corrected rather than merely hidden from the picker.
+  ///
+  /// Written back rather than corrected in memory: otherwise this would fire on
+  /// every launch, and the setting the user sees would disagree with the one on
+  /// disk forever. Logged because a preference that changes without the user
+  /// changing it is exactly what a support report cannot otherwise explain.
+  Future<bool> _coerceUnsupportedNetworkStack() async {
+    if (networkStacks.contains(_networkStack)) return false;
+    final SingboxTunImplementation previous = _networkStack;
+    _networkStack = networkStacks.first;
+    await _storage.write(key: _stackKey, value: _networkStack.name);
+    log.w(
+      'Network stack "${previous.name}" is not offered on this platform '
+      '(it selected gvisor anyway until the config generator was fixed); '
+      'switched the stored setting to "${_networkStack.name}"',
+    );
+    return true;
   }
 
   /// Adds the [_seedBatches] the user hasn't seen yet to the bypass list — on a
@@ -294,6 +384,23 @@ class ConnectionSettingsController extends ChangeNotifier {
     _networkStack = stack;
     notifyListeners();
     await _storage.write(key: _stackKey, value: stack.name);
+  }
+
+  /// Turns system-managed reconnection on or off. Applied on the next connect —
+  /// see `SignboxVpn.setTunnelPreferences`.
+  Future<void> setAutoReconnect(bool enabled) async {
+    if (_autoReconnect == enabled) return;
+    _autoReconnect = enabled;
+    notifyListeners();
+    await _storage.write(key: _autoReconnectKey, value: enabled.toString());
+  }
+
+  /// Turns the kill switch on or off. Applied on the next connect.
+  Future<void> setKillSwitch(bool enabled) async {
+    if (_killSwitch == enabled) return;
+    _killSwitch = enabled;
+    notifyListeners();
+    await _storage.write(key: _killSwitchKey, value: enabled.toString());
   }
 
   Future<void> setSplitTunnelEnabled(bool enabled) async {
@@ -434,6 +541,15 @@ class ConnectionSettingsController extends ChangeNotifier {
     final useCustomDns =
         _dnsPreset == DnsProviderPreset.custom && _customDns.trim().isNotEmpty;
     return SingboxFeatureSettings(
+      // `advanced` used not to be passed at all, which left `memoryLimit` false
+      // and so turned sing-box's on-disk cache and its fake-IP store on — inside
+      // a process the OS caps at ~50 MB and kills without warning when it goes
+      // over. Neither buys the user anything here: the cache saves a DNS lookup
+      // and a rule-set parse per start, at the cost of the one resource this
+      // tunnel actually runs out of. Android has no such ceiling and keeps them.
+      advanced: AdvancedOptions(
+        memoryLimit: defaultTargetPlatform == TargetPlatform.iOS,
+      ),
       route: RouteOptions(
         regionDirectDomains: whitelist ? const <String>[] : domains,
         regionDirectCidrs: whitelist ? const <String>[] : cidrs,

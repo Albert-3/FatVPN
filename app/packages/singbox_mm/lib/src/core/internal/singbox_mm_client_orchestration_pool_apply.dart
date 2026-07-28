@@ -28,17 +28,24 @@ Future<Map<String, Object?>> _applyEndpointPoolInternal(
   client._endpointPoolOptions = options;
   client._endpointBypassPolicy = bypassPolicy;
   client._endpointThrottlePolicy = throttlePolicy;
-  final int initialMtuProbeCursor = _resolveInitialMtuProbeCursorInternal(
+  final int? initialMtuProbeCursor = _resolveInitialMtuProbeCursorInternal(
     throttlePolicy,
   );
-  client._endpointMtuProbeCursorByTag
-    ..clear()
-    ..addEntries(
+  client._endpointMtuProbeCursorByTag.clear();
+  // Only when the policy actually named an MTU. Seeding a cursor for a policy
+  // that did not is how this pool path came to disagree with the manual-connect
+  // one: a seeded cursor reads as "the probe has already chosen", so the guard
+  // in _effectiveThrottlePolicyForProfileInternal never fires and every
+  // ordinary pool connect emitted the largest candidate instead of the
+  // platform default.
+  if (initialMtuProbeCursor != null) {
+    client._endpointMtuProbeCursorByTag.addEntries(
       supportedProfiles.map<MapEntry<String, int>>(
         (VpnProfile profile) =>
             MapEntry<String, int>(profile.tag, initialMtuProbeCursor),
       ),
     );
+  }
   client._endpointFeatureSettings = featureSettings ?? client._featureSettings;
   client._featureSettings = client._endpointFeatureSettings;
   client._standaloneProfile = null;

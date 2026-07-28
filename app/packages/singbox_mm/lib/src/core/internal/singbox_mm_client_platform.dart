@@ -64,6 +64,23 @@ Future<String?> _getLastErrorInternal(SignboxVpn client) {
   return client._guard(() => client._platform.getLastError());
 }
 
+Future<void> _setTunnelPreferencesInternal(
+  SignboxVpn client, {
+  required bool onDemandEnabled,
+  required bool killSwitchEnabled,
+}) {
+  return client._guard(
+    () => client._platform.setTunnelPreferences(
+      onDemandEnabled: onDemandEnabled,
+      killSwitchEnabled: killSwitchEnabled,
+    ),
+  );
+}
+
+Future<void> _clearPersistedStateInternal(SignboxVpn client) {
+  return client._guard(() => client._platform.clearPersistedState());
+}
+
 Future<String?> _getSingboxVersionInternal(SignboxVpn client) {
   return client._guard(() => client._platform.getSingboxVersion());
 }

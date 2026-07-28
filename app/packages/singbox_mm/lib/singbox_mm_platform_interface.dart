@@ -81,6 +81,38 @@ abstract class SignboxVpnPlatform extends PlatformInterface {
     throw UnimplementedError('setXrayConfig() has not been implemented.');
   }
 
+  /// Tells the platform how the *system* should treat this tunnel, from the
+  /// next connect onward.
+  ///
+  /// * [onDemandEnabled] — the OS keeps the tunnel up on its own. On iOS this
+  ///   is the only thing that ever restarts a network extension the system
+  ///   killed (a jetsam kill under memory pressure, a crash): without it the
+  ///   user is left with no VPN and traffic in the clear until they next open
+  ///   the app. It also brings the tunnel back after a reboot.
+  /// * [killSwitchEnabled] — traffic must not leave at all while the tunnel is
+  ///   down, rather than quietly falling back to the physical interface.
+  ///
+  /// A platform that has no equivalent ignores this.
+  Future<void> setTunnelPreferences({
+    required bool onDemandEnabled,
+    required bool killSwitchEnabled,
+  }) {
+    throw UnimplementedError(
+      'setTunnelPreferences() has not been implemented.',
+    );
+  }
+
+  /// Erases everything the platform keeps on disk about the current
+  /// subscription — the stored config, and on iOS the extension's start-options
+  /// snapshot and its diagnostics.
+  ///
+  /// Called when the user turns the VPN off for good and when they log out.
+  /// The snapshot in particular is what the OS would otherwise reconnect
+  /// *from*, on credentials that may since have been revoked.
+  Future<void> clearPersistedState() {
+    throw UnimplementedError('clearPersistedState() has not been implemented.');
+  }
+
   /// Starts the VPN service.
   Future<void> startVpn() {
     throw UnimplementedError('startVpn() has not been implemented.');

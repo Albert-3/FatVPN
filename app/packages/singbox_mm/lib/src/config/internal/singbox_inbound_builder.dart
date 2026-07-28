@@ -1,4 +1,5 @@
 import '../../models/singbox_feature_settings.dart';
+import '../../models/traffic_throttle_policy.dart';
 
 class SingboxInboundBuilder {
   const SingboxInboundBuilder();
@@ -7,6 +8,7 @@ class SingboxInboundBuilder {
     required SingboxFeatureSettings settings,
     required String tunInterfaceName,
     required String tunInet4Address,
+    TrafficThrottlePolicy throttlePolicy = const TrafficThrottlePolicy(),
   }) {
     final List<Object?> inbounds = <Object?>[];
     final bool shareLan = settings.inbound.shareVpnInLocalNetwork;
@@ -21,15 +23,31 @@ class SingboxInboundBuilder {
       final bool splitTunnelingEnabled =
           settings.inbound.splitTunnelingEnabled ??
           (includePackages.isNotEmpty || excludePackages.isNotEmpty);
+      // The inet6 address is what makes the config's `::/0 → block` rule
+      // reachable at all: without an address of that family the OS routes no
+      // IPv6 into the tunnel, so the rule never sees a packet and every v6
+      // connection leaves around the VPN. See [defaultTunInet6Address].
+      final String? tunInet6Address = defaultTunInet6Address;
       final Map<String, Object?> tunInbound = <String, Object?>{
         'type': 'tun',
         'tag': 'tun-in',
         'interface_name': tunInterfaceName,
-        'address': <String>[tunInet4Address],
+        'address': <String>[tunInet4Address, ?tunInet6Address],
         'auto_route': true,
         'strict_route': settings.inbound.strictRoute,
         'stack': _toTunStack(settings.inbound.tunImplementation),
-        'mtu': 1100,
+        // One MTU, three places it can come from, in the order of how much the
+        // caller knows.
+        //
+        // The throttle policy wins because it is the only one that changes at
+        // runtime: the auto-MTU probe measures a failing path and steps this
+        // number down (`_effectiveThrottlePolicyForProfile`,
+        // `_maybeStepDownMtu`). While the builder hardcoded 1100 that whole
+        // mechanism was decoration — it measured, decided, rewrote the config,
+        // and emitted the same MTU as before, so a path-MTU problem could not
+        // be fixed by the code written to fix it.
+        'mtu':
+            throttlePolicy.tunMtu ?? settings.inbound.mtu ?? defaultTunMtu,
       };
       if (splitTunnelingEnabled && includePackages.isNotEmpty) {
         tunInbound['include_package'] = includePackages;
@@ -65,10 +83,15 @@ class SingboxInboundBuilder {
     return inbounds;
   }
 
+  /// Maps the chosen stack onto sing-box's `tun.stack`.
+  ///
+  /// Both values used to return `'gvisor'`, so the "network stack" setting in
+  /// the UI did nothing at all: a user who picked the system stack — the whole
+  /// point of the option, and the cheaper one — silently got the other.
   String _toTunStack(SingboxTunImplementation implementation) {
     switch (implementation) {
       case SingboxTunImplementation.system:
-        return 'gvisor';
+        return 'system';
       case SingboxTunImplementation.gvisor:
         return 'gvisor';
     }
