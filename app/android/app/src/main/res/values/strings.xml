@@ -9,6 +9,9 @@
      values/ is the fallback for an install that has never published one. -->
 <resources>
     <string name="widget_name">FatVPN</string>
+    <!-- Second entry in the widget picker: the same widget, placed as a square.
+         Not localized — it is the product name and a size. -->
+    <string name="widget_name_square" translatable="false">FatVPN 2×2</string>
     <string name="widget_description">Connection status and one-tap connect</string>
 
     <string name="widget_status_connected">Connected</string>

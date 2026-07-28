@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 2×2 tile — a second entry in the widget picker, drawn by the same code
+     as the wide one (see FatVpnWidgetSquareProvider).
+
+     110dp is two launcher cells: the platform's own formula is 70·n − 30, so
+     n=2 gives 110. `minResize*` repeats it because the two answer different
+     questions — minWidth is where the tile *starts*, minResizeWidth is how far
+     the user may shrink it — and a widget that cannot be resized back down to
+     its own default size reads as broken.
+
+     updatePeriodMillis is 0 for the same reason as the other provider: the
+     system tick cannot be faster than 30 minutes, and everything that changes
+     this widget already redraws it. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/widget_fatvpn_square"
+    android:minHeight="110dp"
+    android:minResizeHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minWidth="110dp"
+    android:previewImage="@mipmap/ic_launcher"
+    android:previewLayout="@layout/widget_fatvpn_square"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Square layout — the 2×2 tile (about 110-160dp each way).
+
+     Vertical, unlike the other two: at two cells wide there is no room for a
+     text column *beside* the power button, so the button goes on top and the
+     text under it. That is also the only arrangement in which the button stays
+     the size it is on the home screen — a 2×2 whose button had to share the row
+     would end up with a disc smaller than the compact widget's.
+
+     Three rows and no more, measured against the *smallest* 2×2 a launcher will
+     hand out (110dp): 8 + 44 + 6 + 18 + 2 + 16 + 8 ≈ 102dp, with the rest as
+     slack for a launcher that is stingier than the formula. RemoteViews does
+     not scale what does not fit — it clips it — so the fourth row that would
+     carry the location and the clock separately is deliberately not here; they
+     share the last line, exactly as they do in the compact layout.
+
+     Same view ids as widget_fatvpn_compact.xml and widget_fatvpn_wide.xml, so
+     FatVpnWidgetProvider fills any of the three without knowing which it got. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:paddingStart="10dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="10dp"
+    android:paddingBottom="8dp">
+
+    <FrameLayout
+        android:id="@+id/widget_power_touch"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="center_horizontal">
+
+        <ImageView
+            android:id="@+id/widget_power_bg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:src="@drawable/widget_power_off" />
+
+        <ImageView
+            android:id="@+id/widget_power"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:contentDescription="@string/widget_power_description"
+            android:src="@drawable/ic_widget_power" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/widget_dot"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:contentDescription="@null"
+            android:src="@drawable/widget_dot" />
+
+        <!-- Weighted rather than wrap_content so "Вы не авторизованы" gets an
+             ellipsis instead of running off the tile: a TextView only truncates
+             when something bounds its width. -->
+        <TextView
+            android:id="@+id/widget_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_status_disconnected"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:orientation="horizontal">
+
+        <!-- The clock and the call to action share this slot with the location:
+             only one of them is ever visible (see FatVpnWidgetProvider). -->
+        <TextView
+            android:id="@+id/widget_location"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_location_best"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="12sp" />
+
+        <Chronometer
+            android:id="@+id/widget_timer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:textColor="@color/widget_accent"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/widget_hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/widget_hint_tap_to_connect"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+</LinearLayout>

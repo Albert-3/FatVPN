@@ -6,11 +6,18 @@
      paying for it in wakeups would buy nothing: the widget is redrawn by the
      tunnel's state broadcast (SignboxLibboxServiceContract.ACTION_STATE_UPDATE,
      which arrives whether or not the app is running) and by the app publishing
-     a snapshot, while the session clock ticks by itself inside a Chronometer. -->
+     a snapshot, while the session clock ticks by itself inside a Chronometer.
+
+     minResizeWidth is two cells (70·n − 30, n=2) rather than the three this
+     widget is placed at: shrinking it to a square is a supported size, it just
+     is not the one this entry starts at. The 2×2 that starts there is a
+     separate entry in the picker — see fatvpn_widget_square_info.xml. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_description"
     android:initialLayout="@layout/widget_fatvpn_compact"
     android:minHeight="40dp"
+    android:minResizeHeight="40dp"
+    android:minResizeWidth="110dp"
     android:minWidth="180dp"
     android:previewImage="@mipmap/ic_launcher"
     android:previewLayout="@layout/widget_fatvpn_wide"

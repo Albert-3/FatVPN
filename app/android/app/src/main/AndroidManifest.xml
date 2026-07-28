@@ -100,6 +100,23 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/fatvpn_widget_info"/>
         </receiver>
+        <!-- The same widget at 2×2. A provider's default size lives in its
+             appwidget-provider XML and there is one per receiver, so offering a
+             second size in the picker means a second receiver; everything it
+             does is inherited from the one above. -->
+        <receiver
+            android:name=".widget.FatVpnWidgetSquareProvider"
+            android:exported="true"
+            android:label="@string/widget_name_square">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.signbox.singbox_mm.action.STATE"/>
+                <action android:name="com.fatvpn.fatvpn_app.widget.action.TOGGLE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/fatvpn_widget_square_info"/>
+        </receiver>
         <!-- Runs the app's own connect logic in a background Flutter engine when
              the widget's power button is tapped with the tunnel down, so
              connecting does not have to open the app (see WidgetConnectService).

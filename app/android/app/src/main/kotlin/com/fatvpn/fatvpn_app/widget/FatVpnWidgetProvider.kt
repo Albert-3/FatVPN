@@ -35,7 +35,7 @@ import java.util.UUID
 ///  * The one case that still opens the app is the one that cannot be answered
 ///    without a screen: no session, a lapsed subscription, or the system's VPN
 ///    consent dialog on a device that has never connected.
-class FatVpnWidgetProvider : AppWidgetProvider() {
+open class FatVpnWidgetProvider : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
@@ -200,6 +200,8 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
             // and a 4x2 card on the next.
             RemoteViews(
                 mapOf(
+                    SizeF(SQUARE_WIDTH_DP, SQUARE_HEIGHT_DP) to
+                        buildViews(context, model, R.layout.widget_fatvpn_square),
                     SizeF(COMPACT_MAX_WIDTH_DP, COMPACT_MAX_HEIGHT_DP) to
                         buildViews(context, model, R.layout.widget_fatvpn_compact),
                     SizeF(WIDE_WIDTH_DP, WIDE_HEIGHT_DP) to
@@ -210,17 +212,22 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
             val options = manager.getAppWidgetOptions(appWidgetId)
             val minWidth = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0) ?: 0
             val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 0) ?: 0
-            // The height test is against the *wide* layout's own height, not
-            // the compact one's. Comparing it to the compact threshold handed
+            // Each test is against the layout's *own* size, not the previous
+            // one's. Comparing the wide layout to the compact threshold handed
             // the three-line layout to a one-row widget, and RemoteViews does
             // not scale what does not fit — it clips it, so the bottom line was
             // sawn in half on the device (Redmi Note 7, Android 10).
-            val wide = minWidth >= WIDE_WIDTH_DP && minHeight >= WIDE_HEIGHT_DP
-            buildViews(
-                context,
-                model,
-                if (wide) R.layout.widget_fatvpn_wide else R.layout.widget_fatvpn_compact,
-            )
+            //
+            // Order matters: a 2×2 tile is tall enough for the square layout but
+            // too narrow for the wide one, so "wide" has to be asked first and
+            // "square" is what a tall-but-narrow tile falls into.
+            val layout = when {
+                minWidth >= WIDE_WIDTH_DP && minHeight >= WIDE_HEIGHT_DP ->
+                    R.layout.widget_fatvpn_wide
+                minHeight >= SQUARE_HEIGHT_DP -> R.layout.widget_fatvpn_square
+                else -> R.layout.widget_fatvpn_compact
+            }
+            buildViews(context, model, layout)
         }
         manager.updateAppWidget(appWidgetId, views)
     }
@@ -288,21 +295,22 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
             },
         )
 
-        // What the second line carries, and why it differs per layout.
+        // What the last line carries, and why it differs per layout.
         //
-        // The compact layout has one line for everything below the status, and
-        // the location has to win it: the call to action ("Подключиться") next
-        // to it left both ellipsized on a real 4x1 widget, and the power button
-        // says the same thing without spending a pixel. The exception is having
-        // no session at all — then there is no location worth showing and the
-        // only useful words are "open the app".
-        val compact = layoutId == R.layout.widget_fatvpn_compact
+        // The compact and square layouts have one line for everything below the
+        // status, and the location has to win it: the call to action
+        // ("Подключиться") next to it left both ellipsized on a real 4x1 widget,
+        // and the power button says the same thing without spending a pixel. The
+        // exception is having no session at all — then there is no location
+        // worth showing and the only useful words are "open the app". Only the
+        // wide layout has a line to spare, and it spends it on the hint.
+        val narrow = layoutId != R.layout.widget_fatvpn_wide
         val sessionStart = model.connectedAtMillis
         val showTimer = model.isUp && !model.stopping && sessionStart != null
-        val showHint = if (compact) !model.signedIn else !showTimer
+        val showHint = if (narrow) !model.signedIn else !showTimer
         views.setViewVisibility(
             R.id.widget_location,
-            if (compact && !model.signedIn) View.GONE else View.VISIBLE,
+            if (narrow && !model.signedIn) View.GONE else View.VISIBLE,
         )
         views.setViewVisibility(R.id.widget_hint, if (showHint) View.VISIBLE else View.GONE)
 
@@ -430,18 +438,37 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
         /// the three-line layout wants ~100.
         private const val WIDE_HEIGHT_DP = 110f
 
-        /// Redraws every placed widget. Called from here on a tap and from
-        /// [FatVpnWidgetChannel] whenever the app publishes a new snapshot.
+        /// The 2×2 tile: two launcher cells each way, which is about 110dp at
+        /// the smallest a launcher will hand out. Both numbers are the square
+        /// layout's own minimum, not the tile's typical size — the size map on
+        /// API 31+ picks the largest layout that *fits*, so claiming more than
+        /// the layout needs would leave a real 2×2 with the compact layout
+        /// stretched across it.
+        private const val SQUARE_WIDTH_DP = 110f
+        private const val SQUARE_HEIGHT_DP = 110f
+
+        /// Every provider the app declares. Two of them, and they differ in
+        /// nothing but the size the launcher places them at: the 2×2 is a
+        /// separate entry in the widget picker (that is the only way to offer a
+        /// second default size), and it draws through this same class.
+        private val PROVIDERS = listOf(
+            FatVpnWidgetProvider::class.java,
+            FatVpnWidgetSquareProvider::class.java,
+        )
+
+        /// Redraws every placed widget, of either size. Called from here on a
+        /// tap and from [FatVpnWidgetChannel] whenever the app publishes a new
+        /// snapshot.
         fun notifyWidgets(context: Context) {
             val manager = AppWidgetManager.getInstance(context) ?: return
-            val ids = manager.getAppWidgetIds(
-                ComponentName(context, FatVpnWidgetProvider::class.java),
-            )
-            if (ids.isEmpty()) return
-            val intent = Intent(context, FatVpnWidgetProvider::class.java)
-                .setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE)
-                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
-            context.sendBroadcast(intent)
+            for (provider in PROVIDERS) {
+                val ids = manager.getAppWidgetIds(ComponentName(context, provider))
+                if (ids.isEmpty()) continue
+                val intent = Intent(context, provider)
+                    .setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                context.sendBroadcast(intent)
+            }
         }
     }
 }
