@@ -49,8 +49,8 @@ public class InternalPairController(FatVpnDbContext db) : ControllerBase
 }
 
 public sealed record CompletePairingRequest(
-    [property: StringLength(32)] string PairCode,
+    [StringLength(32)] string PairCode,
     long TelegramUserId,
-    [property: StringLength(64)] string SubscriptionId,
+    [StringLength(64)] string SubscriptionId,
     DateTimeOffset ExpiresAt,
-    [property: StringLength(64)] string? KeyCode = null);
+    [StringLength(64)] string? KeyCode = null);

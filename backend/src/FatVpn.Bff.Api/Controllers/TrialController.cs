@@ -204,5 +204,5 @@ public class TrialController(
 }
 
 public sealed record TrialRequest(
-    [property: StringLength(512, MinimumLength = 16)] string AttestationToken,
-    [property: StringLength(32)] string Platform);
+    [StringLength(512, MinimumLength = 16)] string AttestationToken,
+    [StringLength(32)] string Platform);

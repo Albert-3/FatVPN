@@ -269,7 +269,7 @@ public class AuthController(
 }
 
 public sealed record ExchangeTokenRequest(
-    [property: StringLength(128)] string ShortToken,
-    [property: StringLength(512)] string? AttestationToken = null);
+    [StringLength(128)] string ShortToken,
+    [StringLength(512)] string? AttestationToken = null);
 
-public sealed record RefreshRequest([property: StringLength(512)] string RefreshToken);
+public sealed record RefreshRequest([StringLength(512)] string RefreshToken);

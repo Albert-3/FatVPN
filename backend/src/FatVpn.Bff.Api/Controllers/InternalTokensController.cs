@@ -54,8 +54,8 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
 }
 
 public sealed record RegisterTokenRequest(
-    [property: StringLength(128)] string ShortToken,
-    [property: StringLength(64)] string RemnawaveSubscriptionId,
+    [StringLength(128)] string ShortToken,
+    [StringLength(64)] string RemnawaveSubscriptionId,
     DateTimeOffset ExpiresAt,
     // Optional: the key's owner. Without it the key stays a session identity of
     // its own and misses every later extension — see Token.AccountId.
