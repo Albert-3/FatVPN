@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/server_country.dart';
+import 'app_logger.dart';
 
 /// Config-link schemes the `singbox_mm` plugin can parse and connect
 /// (`VpnConfigParser.supportedSchemes`). `/config` may list any of these — not
@@ -28,18 +29,36 @@ const _supportedSchemes = <String>{
 /// decodes into one link per line. We keep every line whose scheme the tunnel
 /// plugin understands (see [_supportedSchemes]), so nodes on any protocol in
 /// the subscription — not only vless — become usable.
+///
+/// Both encodings are accepted, because failing to decode is indistinguishable
+/// from an empty subscription downstream: the user is told "no available node"
+/// and there is nothing in the log to say why. Plain text is what a `text/plain`
+/// response or a CDN that already decoded the body looks like; the base64 is
+/// normalized first for URL-safe alphabets, missing padding and the line breaks
+/// a 76-column wrap inserts.
 List<String> parseConfigUris(String rawConfigContent) {
-  final String decoded;
-  try {
-    decoded = utf8.decode(base64.decode(rawConfigContent.trim()));
-  } catch (_) {
-    return [];
-  }
-  return decoded
-      .split('\n')
-      .map((line) => line.trim())
+  final raw = rawConfigContent.trim();
+  if (raw.isEmpty) return const [];
+  final decoded = _decodeBase64(raw) ?? raw;
+  final lines = decoded.split(RegExp(r'[\r\n]+')).map((l) => l.trim()).toList();
+  final supported = lines
       .where((line) => _supportedSchemes.contains(_schemeOf(line)))
       .toList();
+  final rawCount = lines.where((l) => l.isNotEmpty).length;
+  if (supported.length != rawCount) {
+    log.i('config parse: $rawCount raw → ${supported.length} supported');
+  }
+  return supported;
+}
+
+/// The blob decoded as base64, or null when it isn't base64 at all.
+String? _decodeBase64(String raw) {
+  try {
+    final compact = raw.replaceAll(RegExp(r'\s'), '');
+    return utf8.decode(base64.decode(base64.normalize(compact)));
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Lowercased URI scheme of [line] (`vless://…` → `vless`), or null if the line
@@ -109,18 +128,34 @@ String _decodeFragment(String fragment) {
   }
 }
 
+/// Preference order when one host publishes several inbounds. Earlier wins.
+///
+/// Anything not listed ranks last but is still usable — the point is only that
+/// the choice is deterministic, not that the tail is ordered meaningfully.
+const _schemePriority = <String>['vless', 'trojan', 'hysteria2', 'hy2'];
+
 /// Finds the config URI whose host matches [node]'s address.
 ///
 /// Matching is address-only: `GET /servers` exposes the Remnawave agent's
 /// management port (always 2222), not the client-facing inbound port, and a
 /// single node can have several inbounds on different ports — the port from
 /// `/servers` can't be used to disambiguate them.
+///
+/// When several do match, the scheme decides rather than the order the
+/// subscription happened to list them in; otherwise the protocol a node
+/// connects on changes with an unrelated edit in the panel.
 String? findUriForNode(List<String> uris, ServerNode node) {
+  String? best;
+  var bestRank = _schemePriority.length;
   for (final uri in uris) {
     final parsed = Uri.tryParse(uri);
-    if (parsed != null && parsed.host == node.address) {
-      return uri;
+    if (parsed == null || parsed.host != node.address) continue;
+    final index = _schemePriority.indexOf(_schemeOf(uri) ?? '');
+    final rank = index < 0 ? _schemePriority.length : index;
+    if (best == null || rank < bestRank) {
+      best = uri;
+      bestRank = rank;
     }
   }
-  return null;
+  return best;
 }
