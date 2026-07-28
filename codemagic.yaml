@@ -138,6 +138,35 @@ workflows:
         script: |
           cd app/ios
           pod install
+      - name: Fetch every App Store profile this team has
+        script: |
+          set -e
+          # The integration fetches signing files once, before any of these
+          # scripts run, searching by the bundle id in `ios_signing`. It brought
+          # Runner's and PacketTunnel's profiles and not the widget's — twice,
+          # the second time (build 145) with the widget's profile sitting ACTIVE
+          # in the portal for half an hour and the step below printing exactly
+          # which two arrived. So the search, not the portal, is what excludes
+          # this identifier.
+          #
+          # Stop searching by bundle id then: this team's App Store profiles are
+          # the three we need, so take all of them. No filter to get wrong, and
+          # a fourth extension later needs no change here.
+          #
+          # `profiles list` touches no certificates — which is what killed the
+          # earlier attempt (`fetch-signing-files` fetches certificates too and
+          # refuses to save them without the private key the integration keeps
+          # to itself: "Cannot save Signing Certificates without certificate
+          # private key", build 144). Credentials come from the integration's
+          # APP_STORE_CONNECT_* environment variables.
+          #
+          # Saved into the same directory the integration uses; `use-profiles`
+          # reads that one and the Xcode UserData one, and so does the check.
+          app-store-connect profiles list \
+            --type IOS_APP_STORE \
+            --state ACTIVE \
+            --profiles-dir "$HOME/Library/MobileDevice/Provisioning Profiles" \
+            --save
       - name: Set up code signing settings on Xcode project
         script: |
           cd app
@@ -162,13 +191,16 @@ workflows:
           # A wildcard profile (TEAMID.*) deliberately does not count: every
           # bundle id below carries App Groups, which a wildcard App ID cannot
           # have, so accepting one would only move the failure later.
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          # Both directories `use-profiles` itself looks in — checking only one
+          # of them would fail a build whose profiles are perfectly usable.
+          set -- "$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision \
+                 "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision
           MISSING=""
           for BUNDLE_ID in com.fatvpn.fatvpnApp \
                            com.fatvpn.fatvpnApp.PacketTunnel \
                            com.fatvpn.fatvpnApp.FatVpnWidget; do
             FOUND=""
-            for PROFILE in "$PROFILES_DIR"/*.mobileprovision; do
+            for PROFILE in "$@"; do
               [ -e "$PROFILE" ] || continue
               # A .mobileprovision is a CMS blob; the decoded plist carries the
               # App ID as <string>TEAMID.the.bundle.id</string>
@@ -189,21 +221,23 @@ workflows:
             # whether the fetch's scope excludes this bundle id or whether the
             # profile simply post-dated the fetch. This list answers it.
             echo "Profiles that were fetched:" >&2
-            for PROFILE in "$PROFILES_DIR"/*.mobileprovision; do
+            for PROFILE in "$@"; do
               [ -e "$PROFILE" ] || continue
               APP_ID="$(security cms -D -i "$PROFILE" 2>/dev/null \
                           | plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null)"
               echo "  $(basename "$PROFILE") -> ${APP_ID:-<unreadable>}" >&2
             done
             echo "" >&2
-            echo "Either the App ID or its App Store profile is missing. At" >&2
-            echo "developer.apple.com > Certificates, Identifiers & Profiles:" >&2
+            echo "The step above asked for every ACTIVE IOS_APP_STORE profile" >&2
+            echo "this team has, so a bundle id missing from that list has no" >&2
+            echo "such profile at all. At developer.apple.com > Certificates," >&2
+            echo "Identifiers & Profiles:" >&2
             echo " * Identifiers: an explicit App ID with the App Groups" >&2
             echo "   capability bound to group.com.fatvpn.fatvpnApp (the widget" >&2
             echo "   and the tunnel read the shared snapshot through it)." >&2
-            echo " * Profiles: an App Store profile on that App ID. Do not wait" >&2
-            echo "   for this build to create one — on this account every" >&2
-            echo "   profile is made by hand; the integration creates only the" >&2
+            echo " * Profiles: an App Store profile on that App ID, Active." >&2
+            echo "   Nothing here creates one — on this account every profile" >&2
+            echo "   is made by hand; the integration creates only the" >&2
             echo "   certificate." >&2
             exit 1
           fi
