@@ -44,6 +44,17 @@ class TrafficThrottlePolicy {
   final int? tunMtu;
   final String dnsStrategy;
   final bool enableAutoMtuProbe;
+
+  /// The ladder the adaptive probe steps *down* when a path proves it cannot
+  /// carry the current MTU. Its floor is 1280 by construction — the IPv6
+  /// minimum, and the TUN carries an inet6 address on iOS — candidates below
+  /// it are dropped in `_resolveMtuCandidatesInternal`, same as the
+  /// `tunMtu >= 1280` assert above.
+  ///
+  /// On iOS the platform default is already 1280, so this ladder is inert
+  /// there **by design**, not by accident (V28): there is nowhere legal to
+  /// step down to. It tunes only configurations whose MTU starts above the
+  /// floor — Android presets, or an explicit [tunMtu].
   final List<int> mtuProbeCandidates;
 
   Map<String, Object?> toMap() {
