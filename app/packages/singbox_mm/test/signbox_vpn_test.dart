@@ -1953,8 +1953,68 @@ void main() {
       // absent detour dials the server directly, which is the same intent.
       expect(fallbackServer.containsKey('detour'), isFalse);
       expect(fallbackServer['address_resolver'], 'dns-direct');
+
+      // sing-box builds the DNS transports in list order and resolves a legacy
+      // `address_resolver` only among those already built, so the resolver has
+      // to be declared *earlier* than the server naming it. Emitting it later
+      // failed the whole tunnel at startup with "initialize DNS server[2]:
+      // address resolver not found: dns-direct".
+      final int directIndex = servers.indexWhere(
+        (dynamic item) => item is Map && item['tag'] == 'dns-direct',
+      );
+      final int fallbackIndex = servers.indexWhere(
+        (dynamic item) => item is Map && item['tag'] == 'dns-remote-fallback',
+      );
+      expect(directIndex, greaterThanOrEqualTo(0));
+      expect(fallbackIndex, greaterThan(directIndex));
     },
   );
+
+  test('every dns address_resolver names a server declared before it', () async {
+    for (final VpnProfile profile in <VpnProfile>[
+      VpnProfile.hysteria2(
+        tag: 'hy2-order',
+        server: 'hy2.example.com',
+        serverPort: 443,
+        password: 'secret',
+        tls: const TlsOptions(enabled: true, serverName: 'hy2.example.com'),
+      ),
+      VpnProfile.vless(
+        tag: 'vless-order',
+        server: 'edge.example.com',
+        serverPort: 443,
+        uuid: '11111111-2222-3333-4444-555555555555',
+      ),
+    ]) {
+      final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
+      SignboxVpnPlatform.instance = fakePlatform;
+      final SignboxVpn vpn = SignboxVpn();
+      await vpn.initialize(const SingboxRuntimeOptions());
+
+      await vpn.applyProfile(profile: profile);
+
+      final Map<String, dynamic> config =
+          jsonDecode(fakePlatform.latestConfig!) as Map<String, dynamic>;
+      final List<dynamic> servers =
+          (config['dns'] as Map<String, dynamic>)['servers'] as List<dynamic>;
+      final Set<String> declared = <String>{};
+      for (final dynamic item in servers) {
+        if (item is! Map) continue;
+        final Object? resolver = item['address_resolver'];
+        if (resolver is String) {
+          expect(
+            declared,
+            contains(resolver),
+            reason:
+                'server "${item['tag']}" resolves through "$resolver", which '
+                'sing-box has not created yet at that point',
+          );
+        }
+        final Object? tag = item['tag'];
+        if (tag is String) declared.add(tag);
+      }
+    }
+  });
 
   test(
     'strict-route mode omits inet6 TUN address when ipv6 route mode is disabled',

@@ -168,6 +168,20 @@ class SingboxDnsBuilder {
       'detour': profile.tag,
       'strategy': resolvedRemoteStrategy,
     });
+    // Emitted *before* any server that names it as an `address_resolver`.
+    // sing-box creates the DNS transports strictly in the order they appear
+    // (box.go: `for i, transportOptions := range dnsOptions.Servers`) and a
+    // legacy `address_resolver` is looked up among the ones already created
+    // (dns/transport_dialer.go: `E.New("address resolver not found: ", ...)`).
+    // Listing `dns-direct` last therefore killed the tunnel before it started —
+    // "initialize DNS server[2]: address resolver not found: dns-direct" — on
+    // every Hysteria2/TUIC node, which is exactly where the DoH fallback wants
+    // to be resolved off-tunnel.
+    servers.add(<String, Object?>{
+      'tag': 'dns-direct',
+      'address': resolvedDirectAddress,
+      'strategy': resolvedDirectStrategy,
+    });
     if (enableDohFallback) {
       final Map<String, Object?> fallbackServer = <String, Object?>{
         'tag': 'dns-remote-fallback',
@@ -189,11 +203,6 @@ class SingboxDnsBuilder {
       }
       servers.add(fallbackServer);
     }
-    servers.add(<String, Object?>{
-      'tag': 'dns-direct',
-      'address': resolvedDirectAddress,
-      'strategy': resolvedDirectStrategy,
-    });
 
     final Map<String, Object?> dns = <String, Object?>{
       'servers': servers,
