@@ -16,6 +16,7 @@
 // Both are Swift-side fixes, but they are driven from Dart — which is the part
 // a host test run can hold to account.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -224,6 +225,74 @@ void main() {
       expect(await storage.read(key: 'vpn_clash_api_secret'), isNull,
           reason: 'a secret kept past the session it belonged to is a secret '
               'in a support bundle with nothing left to protect');
+    });
+  });
+
+  group('the wipe never lands inside the connect it would disarm', () {
+    // A connect takes seconds; the home screen reads `connecting` as "on", so a
+    // second tap on the power button is a disconnect and the two run at once.
+    // The disconnect's wipe erases the config the connect is about to start
+    // from, and iOS then answers "Config is missing. Call setConfig() first." —
+    // an error message for a session the user themselves cancelled.
+    test('a disconnect mid-connect does not fail the connect', () async {
+      platform.setConfigReached = Completer<void>();
+      platform.holdAfterSetConfig = Completer<void>();
+
+      final connecting = connect();
+      await platform.setConfigReached!.future;
+
+      // The second tap, landing squarely in the window.
+      final disconnecting = vpn.disconnect();
+      platform.holdAfterSetConfig!.complete();
+
+      await expectLater(connecting, completes,
+          reason: 'the cancelled connect must not surface as a platform error');
+      await disconnecting;
+
+      expect(vpn.errorMessage, isNull);
+    });
+
+    test('the cancelled session is still torn down, wipe included', () async {
+      platform.setConfigReached = Completer<void>();
+      platform.holdAfterSetConfig = Completer<void>();
+
+      final connecting = connect();
+      await platform.setConfigReached!.future;
+      final disconnecting = vpn.disconnect();
+      platform.holdAfterSetConfig!.complete();
+      await connecting;
+      await disconnecting;
+
+      expect(vpn.isConnected, isFalse,
+          reason: 'the user asked for the VPN to be off; a connect that landed '
+              'after that request must not leave them on it');
+      expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
+          reason: 'deferring the wipe must not mean skipping it — the config '
+              'and the start-options snapshot still have to go');
+      expect(platform.callOrder.indexOf('clearPersistedState'),
+          greaterThan(platform.callOrder.indexOf('startVpn')),
+          reason: 'the wipe belongs after the start it would otherwise disarm');
+    });
+
+    test('a failed connect still honours the deferred wipe', () async {
+      platform.setConfigReached = Completer<void>();
+      platform.holdAfterSetConfig = Completer<void>();
+
+      final connecting = connect();
+      await platform.setConfigReached!.future;
+      platform.setConfigThrows = true;
+      final disconnecting = vpn.disconnect();
+      platform.holdAfterSetConfig!.complete();
+
+      await expectLater(connecting, throwsA(isA<Exception>()));
+      await disconnecting;
+      // The deferral is dispatched from the connect's `finally`, so let the
+      // microtask carrying it run.
+      await Future<void>.delayed(Duration.zero);
+
+      expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
+          reason: 'a cancelled connect that also failed must not leave the '
+              'subscription on disk');
     });
   });
 }

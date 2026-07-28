@@ -87,9 +87,25 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
     }
   }
 
+  /// Completed by [setConfig] the moment it is called, so a test can act while
+  /// a connect is mid-flight — the window in which a user tap can land a
+  /// disconnect between the config being pushed and the tunnel being started.
+  Completer<void>? setConfigReached;
+
+  /// Awaited by [setConfig] before it returns. Lets a test hold the connect
+  /// open at that exact point.
+  Completer<void>? holdAfterSetConfig;
+
   @override
   Future<void> setConfig(String configJson) async {
+    callOrder.add('setConfig');
     capturedConfig = configJson;
+    if (!(setConfigReached?.isCompleted ?? true)) {
+      setConfigReached!.complete();
+    }
+    if (holdAfterSetConfig != null) {
+      await holdAfterSetConfig!.future;
+    }
     if (setConfigThrows) {
       throw PlatformException(
         code: 'config_failed',
@@ -124,6 +140,9 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
     if (clearPersistedStateThrows) {
       throw StateError('platform refused to clear persisted state');
     }
+    // What the iOS plugin does: the stored config *is* what `startVpn` starts
+    // from, so erasing it disarms any start that has not happened yet.
+    capturedConfig = null;
   }
 
   @override
@@ -133,6 +152,15 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
   Future<void> startVpn() async {
     callOrder.add('startVpn');
     startVpnCalls++;
+    // SingboxMmPlugin.startVpn (iOS) refuses to start without a config, with
+    // exactly this message. Android has no equivalent — it keeps no config to
+    // erase — which is why the failure only ever showed up on iPhones.
+    if (capturedConfig == null) {
+      throw PlatformException(
+        code: 'START_FAILED',
+        message: 'Config is missing. Call setConfig() first.',
+      );
+    }
     reportedState = VpnConnectionState.connected;
     states.add(VpnConnectionState.connected);
   }

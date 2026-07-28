@@ -970,8 +970,18 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       details: nil)
   }
 
+  /// The config last written by [setConfig], read back from disk.
+  ///
+  /// Resolves the location through [ensureRuntime] rather than trusting the
+  /// cached `configURL`: that field is only populated once `initialize` (or an
+  /// earlier `setConfig`) has run *in this process*, so a `startVpn` that
+  /// arrives before either would report "Config is missing" while the config sat
+  /// on disk the whole time. `clearPersistedState` already resolves the same
+  /// default path for the delete side; this is the read side of it.
   private func readConfigFile() -> String? {
-    guard let url = configURL, FileManager.default.fileExists(atPath: url.path) else {
+    let url = configURL ?? (try? ensureRuntime())?.workingDirectory
+      .appendingPathComponent("active-config.json")
+    guard let url, FileManager.default.fileExists(atPath: url.path) else {
       return nil
     }
     return try? String(contentsOf: url, encoding: .utf8)

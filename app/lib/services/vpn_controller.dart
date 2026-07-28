@@ -59,6 +59,26 @@ class VpnController extends ChangeNotifier {
   // connected→disconnected transition it causes isn't misread as a runtime
   // tunnel failure by the diagnostics watcher below.
   bool _userDisconnecting = false;
+
+  // ── Connect / disconnect interleaving ────────────────────────────────────
+  // A connect takes seconds (a `/config` round-trip, then a ping of every
+  // candidate), and the user is free to tap the power button again while it
+  // runs — the home screen reads a `connecting` state as "on", so that second
+  // tap is a disconnect. Both halves then run at once, and the disconnect's
+  // cleanup lands in the middle of the connect it knows nothing about.
+  //
+  // That cleanup is destructive: [forgetPersistedTunnelState] erases the config
+  // the platform is holding. On iOS the config *is* what `startVpn` starts
+  // from, so a wipe that lands between the config being pushed and the tunnel
+  // being started fails the connect with "Config is missing. Call setConfig()
+  // first." — the user sees an error for something they cancelled. (Android
+  // does not implement the wipe at all, which is why the symptom is iOS-only.)
+  //
+  // So the wipe is deferred, not skipped: the connect finishes, notices the
+  // disconnect that arrived while it ran, and tears its own session down —
+  // config and all. Same end state, without the two halves fighting.
+  bool _connecting = false;
+  bool _disconnectRequestedDuringConnect = false;
   VpnConnectionState _state = VpnConnectionState.disconnected;
   String? _errorMessage;
   ServerNode? _connectedNode;
@@ -652,6 +672,8 @@ class VpnController extends ChangeNotifier {
     _errorMessage = null;
     _tunnelNotPassingTraffic = false;
     _userDisconnecting = false;
+    _connecting = true;
+    _disconnectRequestedDuringConnect = false;
     _state = VpnConnectionState.connecting;
     notifyListeners();
 
@@ -723,6 +745,17 @@ class VpnController extends ChangeNotifier {
           clashApiSecret: clashApiSecret,
         ),
       );
+      // The user asked for the VPN to be off while this was still running (see
+      // [_disconnectRequestedDuringConnect]). Honour that rather than leaving
+      // them on a session they cancelled — and do it here, where no wipe can
+      // land inside somebody else's connect.
+      if (_disconnectRequestedDuringConnect) {
+        log.i('Connect completed after a disconnect request; taking it down');
+        _connecting = false;
+        _disconnectRequestedDuringConnect = false;
+        await disconnect();
+        return null;
+      }
       _connectedNode = node;
       log.i('Tunnel established to "${node.name}"');
       // Watch this session from here on, so a node that degrades later doesn't
@@ -744,6 +777,16 @@ class VpnController extends ChangeNotifier {
       log.e('Connect failed', e.toString());
       notifyListeners();
       rethrow;
+    } finally {
+      _connecting = false;
+      // A disconnect that arrived mid-connect had its cleanup deferred to this
+      // method; if the connect failed instead of completing, the deferral must
+      // still be honoured, or a cancelled session would leave the subscription
+      // on disk.
+      if (_disconnectRequestedDuringConnect) {
+        _disconnectRequestedDuringConnect = false;
+        unawaited(forgetPersistedTunnelState());
+      }
     }
   }
 
@@ -1109,6 +1152,16 @@ class VpnController extends ChangeNotifier {
   /// Best-effort by design: failing to clean up must not turn a sign-out into
   /// an error the user is shown.
   Future<void> forgetPersistedTunnelState() async {
+    if (_connecting) {
+      // A connect is in flight: it has either just handed the platform the
+      // config it is about to start from, or is about to. Erasing that config
+      // now is what produced "Config is missing. Call setConfig() first." on
+      // iOS — an error for a session the user had just cancelled. The connect
+      // performs this teardown itself once it lands (see [_connect]).
+      log.i('Wipe requested during an in-flight connect; deferring it');
+      _disconnectRequestedDuringConnect = true;
+      return;
+    }
     _clashApiSecret = null;
     unawaited(_storage.delete(key: _clashApiSecretKey));
     try {
