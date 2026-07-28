@@ -20,7 +20,8 @@ public class InternalAccountController(FatVpnDbContext db) : ControllerBase
     public async Task<IActionResult> UpsertSubscription([FromBody] UpsertSubscriptionRequest request, CancellationToken ct)
     {
         await AccountUpsert.UpsertAsync(
-            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode, ct);
+            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode,
+            request.MakeActive, request.ReplacesSubscriptionId, ct);
 
         await db.SaveChangesAsync(ct);
         return Ok();
@@ -31,4 +32,11 @@ public sealed record UpsertSubscriptionRequest(
     long TelegramUserId,
     [property: StringLength(64)] string SubscriptionId,
     DateTimeOffset ExpiresAt,
-    [property: StringLength(64)] string? KeyCode = null);
+    [property: StringLength(64)] string? KeyCode = null,
+    // True only when the user just chose this key for the app. Left false for a
+    // routine extension, so extending a key the user is *not* connected on no
+    // longer drags the app over to it.
+    bool MakeActive = false,
+    // Set when this key replaces one the bot just deleted (key change, or an
+    // extension done by re-issue). The app follows only if it was on that key.
+    [property: StringLength(64)] string? ReplacesSubscriptionId = null);

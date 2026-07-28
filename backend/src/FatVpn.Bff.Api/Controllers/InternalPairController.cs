@@ -34,8 +34,11 @@ public class InternalPairController(FatVpnDbContext db) : ControllerBase
             return NotFound();
         }
 
+        // Pairing is the user picking a key in the bot and pointing the app at
+        // it, so it always switches the account onto that key.
         var account = await AccountUpsert.UpsertAsync(
-            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode, ct);
+            db, request.TelegramUserId, request.SubscriptionId, request.ExpiresAt, request.KeyCode,
+            makeActive: true, replacesSubscriptionId: null, ct);
 
         pairing.AccountId = account.Id;
         pairing.Status = PairingStatus.Completed;

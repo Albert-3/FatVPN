@@ -137,6 +137,126 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public async Task ExchangeToken_UnboundKey_StaysALegacyTokenSession()
+    {
+        // A key the bot never told us the owner of: nothing to resolve through,
+        // so the session identity is still the key row itself.
+        using var db = TestHelpers.NewDb();
+        var token = new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            RemnawaveSubscriptionId = "sub-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        };
+        db.Tokens.Add(token);
+        await db.SaveChangesAsync();
+
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K"), default));
+
+        var refresh = await db.RefreshTokens.AsNoTracking().SingleAsync();
+        Assert.Equal(token.Id, refresh.TokenId);
+        Assert.Null(refresh.AccountId);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_AccountBoundKey_IssuesAnAccountSessionAndMakesThatKeyActive()
+    {
+        // Pasting a code is the user choosing which of their keys the app runs
+        // on: the account switches to it, and the session is the account's, so
+        // later extensions reach the app instead of dying on the key row.
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            TelegramUserId = 42,
+            CurrentSubscriptionId = "sub-other",
+            CurrentKeyCode = "OTHERCODE",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        };
+        db.Accounts.Add(account);
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "CHOSEN",
+            RemnawaveSubscriptionId = "sub-chosen",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+            AccountId = account.Id,
+        });
+        await db.SaveChangesAsync();
+
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("CHOSEN"), default));
+
+        var stored = await db.Accounts.AsNoTracking().SingleAsync();
+        Assert.Equal("sub-chosen", stored.CurrentSubscriptionId);
+        Assert.Equal("CHOSEN", stored.CurrentKeyCode);
+
+        var refresh = await db.RefreshTokens.AsNoTracking().SingleAsync();
+        Assert.Equal(account.Id, refresh.AccountId);
+        Assert.Null(refresh.TokenId);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_KeyExtendedOnTheAccount_IsNotRefusedAsExpired()
+    {
+        // The bot rewrites the key row only when it reissues a code; an
+        // extension lands on the account. Reading the stale row here is what
+        // used to answer a renewed subscriber's own key with a flat 404.
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            TelegramUserId = 42,
+            CurrentSubscriptionId = "sub-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30), // extended in the bot
+        };
+        db.Accounts.Add(account);
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            RemnawaveSubscriptionId = "sub-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(-2), // what the bot registered back then
+            AccountId = account.Id,
+        });
+        await db.SaveChangesAsync();
+
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K"), default));
+        Assert.Equal(1, await db.RefreshTokens.CountAsync());
+    }
+
+    [Fact]
+    public async Task ExchangeToken_AccountBoundKeyGenuinelyExpired_ReturnsNotFound()
+    {
+        // The rescue above applies only to the key the account is actually on.
+        // A different, spent key is still spent.
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            TelegramUserId = 42,
+            CurrentSubscriptionId = "sub-live",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        };
+        db.Accounts.Add(account);
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "SPENT",
+            RemnawaveSubscriptionId = "sub-spent",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(-2),
+            AccountId = account.Id,
+        });
+        await db.SaveChangesAsync();
+
+        Assert.IsType<NotFoundResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("SPENT"), default));
+    }
+
+    [Fact]
     public async Task Refresh_ValidAccountToken_RotatesAndRevokesOld()
     {
         using var db = TestHelpers.NewDb();

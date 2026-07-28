@@ -28,11 +28,36 @@ public class AuthController(
     {
         var token = await db.Tokens.AsNoTracking()
             .SingleOrDefaultAsync(t => t.ShortToken == request.ShortToken, ct);
-        if (token is null || token.ExpiresAt <= DateTimeOffset.UtcNow)
+        if (token is null)
         {
             // No audit trail existed on this endpoint at all, so a key being
             // brute-forced looked exactly like normal traffic in the logs.
-            logger.LogWarning("Rejected /auth/token: unknown or expired key");
+            logger.LogWarning("Rejected /auth/token: unknown key");
+            return NotFound();
+        }
+
+        // Tracked, not AsNoTracking: pasting a code is the user picking which of
+        // their keys the app runs on, so this row is about to be written.
+        var account = token.AccountId is null
+            ? null
+            : await db.Accounts.FirstOrDefaultAsync(a => a.Id == token.AccountId.Value, ct);
+
+        // Extensions land on the account, never on the key row — the bot only
+        // rewrites the latter when it reissues a code. So for the key that is
+        // already the account's active one, the account holds the fresher
+        // expiry, and reading the stale row here is what used to refuse a
+        // renewed subscriber their own key with a flat 404.
+        var expiresAt = token.ExpiresAt;
+        if (account is not null
+            && account.CurrentSubscriptionId == token.RemnawaveSubscriptionId
+            && account.ExpiresAt > expiresAt)
+        {
+            expiresAt = account.ExpiresAt;
+        }
+
+        if (expiresAt <= DateTimeOffset.UtcNow)
+        {
+            logger.LogWarning("Rejected /auth/token: expired key");
             return NotFound();
         }
 
@@ -57,8 +82,29 @@ public class AuthController(
             }
         }
 
-        var accessToken = jwtTokenService.CreateAccessToken(token);
-        var (refreshRaw, refreshEntity) = refreshTokenService.Create(accountId: null, tokenId: token.Id);
+        string accessToken;
+        string refreshRaw;
+        RefreshToken refreshEntity;
+        if (account is not null)
+        {
+            // A key we know the owner of stops being an identity of its own: the
+            // session is the account's, exactly as if the user had paired. That
+            // is the whole point — a later extension or key change reaches the
+            // app instead of dying on this row.
+            account.CurrentSubscriptionId = token.RemnawaveSubscriptionId;
+            account.CurrentKeyCode = token.ShortToken;
+            account.ExpiresAt = expiresAt;
+            account.UpdatedAt = DateTimeOffset.UtcNow;
+
+            accessToken = jwtTokenService.CreateAccessTokenForAccount(account);
+            (refreshRaw, refreshEntity) = refreshTokenService.Create(account.Id, tokenId: null);
+        }
+        else
+        {
+            accessToken = jwtTokenService.CreateAccessToken(token);
+            (refreshRaw, refreshEntity) = refreshTokenService.Create(accountId: null, tokenId: token.Id);
+        }
+
         db.RefreshTokens.Add(refreshEntity);
         await db.SaveChangesAsync(ct);
 
@@ -69,8 +115,8 @@ public class AuthController(
             // expiresAt is the subscription's expiry and always has been; the two
             // explicit fields are additive so existing clients keep working while
             // new ones can stop refreshing on the wrong clock.
-            expiresAt = token.ExpiresAt,
-            subscriptionExpiresAt = token.ExpiresAt,
+            expiresAt,
+            subscriptionExpiresAt = expiresAt,
             accessTokenExpiresAt = DateTimeOffset.UtcNow + jwtOptions.Value.AccessTokenLifetime,
         });
     }

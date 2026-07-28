@@ -35,6 +35,16 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
         // phone can re-activate on the new device ("Поменять ключ" in the bot).
         token.BoundDeviceKeyHash = null;
 
+        // Whose key this is, when the bot says so. Deliberately does NOT touch
+        // the account's active subscription: handing the user a code to look at
+        // is not the same as the user choosing to connect with it — that
+        // happens in /auth/token, when they actually paste it.
+        if (request.TelegramUserId is not null)
+        {
+            var account = await AccountUpsert.EnsureAsync(db, request.TelegramUserId.Value, ct);
+            token.AccountId = account.Id;
+        }
+
         await db.SaveChangesAsync(ct);
         // Always 201, including on update. Wrong by REST, but the Python bot lives
         // outside this repo and may well test for it — not worth breaking key
@@ -46,4 +56,7 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
 public sealed record RegisterTokenRequest(
     [property: StringLength(128)] string ShortToken,
     [property: StringLength(64)] string RemnawaveSubscriptionId,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    // Optional: the key's owner. Without it the key stays a session identity of
+    // its own and misses every later extension — see Token.AccountId.
+    long? TelegramUserId = null);
