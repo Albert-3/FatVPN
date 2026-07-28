@@ -184,12 +184,15 @@ workflows:
           if [ -n "$MISSING" ]; then
             echo "No provisioning profile was fetched for:$MISSING" >&2
             echo "" >&2
-            echo "Almost certainly the App ID itself does not exist yet. At" >&2
-            echo "developer.apple.com > Certificates, Identifiers & Profiles >" >&2
-            echo "Identifiers, create it as an explicit App ID and enable the" >&2
-            echo "App Groups capability with group.com.fatvpn.fatvpnApp (the" >&2
-            echo "widget and the tunnel read the shared snapshot through it)." >&2
-            echo "Then re-run this workflow: the profile is created for you." >&2
+            echo "Either the App ID or its App Store profile is missing. At" >&2
+            echo "developer.apple.com > Certificates, Identifiers & Profiles:" >&2
+            echo " * Identifiers: an explicit App ID with the App Groups" >&2
+            echo "   capability bound to group.com.fatvpn.fatvpnApp (the widget" >&2
+            echo "   and the tunnel read the shared snapshot through it)." >&2
+            echo " * Profiles: an App Store profile on that App ID. Do not wait" >&2
+            echo "   for this build to create one — on this account every" >&2
+            echo "   profile is made by hand; the integration creates only the" >&2
+            echo "   certificate." >&2
             exit 1
           fi
           echo "A provisioning profile is present for every bundle id."

@@ -194,24 +194,36 @@ ios/PacketTunnel/PacketTunnelProvider.swift  patchTunnelState на старте/
 покраснеет здесь, а не на телефоне тестировщика.
 
 **Это и случилось: сборка 142 (2026-07-28) упала — `Signing for "FatVpnWidget"
-requires a development team`.** App ID виджета в портале нет, поэтому профиля для
-него не нашлось: `ios_signing.bundle_identifier: com.fatvpn.fatvpnApp` ищет
-**подстрокой** (потому и подхватывает `…​.PacketTunnel`), но заводит новый App ID
-только когда не нашлось *ничего* — а основной-то нашёлся. `xcode-project
-use-profiles` молча пропускает таргет без профиля, тот остаётся на автоматической
-подписи без команды, и Xcode падает уже в архиве. Порядок действий (портал, руками
-— capability с конкретной группой через App Store Connect API не выставляется):
+requires a development team`.** Профиля для виджета в тот момент не существовало:
+`ios_signing.bundle_identifier: com.fatvpn.fatvpnApp` ищет **подстрокой** (потому и
+подхватывает `…​.PacketTunnel`), но заводит недостающее только когда не нашлось
+*ничего* — а основной App ID нашёлся. Плюс профили в этой команде созданы руками, а
+не API-ключом: Codemagic сам создаёт только сертификат, профиль — нет.
+`xcode-project use-profiles` молча пропускает таргет без профиля, тот остаётся на
+автоматической подписи без команды, и Xcode падает уже в архиве.
+
+**Портал приведён в порядок в тот же день (проверено 2026-07-28 глазами):** App ID
+`com.fatvpn.fatvpnApp.FatVpnWidget` («FatVPN Widget», explicit) существует, App
+Groups включена и привязана к `group.com.fatvpn.fatvpnApp`, профиль `FatVpnWidget
+App Store` активен и в его Enabled Capabilities значится App Groups — то есть
+entitlement переживёт подпись. Сертификат в команде один (Distribution, создан
+API-ключом Codemagic), так что рассинхрона профиля и сертификата быть не может.
+Осталось перезапустить `ios-release`.
+
+Если этот App ID когда-нибудь придётся заводить заново (портал, руками —
+capability с конкретной группой через App Store Connect API не выставляется):
 
 1. developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → **+**
    → App IDs → App.
 2. Explicit Bundle ID = `com.fatvpn.fatvpnApp.FatVpnWidget`, описание любое.
 3. Включить **App Groups** → Configure → выбрать `group.com.fatvpn.fatvpnApp`
    (ту же, что у Runner и PacketTunnel), Save.
-4. Перезапустить `ios-release`: профиль под новый App ID Codemagic заводит сам
-   (`fetch-signing-files … --create` при `ios_signing` с интеграцией). Если шаг
-   проверки всё же скажет, что профиля нет, — создать в портале App Store
-   distribution-профиль на этот App ID руками и перезапустить ещё раз.
-   NE-capability виджету не нужна (см. §1).
+4. Там же → Profiles → **+** → App Store → выбрать этот App ID → сертификат
+   Distribution → имя вида `FatVpnWidget App Store`. **Не рассчитывать, что
+   Codemagic создаст профиль сам**: на этом аккаунте все три профиля сделаны
+   руками, а `--create` в `fetch-signing-files` срабатывает, только когда поиск по
+   подстроке не вернул вообще ничего. Именно на этом и упала сборка 142.
+5. Перезапустить `ios-release`. NE-capability виджету не нужна (см. §1).
 
 Шаг `Verify a profile was fetched for every bundle id` в `codemagic.yaml`
 проверяет все три bundle id **до** архива и печатает этот же список действий —
