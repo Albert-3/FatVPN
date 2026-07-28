@@ -73,6 +73,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // while silent token refreshes do not.
   DateTime? _lastMintedAt;
 
+  // Last-seen auto-reconnect / kill-switch values, so a settings notification
+  // can tell a profile-preference flip from a tunnel-config change — the two
+  // need opposite handling (see [_onConnSettingsChanged]).
+  late bool _lastAutoReconnect;
+  late bool _lastKillSwitch;
+
   // A tap on the home-screen widget waiting to be carried out — see
   // [_maybeRunWidgetAction].
   HomeWidgetAction? _pendingWidgetAction;
@@ -93,6 +99,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _vpn.addListener(_handleVpnChange);
     _vpn.onAutoSwitched = _onAutoSwitched;
     widget.connectionSettings.addListener(_onConnSettingsChanged);
+    _lastAutoReconnect = widget.connectionSettings.autoReconnect;
+    _lastKillSwitch = widget.connectionSettings.killSwitch;
     _lastMintedAt = widget.auth.sessionMintedAt;
     widget.auth.addListener(_onAuthChanged);
     widget.auth.addListener(_onWidgetActionArrived);
@@ -209,7 +217,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// fly: when they change while the tunnel is up, reconnect so the new
   /// featureSettings take effect without a manual off/on. Debounced so rapid
   /// split-tunnel edits coalesce into a single reconnect.
+  ///
+  /// Auto-reconnect and the kill switch are the exception, both ways. They
+  /// live in the OS's VPN profile, not in the sing-box config, so a flip is
+  /// pushed to the platform directly — reconnecting for it would tear a live
+  /// session for a setting the tunnel doesn't read. And the push must not
+  /// hide behind [_isActive]: with the tunnel down and `onDemand` still true
+  /// in the profile, the OS keeps resurrecting a session the user just turned
+  /// off — the "next manual connect" that used to be the only thing writing
+  /// the profile might never come.
   void _onConnSettingsChanged() {
+    final settings = widget.connectionSettings;
+    final prefsChanged = settings.autoReconnect != _lastAutoReconnect ||
+        settings.killSwitch != _lastKillSwitch;
+    _lastAutoReconnect = settings.autoReconnect;
+    _lastKillSwitch = settings.killSwitch;
+    if (prefsChanged) {
+      unawaited(_vpn.applyTunnelPreferences());
+      // Settings notify one change at a time, so a preference flip carries no
+      // config change with it — nothing to reconnect for.
+      return;
+    }
     if (!_isActive) return;
     _connSettingsDebounce?.cancel();
     _connSettingsDebounce = Timer(const Duration(milliseconds: 1500), () async {

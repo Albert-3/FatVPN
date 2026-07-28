@@ -1111,6 +1111,35 @@ class VpnController extends ChangeNotifier {
     }
   }
 
+  /// Pushes the current auto-reconnect / kill-switch preferences into the
+  /// platform's VPN profile, without touching the tunnel.
+  ///
+  /// These two live in the OS profile, not in the sing-box config, so a flip
+  /// needs no reconnect — and used to get one anyway, tearing a live session
+  /// for a setting the tunnel itself doesn't read. Worse, the push only
+  /// happened inside a connect at all: a user who turned auto-reconnect off
+  /// while the tunnel was down (say, after the OS resurrected a session they
+  /// no longer wanted) left `onDemand = true` sitting in the profile, and the
+  /// OS kept bringing the tunnel back until their next manual connect.
+  ///
+  /// Best-effort like the connect-path push, and for the same reason: the
+  /// symptom of a platform failure here is a stale preference, which is worth
+  /// a log line, not an error screen.
+  Future<void> applyTunnelPreferences() async {
+    try {
+      await _ensureInitialized();
+      await _vpn.setTunnelPreferences(
+        onDemandEnabled: connectionSettings.autoReconnect,
+        killSwitchEnabled: connectionSettings.killSwitch,
+      );
+      log.i('Tunnel preferences pushed '
+          '(onDemand=${connectionSettings.autoReconnect}, '
+          'killSwitch=${connectionSettings.killSwitch})');
+    } catch (e) {
+      log.w('Could not apply tunnel preferences: $e');
+    }
+  }
+
   /// Stops the tunnel. [endSession] distinguishes a full user-initiated
   /// power-off (resets the session timer) from an internal teardown that's part
   /// of a reconnect — e.g. switching server/location or re-applying connection

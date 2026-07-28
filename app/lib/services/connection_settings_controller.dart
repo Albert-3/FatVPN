@@ -386,8 +386,10 @@ class ConnectionSettingsController extends ChangeNotifier {
     await _storage.write(key: _stackKey, value: stack.name);
   }
 
-  /// Turns system-managed reconnection on or off. Applied on the next connect —
-  /// see `SignboxVpn.setTunnelPreferences`.
+  /// Turns system-managed reconnection on or off. Pushed into the OS's VPN
+  /// profile right away by [HomeScreen] (see `_onConnSettingsChanged`) and
+  /// again on every connect — a flip that waited for the next manual connect
+  /// used to leave the OS resurrecting a tunnel the user had turned off.
   Future<void> setAutoReconnect(bool enabled) async {
     if (_autoReconnect == enabled) return;
     _autoReconnect = enabled;
@@ -395,7 +397,8 @@ class ConnectionSettingsController extends ChangeNotifier {
     await _storage.write(key: _autoReconnectKey, value: enabled.toString());
   }
 
-  /// Turns the kill switch on or off. Applied on the next connect.
+  /// Turns the kill switch on or off. Pushed the same way as
+  /// [setAutoReconnect].
   Future<void> setKillSwitch(bool enabled) async {
     if (_killSwitch == enabled) return;
     _killSwitch = enabled;
