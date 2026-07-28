@@ -42,7 +42,7 @@
 | 1.5 secure storage | ✅ `901ea73` + рабочее дерево | Обе половины: `AndroidOptions(encryptedSharedPreferences: true)` включён, и `SecureStore` **затирает** недешифруемое хранилище вместо падения (реальный симптом на Redmi Note 7 — вечный сплэш). ⚠️ Смена бэкенда требует проверки **обновлением поверх старой установки**, а не чистой — см. «Открытые вопросы» ниже |
 | 1.6 Clash API без секрета | ✅ рабочее дерево | 128-битный секрет из `Random.secure()` на **каждый** старт туннеля, кладётся в `experimental.clash_api.secret` и читается обратно всеми тремя потребителями: `VpnTunnelHealthProbe.kt`, `TunnelHealthWatchdog.swift`, `vpn_controller._singboxApiGet`. Секрет сохраняется в secure storage — приложение, перезапущенное поверх живого туннеля, продолжает его опрашивать. Закрывает и iOS 2.2. Порт остался фиксированным `16756` |
 | 1.7 `stderr.log` на внешнем хранилище | ✅ рабочее дерево | `workingPath` переехал с `getExternalFilesDir(null)` на `context.filesDir` — вместе с ним ушли с `/sdcard` и `stderr.log`, и рабочая директория libbox. Ротация лога по размеру и «писать только в диагностическом режиме» **не** сделаны |
-| 1.8 `attestationToken` | ⬜ не бралось | Rate-limit на BFF готов (`820b1fe`, 5/час на IP) + валидация длины; Play Integrity / App Attest не пробовали |
+| 1.8 `attestationToken` | 🟡 стопгап SSAID сделан (2026-07-29) | Device key теперь из SHA-256(ANDROID_ID) — переживает переустановку; random — фолбэк. Rate-limit на BFF готов (`820b1fe`, 5/час на IP); Play Integrity / App Attest не пробовали |
 | 1.9 Санитайзер диагностики | ✅ рабочее дерево | Новый `app/lib/utils/sanitize.dart` (`sanitizeDiagnostics`): UUID, `password=`/`pbk=`/`sid=`/`auth=`, `credential@host`, `ip:port`. Прогоняется в `vpn_controller` перед `log.e` и перед показом в UI — то есть до попадания в support-bundle |
 | 1.10 Подтверждение deep-link | ✅ рабочее дерево | Ключ из `fatvpn://` больше не обменивается молча: `pendingDeepLinkToken` + `confirmPendingDeepLinkToken`/`dismissPendingDeepLinkToken`, строки `deepLinkKeyTitle`/`deepLinkKeyBody` |
 | 2.1 Потеря ротированного refresh | ✅ рабочее дерево | `await _tokenStorage.save(fresh)` **до** смены состояния в памяти, ошибка записи больше не глотается. Парная правка на BFF сделана (`820b1fe`, grace-окно 30 с) |
@@ -295,7 +295,19 @@ legacy-пути с потерей ключа после обновления О�
 > `/sdcard`; бэкап их не заберёт (§1.4 уже выключен). **Ротация по размеру и запись
 > только в диагностическом режиме — не сделаны.**
 
-### 🟡 1.8 `attestationToken` — обычный локальный random, тривиально фармится — ⬜ Не бралось
+### 🟡 1.8 `attestationToken` — обычный локальный random, тривиально фармится — 🟡 Стопгап сделан (2026-07-29), Play Integrity не бралось
+
+> **2026-07-29 — стопгап SSAID реализован:** `MainActivity.deviceIdentifier()` отдаёт
+> SHA-256 от `Settings.Secure.ANDROID_ID` (канал `fatvpn/apps`, метод `getDeviceIdentifier`;
+> пустой и легендарный `9774d56d682e549c` отбрасываются), а
+> `TokenStorage.readOrCreateDeviceKey` предпочитает эту идентичность случайному ключу —
+> random остался фолбэком (iOS, где Keychain и так переживает переустановку, и устройства
+> без пригодного SSAID). Уже сохранённый ключ **никогда не заменяется**: БФФ знает старые
+> устройства по нему, смена идентичности выдала бы каждому второй триал. Тесты:
+> `trial_device_key_test.dart` (7 шт.). Закрывает «переустановка = новый триал» на Android
+> при release-подписи; `curl` с рандомным hex по-прежнему обходит (нужен Play Integrity),
+> но упирается в 5/час на IP. Проверка на устройстве: взять триал → удалить → поставить →
+> триал должен возобновиться (200), а не выдаться заново.
 **Где:** `token_storage.dart:36-44` — 32 случайных байта, сгенерированных на клиенте;
 отправляется в `POST /trial` (`api_client.dart:133-140`) и `POST /auth/token`
 (`api_client.dart:113-118`). Следствия: **бесконечный фарм триалов** (переустановка даёт

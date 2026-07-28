@@ -5,11 +5,13 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.os.Build
+import android.provider.Settings
 import com.fatvpn.fatvpn_app.widget.FatVpnWidgetChannel
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -45,6 +47,7 @@ class MainActivity : FlutterActivity() {
                             val apps = getLaunchableApps()
                             runOnUiThread { result.success(apps) }
                         } ?: result.error("UNAVAILABLE", "Activity is shutting down", null)
+                        "getDeviceIdentifier" -> result.success(deviceIdentifier())
                         else -> result.notImplemented()
                     }
                 }
@@ -61,6 +64,30 @@ class MainActivity : FlutterActivity() {
         worker?.shutdownNow()
         worker = null
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    /// A device identity that survives reinstalling the app, for the trial's
+    /// `attestationToken` — the anti-abuse gap was that a purely local random
+    /// key resets with the install, so uninstall → reinstall meant a fresh
+    /// free trial forever.
+    ///
+    /// SSAID (ANDROID_ID) is stable per device + user + *signing key*, and in
+    /// particular survives an uninstall. Hashed before it leaves the process:
+    /// the server only ever needs a stable opaque string (it salts and hashes
+    /// it again), and the raw SSAID is a cross-checkable device identifier
+    /// that shouldn't travel. Returns null on the values that are known not
+    /// to identify a device (empty, and the infamous constant that a batch of
+    /// old handsets all shared), so Dart falls back to the random key.
+    private fun deviceIdentifier(): String? {
+        return try {
+            val ssaid = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
+            if (ssaid.isNullOrEmpty() || ssaid == "9774d56d682e549c") return null
+            MessageDigest.getInstance("SHA-256")
+                .digest("fatvpn-device:$ssaid".toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /// Apps that appear in the launcher (app drawer) — the right set for the

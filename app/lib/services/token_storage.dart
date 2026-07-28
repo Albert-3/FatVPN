@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/auth_session.dart';
@@ -8,9 +9,28 @@ import '../models/pairing.dart';
 import 'secure_store.dart';
 import 'selected_location_store.dart';
 
+/// Asks the platform for a device identity that survives reinstalling the app
+/// (Android: a hash of SSAID — see `MainActivity.deviceIdentifier`). Null
+/// where the platform has none to offer: iOS answers notImplemented, which is
+/// fine — there the random key below lives in the Keychain, and the Keychain
+/// itself survives a reinstall.
+Future<String?> _platformDeviceIdentifier() async {
+  try {
+    return await const MethodChannel('fatvpn/apps')
+        .invokeMethod<String>('getDeviceIdentifier');
+  } catch (_) {
+    return null;
+  }
+}
+
 class TokenStorage {
-  TokenStorage({FlutterSecureStorage? storage})
-      : _storage = SecureStore(storage: storage);
+  TokenStorage({
+    FlutterSecureStorage? storage,
+    Future<String?> Function()? platformDeviceIdentifier,
+  })  : _storage = SecureStore(storage: storage),
+        _platformDeviceId = platformDeviceIdentifier ?? _platformDeviceIdentifier;
+
+  final Future<String?> Function() _platformDeviceId;
 
   static const _accessTokenKey = 'access_token';
   static const _refreshTokenKey = 'refresh_token';
@@ -38,16 +58,42 @@ class TokenStorage {
   Future<void> markAutoTrialAttempted() async =>
       _storage.write(key: _autoTrialKey, value: 'true');
 
-  /// Stable per-install identifier used as the MVP `attestationToken` for
+  /// Stable device identifier used as the MVP `attestationToken` for
   /// `POST /trial`. Deliberately NOT removed by [clear] so signing out can't
-  /// hand the same device a second trial. Real Play Integrity / App Attest
-  /// verification is a later task.
+  /// hand the same device a second trial.
+  ///
+  /// Prefers the platform identity (Android: hashed SSAID), because it is the
+  /// half of the anti-abuse story a random key cannot deliver: secure storage
+  /// dies with the install, so uninstall → reinstall used to mint a fresh
+  /// identity and with it a fresh free trial, forever. SSAID survives the
+  /// reinstall, so the BFF recognises the device and answers with the trial it
+  /// already has (or 409). The random key remains as the fallback — iOS (where
+  /// the Keychain already survives reinstalls), and any device whose SSAID is
+  /// missing or one of the known junk values.
+  ///
+  /// A key that already exists is always kept, whatever its origin: devices
+  /// that took their trial before this change are known to the BFF by that
+  /// key, and swapping identities under them would hand every one of them a
+  /// second trial — the exact bug this closes. Real Play Integrity / App
+  /// Attest verification is a later task.
   Future<String> readOrCreateDeviceKey() async {
     final existing = await _storage.read(key: _deviceKeyKey);
     if (existing != null && existing.isNotEmpty) return existing;
-    final rng = Random.secure();
-    final bytes = List<int>.generate(32, (_) => rng.nextInt(256));
-    final key = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    String? key;
+    try {
+      key = await _platformDeviceId();
+    } catch (_) {
+      key = null;
+    }
+    // The BFF requires 16–512 chars; anything shorter is not an identity.
+    if (key == null || key.length < 16) {
+      final rng = Random.secure();
+      final bytes = List<int>.generate(32, (_) => rng.nextInt(256));
+      key = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    }
+    // Persisted even though the platform would answer the same tomorrow: the
+    // stored value is what makes the identity stable *across this change* —
+    // whichever branch minted it, later reads return it verbatim.
     await _storage.write(key: _deviceKeyKey, value: key);
     return key;
   }
