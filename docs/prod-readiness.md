@@ -158,9 +158,9 @@
 
 1. ✅ **Влить ветку в `master`, запушить** (2026-07-29, `master` = `795d769`); Android-правки аудита сверены — все в git (серия `5bca5f0`…`d8cec32`).
 2. ✅ **Закрыть V17** (2026-07-29) — standalone-teardown + фолбэк в `AuthController`, 6 тестов; устройство — T15.
-3. **Codemagic**: `ios-libbox-xcframework` (Fatxray) → закоммитить → `ios-unsigned` → **первая зелёная `ios-release`** → TestFlight.
-4. **Собрать release-AAB/APK** с релизной подписью (T4) — свежих артефактов нет с 6 июля.
-5. **BFF на сервер**: N1–N3, N6, N7; `dotnet test` с Docker.
+3. **Codemagic**: `ios-libbox-xcframework` (Fatxray) → закоммитить → `ios-unsigned` → **первая зелёная `ios-release`** → TestFlight. ⚠️ Запускается только вручную в UI Codemagic (в `codemagic.yaml` нет `triggering:`) — `master` уже запушен со всем нужным (`6eeaa1f`), осталось нажать кнопку.
+4. ✅ **Собрать release-AAB/APK** (2026-07-29, с `master` = `6eeaa1f`, версия 1.0.4+34): `dist/FatVPN-1.0.4+34-release.aab` (138,7 МБ), `-arm64.apk` (100 МБ), `-arm32.apk` (90 МБ). **T4 пройден**: подпись `CN=FatVPN, O=FatVPN` (SHA-256 `09b6…763d`), не debug — проверено `keytool` по AAB и `apksigner` по APK. Попутно подтверждено исключение x86_64 из release: сплит `app-x86_64-release.apk` собрался без нативных библиотек (1,4 МБ).
+5. **BFF на сервер**: N1–N2, N6, N7 — остаётся серверная половина (нужен SSH). ✅ Локальная половина (N3/T5) выполнена 2026-07-29: `dotnet build` без ошибок, `dotnet test` **с запущенным Docker** — **121/121 passed, 0 skipped** (конкурентные Testcontainers-тесты реально прогнались на PostgreSQL).
 6. **Device-приёмка Android**: T6, T17, T21/T22, T7 → остальные T и остаток раздела 1 → виджеты TW1–TW9.
 7. **Device-приёмка iOS** (TestFlight, реальный iPhone): T15 и T14 первыми → T12/T13/T16/T23–T25 → T26–T36 → K/L → виджеты TW10–TW17.
 8. **Бот**: чек-лист «Доработки 2» руками в живом Telegram (11 пунктов) + полный pairing у нескольких пользователей.
