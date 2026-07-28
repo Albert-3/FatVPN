@@ -22,7 +22,13 @@ internal object VpnCoreSetupManager {
             }
 
             val basePath = context.filesDir.path
-            val workingPath = (context.getExternalFilesDir(null) ?: context.filesDir).path
+            // Internal storage, not getExternalFilesDir: the working directory
+            // holds sing-box's stderr — node addresses, SNI, DNS queries, the
+            // whole shape of the infrastructure — and on /sdcard that is
+            // readable over MTP/adb without root, by any app holding
+            // READ_EXTERNAL_STORAGE on API ≤ 28, and by anything restoring a
+            // device backup.
+            val workingPath = context.filesDir.path
             val tempPath = context.cacheDir.path
 
             val setupOptions = SetupOptions().apply {
