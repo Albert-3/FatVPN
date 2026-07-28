@@ -353,10 +353,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // A widget tap that cold-started the app has been waiting for this list.
       _maybeRunWidgetAction();
     } on ApiException catch (e) {
-      // 402 = subscription lapsed. Drop the tunnel and route to the renew
-      // screen via the auth gate instead of showing a servers error.
+      // 402 = subscription lapsed. Route to the renew screen via the auth
+      // gate; notifyExpired takes the tunnel down through [onSessionDropped],
+      // wiping the persisted state with it.
       if (e.statusCode == 402) {
-        unawaited(_vpn.disconnect());
         widget.auth.notifyExpired();
         return;
       }

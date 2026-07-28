@@ -1163,9 +1163,48 @@ class VpnController extends ChangeNotifier {
       return;
     }
     _clashApiSecret = null;
-    unawaited(_storage.delete(key: _clashApiSecretKey));
+    await _wipePersistedTunnelState(_vpn, _storage);
+  }
+
+  /// Stops the tunnel and erases the persisted state without a live
+  /// [VpnController].
+  ///
+  /// The session can die while [HomeScreen] — which owns the app's controller —
+  /// is not on the tree: a refresh rejected with 401 signs the user out from
+  /// the renew screen, and a 402 can land after the gate has already swapped
+  /// Home out. Those paths still have to bring the tunnel down and erase what
+  /// the platform holds, or (on iOS with on-demand) the OS keeps resurrecting
+  /// the tunnel on credentials the panel has revoked. Erases the same state as
+  /// [forgetPersistedTunnelState], plus the session clock; the tunnel stop is
+  /// unconditional because with no controller there is no state to consult,
+  /// and stopping a stopped tunnel is a no-op.
+  static Future<void> stopAndForgetStandalone() async {
+    final vpn = SignboxVpn();
     try {
-      await _vpn.clearPersistedState();
+      await vpn.stop();
+    } catch (e) {
+      log.w('Standalone tunnel stop failed: $e');
+    }
+    final storage = SecureStore();
+    try {
+      await storage.delete(key: _sessionStartKey);
+    } catch (e) {
+      log.w('Could not clear the persisted session start: $e');
+    }
+    await _wipePersistedTunnelState(vpn, storage);
+  }
+
+  static Future<void> _wipePersistedTunnelState(
+    SignboxVpn vpn,
+    SecureStore storage,
+  ) async {
+    try {
+      await storage.delete(key: _clashApiSecretKey);
+    } catch (e) {
+      log.w('Could not delete the stored tunnel API secret: $e');
+    }
+    try {
+      await vpn.clearPersistedState();
     } catch (e) {
       log.w('Could not clear persisted tunnel state: $e');
     }

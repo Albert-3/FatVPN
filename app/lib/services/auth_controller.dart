@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'app_logger.dart';
 import 'home_widget_bridge.dart';
 import 'token_storage.dart';
+import 'vpn_controller.dart';
 
 /// Owns the current [AuthSession] and keeps it updated from two sources:
 /// a token already persisted on disk, and short tokens arriving via the
@@ -127,8 +128,32 @@ class AuthController extends ChangeNotifier {
   /// so it has to come down with it: otherwise the app shows onboarding while
   /// the user's whole traffic still leaves through a subscription they no
   /// longer hold, VPN icon and all. Wired by [HomeScreen], which owns the
-  /// [VpnController]; null when no tunnel can be running.
+  /// [VpnController]; null while that screen is off the tree — which is *not*
+  /// the same as no tunnel running, so [_dropTunnelWithSession] falls back to
+  /// a standalone teardown rather than skipping it.
   Future<void> Function()? onSessionDropped;
+
+  /// Brings the tunnel down with the session that authorised it.
+  ///
+  /// Goes through [onSessionDropped] while [HomeScreen] is on the tree. When
+  /// it is not — a sign-out from the renew screen, a refresh rejected with 401
+  /// after a 402 already swapped Home out — the tunnel can still be running
+  /// (and on iOS the on-demand snapshot survives regardless), so the fallback
+  /// stops it and wipes the persisted state without a controller. Reads
+  /// [onSessionDropped] synchronously, before the gate can unmount the screen
+  /// that wired it.
+  Future<void> _dropTunnelWithSession() async {
+    final handler = onSessionDropped;
+    try {
+      if (handler != null) {
+        await handler();
+      } else {
+        await VpnController.stopAndForgetStandalone();
+      }
+    } catch (err) {
+      log.w('Could not stop the tunnel with the session ($err)');
+    }
+  }
 
   /// Pairing code to show/QR-encode, or null while none is active.
   String? get pairCode => _pairing?.pairCode;
@@ -297,7 +322,15 @@ class AuthController extends ChangeNotifier {
       // BFF's grace window covers the immediate retry.
       await _tokenStorage.save(fresh);
       _session = fresh;
+      final wasExpired = _subscriptionExpired;
       _subscriptionExpired = fresh.isExpired;
+      if (_subscriptionExpired && !wasExpired) {
+        // The refresh is how the app learns the subscription lapsed while it
+        // wasn't looking (a cold start, a resume). The tunnel dies with the
+        // entitlement, same as on a live 402 — see [notifyExpired].
+        log.w('Refresh reports the subscription lapsed — dropping the tunnel');
+        unawaited(_dropTunnelWithSession());
+      }
       notifyListeners();
       return fresh.accessToken;
     } on ApiException catch (e) {
@@ -320,6 +353,12 @@ class AuthController extends ChangeNotifier {
     if (_subscriptionExpired) return;
     log.w('Subscription reported lapsed (402) — routing to renew screen');
     _subscriptionExpired = true;
+    // Started before notifyListeners so [onSessionDropped] is read while
+    // [HomeScreen] is still mounted — the notification is what unmounts it.
+    // A lapsed subscription must take the tunnel down, not just the UI: left
+    // running it carries traffic on an entitlement the server just refused,
+    // and on iOS the on-demand snapshot would keep resurrecting it.
+    unawaited(_dropTunnelWithSession());
     notifyListeners();
   }
 
@@ -761,12 +800,10 @@ class AuthController extends ChangeNotifier {
   Future<void> signOut() async {
     log.i('Signing out');
     // Before anything else, so the UI never reaches onboarding over a tunnel
-    // that is still up.
-    try {
-      await onSessionDropped?.call();
-    } catch (err) {
-      log.w('Could not stop the tunnel on sign-out ($err)');
-    }
+    // that is still up. Falls back to a standalone stop when no screen is
+    // wired — a sign-out from the renew screen still owes the tunnel a
+    // teardown.
+    await _dropTunnelWithSession();
     _stopPolling();
     _pairing = null;
     final refreshToken = _session?.refreshToken;

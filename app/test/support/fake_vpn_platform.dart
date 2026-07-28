@@ -165,8 +165,13 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
     states.add(VpnConnectionState.connected);
   }
 
+  /// How many times the platform was asked to stop the tunnel — the half of a
+  /// session teardown that [clearPersistedStateCalls] doesn't cover.
+  int stopVpnCalls = 0;
+
   @override
   Future<void> stopVpn() async {
+    stopVpnCalls++;
     reportedState = VpnConnectionState.disconnected;
     states.add(VpnConnectionState.disconnected);
   }
