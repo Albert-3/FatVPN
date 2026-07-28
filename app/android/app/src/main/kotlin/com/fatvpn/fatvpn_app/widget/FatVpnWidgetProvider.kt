@@ -202,6 +202,8 @@ open class FatVpnWidgetProvider : AppWidgetProvider() {
                 mapOf(
                     SizeF(SQUARE_WIDTH_DP, SQUARE_HEIGHT_DP) to
                         buildViews(context, model, R.layout.widget_fatvpn_square),
+                    SizeF(SQUARE_WIDTH_DP, SQUARE_LARGE_HEIGHT_DP) to
+                        buildViews(context, model, R.layout.widget_fatvpn_square_large),
                     SizeF(COMPACT_MAX_WIDTH_DP, COMPACT_MAX_HEIGHT_DP) to
                         buildViews(context, model, R.layout.widget_fatvpn_compact),
                     SizeF(WIDE_WIDTH_DP, WIDE_HEIGHT_DP) to
@@ -224,6 +226,7 @@ open class FatVpnWidgetProvider : AppWidgetProvider() {
             val layout = when {
                 minWidth >= WIDE_WIDTH_DP && minHeight >= WIDE_HEIGHT_DP ->
                     R.layout.widget_fatvpn_wide
+                minHeight >= SQUARE_LARGE_HEIGHT_DP -> R.layout.widget_fatvpn_square_large
                 minHeight >= SQUARE_HEIGHT_DP -> R.layout.widget_fatvpn_square
                 else -> R.layout.widget_fatvpn_compact
             }
@@ -446,6 +449,13 @@ open class FatVpnWidgetProvider : AppWidgetProvider() {
         /// stretched across it.
         private const val SQUARE_WIDTH_DP = 110f
         private const val SQUARE_HEIGHT_DP = 110f
+
+        /// "2×2" is not a size: measured on a Redmi Note 7 (MIUI, 4 columns),
+        /// two cells are 148×204dp — half again as tall as they are wide — and
+        /// the small square layout left ~55dp of empty card above and below its
+        /// content. Past this height the tile gets the larger layout instead,
+        /// whose own minimum is ~178dp.
+        private const val SQUARE_LARGE_HEIGHT_DP = 180f
 
         /// Every provider the app declares. Two of them, and they differ in
         /// nothing but the size the launcher places them at: the 2×2 is a

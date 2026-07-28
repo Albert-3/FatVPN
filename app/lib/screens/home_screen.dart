@@ -76,6 +76,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // A tap on the home-screen widget waiting to be carried out — see
   // [_maybeRunWidgetAction].
   HomeWidgetAction? _pendingWidgetAction;
+  // Whether this tap has already paid for one more attempt at the server list.
+  bool _widgetActionRetried = false;
 
   bool get _connected => _vpn.isConnected;
 
@@ -118,6 +120,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final action = widget.auth.consumeWidgetAction();
     if (action == null) return;
     _pendingWidgetAction = action;
+    // A fresh tap deserves a fresh attempt at the server list, however the
+    // last one ended — see [_maybeRunWidgetAction].
+    _widgetActionRetried = false;
     _maybeRunWidgetAction();
   }
 
@@ -132,10 +137,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final wouldConnect = action == HomeWidgetAction.connect ||
         (action == HomeWidgetAction.toggle && !_isActive);
     if (wouldConnect && _servers.isEmpty) {
-      // Still loading: [_loadServers] runs this again when it lands. Loaded and
-      // empty (or failed): there is nothing to connect to, and the error is
-      // already on screen — drop the action instead of retrying forever.
-      if (!_loadingServers) _pendingWidgetAction = null;
+      // Still loading: [_loadServers] runs this again when it lands.
+      if (_loadingServers) return;
+      // Loaded and empty, which in practice means the last load *failed* (a
+      // panel that answered 502, no network). Ask again: the tap is the user
+      // saying "connect now", and dropping it silently made the widget's power
+      // button do visibly nothing — observed on a device the moment the panel
+      // hiccupped. Exactly one retry, so a BFF that is genuinely down cannot
+      // turn a tap into a loop.
+      if (!_widgetActionRetried) {
+        _widgetActionRetried = true;
+        unawaited(_loadServers());
+        return;
+      }
+      // Tried and still nothing to connect to; the error is already on screen.
+      _pendingWidgetAction = null;
       return;
     }
     _pendingWidgetAction = null;
