@@ -18,4 +18,15 @@ package com.signbox.singbox_mm
 internal object VpnServiceLiveness {
     @Volatile
     var isRunning: Boolean = false
+
+    /// The live service, or null when no tunnel is up.
+    ///
+    /// Held so a socket can be handed to `VpnService.protect()` before it
+    /// connects. This app is tunnelled like any other (see
+    /// [VpnTunBuilderConfigurator]), so an unprotected connect to a candidate
+    /// node measures "device → current server → candidate" and fails outright
+    /// once the current server stops passing traffic — which is exactly when a
+    /// replacement has to be picked.
+    @Volatile
+    var active: android.net.VpnService? = null
 }

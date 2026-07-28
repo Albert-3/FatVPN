@@ -18,6 +18,7 @@ internal object PluginFactoryDefaults {
             getLastError = PluginMethods.GET_LAST_ERROR,
             getVersion = PluginMethods.GET_SINGBOX_VERSION,
             pingServer = PluginMethods.PING_SERVER,
+            pingServerOutsideTunnel = PluginMethods.PING_SERVER_OUTSIDE_TUNNEL,
             syncRuntime = PluginMethods.SYNC_RUNTIME_STATE,
         )
 

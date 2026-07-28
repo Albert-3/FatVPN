@@ -224,8 +224,8 @@ class MethodChannelSignboxVpn extends SignboxVpnPlatform {
   }
 
   @override
-  /// Measures latency from outside the tunnel (iOS only — see
-  /// [SingboxMmPlatform.pingServerOutsideTunnel]).
+  /// Measures latency from outside the tunnel — see
+  /// [SingboxMmPlatform.pingServerOutsideTunnel].
   Future<VpnPingResult> pingServerOutsideTunnel({
     required String host,
     required int port,

@@ -22,6 +22,7 @@ internal object PluginMethods {
     const val GET_LAST_ERROR = "getLastError"
     const val GET_SINGBOX_VERSION = "getSingboxVersion"
     const val PING_SERVER = "pingServer"
+    const val PING_SERVER_OUTSIDE_TUNNEL = "pingServerOutsideTunnel"
     const val SYNC_RUNTIME_STATE = "syncRuntimeState"
 }
 

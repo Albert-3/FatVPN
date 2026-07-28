@@ -15,11 +15,13 @@ class SignboxLibboxVpnService : VpnService() {
         // Marks the tunnel as genuinely alive in this process — see
         // VpnServiceLiveness for why the on-disk snapshot alone can't be trusted.
         VpnServiceLiveness.isRunning = true
+        VpnServiceLiveness.active = this
         runtimeGraph.onCreate()
     }
 
     override fun onDestroy() {
         VpnServiceLiveness.isRunning = false
+        VpnServiceLiveness.active = null
         runtimeGraph.onDestroyBeforeSuper()
         super.onDestroy()
     }

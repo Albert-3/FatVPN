@@ -33,6 +33,9 @@ internal object PluginMethodHandlersFactory {
             pingServer = { arguments, result ->
                 methodOperations.pingServer(arguments, result)
             },
+            pingServerOutsideTunnel = { arguments, result ->
+                methodOperations.pingServerOutsideTunnel(arguments, result)
+            },
             syncRuntime = { result -> stateQueryOperations.syncRuntimeState(result) },
         )
     }

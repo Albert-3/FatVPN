@@ -23,6 +23,7 @@ internal class PluginMethodDispatcher(
         val getLastError: String,
         val getVersion: String,
         val pingServer: String,
+        val pingServerOutsideTunnel: String,
         val syncRuntime: String,
     )
 
@@ -42,6 +43,7 @@ internal class PluginMethodDispatcher(
         val getLastError: (Result) -> Unit,
         val getVersion: (Result) -> Unit,
         val pingServer: (Any?, Result) -> Unit,
+        val pingServerOutsideTunnel: (Any?, Result) -> Unit,
         val syncRuntime: (Result) -> Unit,
     )
 
@@ -63,6 +65,8 @@ internal class PluginMethodDispatcher(
             methodNames.getLastError -> handlers.getLastError(result)
             methodNames.getVersion -> handlers.getVersion(result)
             methodNames.pingServer -> handlers.pingServer(call.arguments, result)
+            methodNames.pingServerOutsideTunnel ->
+                handlers.pingServerOutsideTunnel(call.arguments, result)
             methodNames.syncRuntime -> handlers.syncRuntime(result)
             else -> result.notImplemented()
         }
