@@ -33,8 +33,15 @@ internal class VpnTunnelHealthPolicy(
         /// enough that doing it back-to-back would be worse than the symptom.
         const val MIN_RECOVERY_INTERVAL_MS = 90_000L
 
-        /// How often a live tunnel is asked whether it still works.
+        /// How often a freshly started tunnel is asked whether it still works.
         const val CHECK_INTERVAL_MS = 60_000L
+
+        /// Cadence once the tunnel has proved itself. Each probe can cost up to
+        /// four HTTP requests *through the proxy*, so a minute apart is 480
+        /// round trips over an eight-hour session for a connection that has
+        /// been fine the whole time. A failure resets to the tight interval.
+        const val SETTLED_INTERVAL_MS = 180_000L
+        const val HEALTHY_CHECKS_BEFORE_SETTLING = 5
 
         /// Slower cadence once repeated recoveries haven't helped, so a
         /// genuinely unreachable server can't turn into a battery drain.
@@ -45,6 +52,7 @@ internal class VpnTunnelHealthPolicy(
     private var consecutiveFailures = 0
     private var recoveryAttempts = 0
     private var lastRecoveryAtMs: Long? = null
+    private var consecutiveHealthy = 0
 
     /// True while there is unresolved evidence against the tunnel — either
     /// failed probes or recoveries that haven't yet been vindicated by a
@@ -61,10 +69,10 @@ internal class VpnTunnelHealthPolicy(
 
     /// How long until the next check should run.
     val checkIntervalMs: Long
-        get() = if (recoveryAttempts >= RECOVERIES_BEFORE_BACKOFF) {
-            BACKOFF_INTERVAL_MS
-        } else {
-            CHECK_INTERVAL_MS
+        get() = when {
+            recoveryAttempts >= RECOVERIES_BEFORE_BACKOFF -> BACKOFF_INTERVAL_MS
+            consecutiveHealthy >= HEALTHY_CHECKS_BEFORE_SETTLING -> SETTLED_INTERVAL_MS
+            else -> CHECK_INTERVAL_MS
         }
 
     /// A tunnel has just come up (or been rebuilt).
@@ -75,6 +83,7 @@ internal class VpnTunnelHealthPolicy(
     /// the tunnel works again — a healthy probe — clears those.
     fun onTunnelStarted() {
         consecutiveFailures = 0
+        consecutiveHealthy = 0
     }
 
     /// No probe was possible: the device has no upstream at all. A phone in a
@@ -89,6 +98,7 @@ internal class VpnTunnelHealthPolicy(
             VpnTunnelHealthVerdict.HEALTHY -> {
                 consecutiveFailures = 0
                 recoveryAttempts = 0
+                consecutiveHealthy++
                 return VpnTunnelRecovery.NONE
             }
 
@@ -98,6 +108,7 @@ internal class VpnTunnelHealthPolicy(
 
             VpnTunnelHealthVerdict.DEAD -> {
                 consecutiveFailures++
+                consecutiveHealthy = 0
                 if (consecutiveFailures < FAILURES_BEFORE_RECOVERY) {
                     return VpnTunnelRecovery.NONE
                 }

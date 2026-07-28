@@ -57,11 +57,43 @@ internal class VpnServiceNotificationRuntime(
     }
 
     fun notify(status: String, detail: String? = null) {
+        val notification = buildNotification(status = status, detail = detail)
+        lastRenderedText = renderedTextOf(notification)
         VpnNotificationRuntimeCoordinator.notify(
             context = context,
             notificationId = notificationId,
-            notification = buildNotification(status = status, detail = detail),
+            notification = notification,
         )
+    }
+
+    /// What the shade last showed, so the live ticker can skip a post that would
+    /// change nothing. An idle tunnel renders the same speeds every tick, and
+    /// the cost of posting is the IPC and the redraw, not the build.
+    private var lastRenderedText: String? = null
+
+    fun notifyIfChanged(status: String, detail: String? = null) {
+        val notification = buildNotification(status = status, detail = detail)
+        val rendered = renderedTextOf(notification)
+        if (rendered == lastRenderedText) {
+            return
+        }
+        lastRenderedText = rendered
+        VpnNotificationRuntimeCoordinator.notify(
+            context = context,
+            notificationId = notificationId,
+            notification = notification,
+        )
+    }
+
+    private fun renderedTextOf(notification: Notification): String {
+        val extras = notification.extras ?: return ""
+        return buildString {
+            append(extras.getCharSequence(Notification.EXTRA_TITLE) ?: "")
+            append('\u0000')
+            append(extras.getCharSequence(Notification.EXTRA_TEXT) ?: "")
+            append('\u0000')
+            append(extras.getCharSequence(Notification.EXTRA_SUB_TEXT) ?: "")
+        }
     }
 
     fun notifyForState(state: String, error: String?) {

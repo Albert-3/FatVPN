@@ -45,7 +45,7 @@ internal class VpnServiceNotificationGraph(
                 )
             },
             onTick = {
-                notificationRuntime.notify(
+                notificationRuntime.notifyIfChanged(
                     status = VpnNotificationStatus.CONNECTED,
                     detail = runtimeSession.coreNotificationDetail,
                 )

@@ -13,7 +13,12 @@ internal object SignboxLibboxServiceContract {
     const val DEFAULT_PROFILE_LABEL = "profile"
     const val PRIVATE_DNS_BOOTSTRAP_DNS_SERVER = "1.1.1.1"
     const val CORE_COMMAND_PORT = 3000
-    const val NOTIFICATION_STATS_INTERVAL_MS = 1000L
+    /// How often the live foreground notification is refreshed. Three seconds
+    /// rather than one: an eight-hour session is 9 600 rebuilds instead of
+    /// 28 800, each of which is a Parcel, an IPC into NotificationManager and
+    /// a redraw of the shade. The traffic monitor smooths its rate over a
+    /// 250 ms window anyway, so the extra ticks bought no accuracy.
+    const val NOTIFICATION_STATS_INTERVAL_MS = 3000L
     const val ACTION_START = "com.signbox.singbox_mm.action.START"
     const val ACTION_STOP = "com.signbox.singbox_mm.action.STOP"
     const val ACTION_RESTART = "com.signbox.singbox_mm.action.RESTART"
