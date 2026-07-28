@@ -138,30 +138,6 @@ workflows:
         script: |
           cd app/ios
           pod install
-      - name: Fetch the widget's provisioning profile explicitly
-        script: |
-          set -e
-          # The `ios_signing` block fetches signing files once, before any of
-          # these scripts run, by substring match on com.fatvpn.fatvpnApp. That
-          # covered Runner and PacketTunnel but not FatVpnWidget (build 143
-          # failed with the widget's profile absent while the portal had it),
-          # and whatever the reason — the profile appearing between the fetch
-          # and the build, or the fetch's own scope — the fix is the same:
-          # ask for this bundle id by name, here, where the answer is current.
-          #
-          # Idempotent and cheap: if the integration already saved the profile,
-          # this re-saves the same file into the same directory that
-          # `use-profiles` reads. `--create` is the backstop for an App ID that
-          # exists with no profile on it; it cannot invent the App Groups
-          # capability, which stays a portal job (see docs/home-widgets-spec.md).
-          #
-          # Credentials come from the app_store_connect integration above, which
-          # exports APP_STORE_CONNECT_* into the environment the CLI reads.
-          app-store-connect fetch-signing-files com.fatvpn.fatvpnApp.FatVpnWidget \
-            --platform IOS \
-            --type IOS_APP_STORE \
-            --strict-match-identifier \
-            --create
       - name: Set up code signing settings on Xcode project
         script: |
           cd app
@@ -207,6 +183,18 @@ workflows:
           done
           if [ -n "$MISSING" ]; then
             echo "No provisioning profile was fetched for:$MISSING" >&2
+            echo "" >&2
+            # What DID arrive, and for which App ID. Build 143 failed here with
+            # the profile sitting in the portal, and the open question was
+            # whether the fetch's scope excludes this bundle id or whether the
+            # profile simply post-dated the fetch. This list answers it.
+            echo "Profiles that were fetched:" >&2
+            for PROFILE in "$PROFILES_DIR"/*.mobileprovision; do
+              [ -e "$PROFILE" ] || continue
+              APP_ID="$(security cms -D -i "$PROFILE" 2>/dev/null \
+                          | plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null)"
+              echo "  $(basename "$PROFILE") -> ${APP_ID:-<unreadable>}" >&2
+            done
             echo "" >&2
             echo "Either the App ID or its App Store profile is missing. At" >&2
             echo "developer.apple.com > Certificates, Identifiers & Profiles:" >&2
