@@ -245,7 +245,17 @@ class _AppTile extends StatelessWidget {
         controlAffinity: ListTileControlAffinity.trailing,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         secondary: icon != null
-            ? Image.memory(icon, width: 36, height: 36)
+            // cacheWidth/cacheHeight decode straight to the drawn size: at
+            // 96×96 ARGB_8888 the full-res bitmaps were 36 KB each, and a
+            // 200-app list held 7 MB of them.
+            ? Image.memory(
+                icon,
+                width: 36,
+                height: 36,
+                cacheWidth: 72,
+                cacheHeight: 72,
+                filterQuality: FilterQuality.low,
+              )
             : const Icon(Icons.android, color: AppColors.textSecondary, size: 36),
         title: Text(
           app.name,
