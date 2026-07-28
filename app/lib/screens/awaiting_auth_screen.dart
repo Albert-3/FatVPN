@@ -433,11 +433,38 @@ class _ManualKeyEntry extends StatefulWidget {
 
 class _ManualKeyEntryState extends State<_ManualKeyEntry> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+  final _fieldKey = GlobalKey();
   bool _expanded = false;
   bool _submitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    // The field lives at the very bottom of the renew/onboarding layout, so
+    // the keyboard opens exactly on top of it (seen on the Redmi: the hint
+    // was under the keys and the paste menu had nowhere to go). EditableText
+    // scrolls the *caret* into view on its own, but it does so before the
+    // keyboard's inset has finished landing — so re-ask once the animation
+    // has had its 300 ms, when the viewport is its final size.
+    _focusNode.addListener(() {
+      if (!_focusNode.hasFocus) return;
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (!mounted || !_focusNode.hasFocus) return;
+        final fieldContext = _fieldKey.currentContext;
+        if (fieldContext == null || !fieldContext.mounted) return;
+        Scrollable.ensureVisible(
+          fieldContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 150),
+        );
+      });
+    });
+  }
+
+  @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -463,7 +490,17 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextButton.icon(
-          onPressed: () => setState(() => _expanded = !_expanded),
+          onPressed: () {
+            setState(() => _expanded = !_expanded);
+            if (_expanded) {
+              // The user tapped "I have a key" — the next thing they do is
+              // paste it, so open the keyboard for them. Focusing is also
+              // what triggers the scroll that lifts the field above it.
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _expanded) _focusNode.requestFocus();
+              });
+            }
+          },
           icon: Icon(
             _expanded ? Icons.expand_less : Icons.vpn_key_outlined,
             size: 18,
@@ -480,9 +517,14 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
         if (_expanded) ...[
           const SizedBox(height: 8),
           TextField(
+            key: _fieldKey,
             controller: _controller,
+            focusNode: _focusNode,
             autocorrect: false,
             enableSuggestions: false,
+            // How far past the caret the built-in autoscroll keeps clear:
+            // generous, so the submit button below the field surfaces too.
+            scrollPadding: const EdgeInsets.only(bottom: 140),
             textCapitalization: TextCapitalization.characters,
             style: const TextStyle(
               color: AppColors.textPrimary,
