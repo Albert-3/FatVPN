@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import 'secure_store.dart';
+import 'selected_location_store.dart';
 
 class TokenStorage {
   TokenStorage({FlutterSecureStorage? storage})
@@ -157,6 +158,11 @@ class TokenStorage {
       _storage.delete(key: _accessJwtExpiresAtKey),
       _storage.delete(key: _keyCodeKey),
       _storage.delete(key: _pairingKey),
+      // The country the signed-out user last connected through. Not a secret,
+      // but it is a fact about an account that no longer has a session here —
+      // and the widget would otherwise offer to reconnect the next user of this
+      // phone straight to it.
+      SelectedLocationStore(storage: _storage).clear(),
     ]);
   }
 }

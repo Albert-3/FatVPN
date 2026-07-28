@@ -20,17 +20,21 @@ import java.util.UUID
 /// The FatVPN home-screen widget: current tunnel state, where it runs, how long
 /// it has been up, and a power button.
 ///
-/// What the button can do without the app, and what it cannot:
+/// The power button is a button, not a shortcut: both directions happen without
+/// the app, and only a tap *outside* it opens the app.
 ///
 ///  * **Stopping** is done here, in the widget's own process — the tunnel is our
 ///    service and telling it to stop needs nothing else. One tap, no app.
-///  * **Starting** hands over to the app (`fatvpn://widget/connect`). It cannot
-///    be done here and should not be: bringing the tunnel up needs a live
+///  * **Starting** goes to [WidgetConnectService], which runs the app's own
+///    connect logic in a background Flutter engine. It deliberately does not
+///    start from the last config on disk: bringing the tunnel up needs a live
 ///    entitlement check (`/servers` answers 402 the moment a subscription
-///    lapses), a fresh subscription config, and possibly the system's VPN
-///    consent dialog. Starting from the last config on disk would reconnect a
-///    user whose subscription has since been revoked, using credentials the
-///    panel no longer honours.
+///    lapses) and a fresh subscription, or the widget would reconnect a user
+///    on credentials the panel has already revoked. With no country chosen —
+///    which is every first press — it connects to the fastest node overall.
+///  * The one case that still opens the app is the one that cannot be answered
+///    without a screen: no session, a lapsed subscription, or the system's VPN
+///    consent dialog on a device that has never connected.
 class FatVpnWidgetProvider : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -90,12 +94,44 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
             launchApp(context, null)
             return
         }
-        if (model.isUp || model.isBusy) {
-            requestStop(context)
-        } else {
-            launchApp(context, WIDGET_LINK_CONNECT)
+        when {
+            // A connect this widget started that has not reached the tunnel
+            // yet: there is nothing to stop, so the tap cancels the attempt
+            // instead of asking a service that does not exist to shut down. The
+            // moment the tunnel *has* started, [FatVpnWidgetModel.connecting] is
+            // false and the branch below takes over — the two never overlap.
+            model.connecting -> cancelStart(context)
+            model.isUp || model.isBusy -> requestStop(context)
+            else -> requestStart(context)
         }
         refresh(context)
+    }
+
+    private fun cancelStart(context: Context) {
+        FatVpnWidgetState.clearConnectMarker(context)
+        try {
+            context.stopService(Intent(context, WidgetConnectService::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not cancel the connect started from the widget: $e")
+        }
+    }
+
+    /// Brings the tunnel up without opening the app — see [WidgetConnectService]
+    /// for why that needs a background Flutter engine rather than a service
+    /// start, and [handleToggle] for when it is allowed to happen at all.
+    private fun requestStart(context: Context) {
+        FatVpnWidgetState.markConnectRequested(context)
+        try {
+            WidgetConnectService.start(context)
+        } catch (e: Exception) {
+            // Starting a foreground service from the background is restricted,
+            // and the exemption this relies on — the user having just tapped a
+            // widget — is not something to bet a dead-looking button on. The app
+            // can always connect, so fall back to it.
+            Log.w(TAG, "Could not start the connect service from the widget: $e")
+            FatVpnWidgetState.clearConnectMarker(context)
+            launchApp(context, WIDGET_LINK_CONNECT)
+        }
     }
 
     /// Tells the running tunnel service to stop, and marks the widget as
@@ -139,6 +175,11 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
     private fun clearStopMarkerIfSettled(context: Context, state: String?) {
         if (state == FatVpnWidgetModel.STATE_DISCONNECTED || state == "error") {
             clearStopMarker(context)
+        }
+        // The tunnel is up: whatever this widget started has arrived, and the
+        // marker it left behind has nothing left to say.
+        if (state == FatVpnWidgetModel.STATE_CONNECTED) {
+            FatVpnWidgetState.clearConnectMarker(context)
         }
     }
 
@@ -197,7 +238,8 @@ class FatVpnWidgetProvider : AppWidgetProvider() {
             model.stopping || model.state == FatVpnWidgetModel.STATE_DISCONNECTING ->
                 R.string.widget_status_disconnecting
             model.state == FatVpnWidgetModel.STATE_CONNECTED -> R.string.widget_status_connected
-            model.state == FatVpnWidgetModel.STATE_CONNECTING ||
+            model.connecting ||
+                model.state == FatVpnWidgetModel.STATE_CONNECTING ||
                 model.state == FatVpnWidgetModel.STATE_PREPARING ->
                 R.string.widget_status_connecting
             else -> R.string.widget_status_disconnected

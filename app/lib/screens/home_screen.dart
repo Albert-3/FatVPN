@@ -11,6 +11,7 @@ import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
 import '../services/home_widget_bridge.dart';
 import '../services/ping_service.dart';
+import '../services/selected_location_store.dart';
 import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
 import '../utils/country_flag.dart';
@@ -53,6 +54,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<ServerCountry> _rankedServers = [];
   ServerCountry? _selectedServer;
   bool _serverExplicitlySelected = false;
+
+  // The country the user last picked by hand, read from disk (see
+  // [SelectedLocationStore]). Started in initState and applied once the server
+  // list lands, so a connect — the user's, or one arriving from the widget —
+  // never runs before we know where it should go.
+  final _selectedLocation = SelectedLocationStore();
+  Future<String?>? _storedSelection;
+  bool _selectionApplied = false;
   bool _loadingServers = true;
   String? _serversError;
 
@@ -96,6 +105,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // app was swiped away without disconnecting) instead of showing the toggle
     // as off while the system VPN is active.
     unawaited(_vpn.syncFromRuntime());
+    // Started here, awaited in [_applyStoredSelection]: the read is a Keystore
+    // round trip and the server list it belongs to is a network one, so they
+    // are worth running side by side.
+    _storedSelection = _selectedLocation.read();
     _loadServers();
   }
 
@@ -309,6 +322,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _rankedServers = _rank(servers);
         _loadingServers = false;
       });
+      // Before anything below can connect: both the trial auto-connect and a
+      // widget tap have to land on the country the user chose last time, not on
+      // "best server" because we hadn't finished reading it off disk.
+      await _applyStoredSelection();
+      if (!mounted) return;
       unawaited(_measureBestPings(servers));
       _publishWidgetSnapshot();
       // Right after a trial grant, bring the tunnel up automatically so the
@@ -342,6 +360,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       _maybeRunWidgetAction();
     }
+  }
+
+  /// Re-applies the country the user picked in an earlier run, once — after
+  /// which the live selection on this screen is the only one that matters.
+  ///
+  /// The choice used to live in this widget's state alone, so every relaunch
+  /// silently reverted to "best server". That was survivable while the app was
+  /// the only thing that could connect; it isn't now that the home-screen
+  /// widget connects on its own and has nothing but this record to go on.
+  ///
+  /// A stored country that isn't in the current list is dropped, not kept: the
+  /// subscription may no longer include it, and connecting is what the record
+  /// exists for.
+  Future<void> _applyStoredSelection() async {
+    if (_selectionApplied) return;
+    _selectionApplied = true;
+    final code = await _storedSelection;
+    if (code == null || !mounted) return;
+    for (final country in _servers) {
+      if (country.country != code) continue;
+      setState(() {
+        _selectedServer = country;
+        _serverExplicitlySelected = true;
+      });
+      _publishWidgetSnapshot();
+      return;
+    }
+  }
+
+  /// Remembers the location for the next launch — and for the widget, which
+  /// reads this same record when it connects without the app.
+  void _rememberSelection(ServerCountry? country) {
+    _selectionApplied = true;
+    unawaited(country == null
+        ? _selectedLocation.clear()
+        : _selectedLocation.write(country.country));
   }
 
   /// Ranks countries by real latency (fastest node per country) instead of
@@ -419,6 +473,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _serverExplicitlySelected = true;
       }
     });
+    _rememberSelection(choice.isBest ? null : choice.country);
     _publishWidgetSnapshot();
     // Apply the new location immediately: if the tunnel is up, tear it down and
     // reconnect to the new choice (otherwise the change only took effect after a
@@ -439,6 +494,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _selectedServer = country;
       _serverExplicitlySelected = true;
     });
+    _rememberSelection(country);
     _publishWidgetSnapshot();
     if (wasActive) {
       await _switchOff();

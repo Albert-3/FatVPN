@@ -19,4 +19,9 @@
     <string name="widget_hint_open_app">Откройте приложение</string>
 
     <string name="widget_power_description">Подключить или отключить</string>
+
+    <!-- Канал уведомления на те несколько секунд, что длится подключение с
+         виджета: foreground-сервису нужно что-то показывать. Исчезает, как
+         только появляется уведомление самого туннеля. -->
+    <string name="widget_connect_channel">Подключение с виджета</string>
 </resources>

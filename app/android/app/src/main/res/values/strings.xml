@@ -25,4 +25,10 @@
     <string name="widget_hint_open_app">Open the app</string>
 
     <string name="widget_power_description">Connect or disconnect</string>
+
+    <!-- Notification channel for the few seconds a connect started from the
+         widget takes. The platform requires a foreground service to show
+         something; this is that something, and it is gone as soon as the
+         tunnel's own notification appears. -->
+    <string name="widget_connect_channel">Connecting from the widget</string>
 </resources>

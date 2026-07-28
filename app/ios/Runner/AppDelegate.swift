@@ -43,6 +43,13 @@ import UIKit
         // "there is a location" and render an empty one.
         FatVpnWidgetSnapshot.write(arguments.filter { !($0.value is NSNull) })
         result(nil)
+      // What the widget's power button asked for, if anything. The button is an
+      // App Intent (iOS 17+): it can bring this app to the front but cannot
+      // hand it a URL, so it leaves the action in the shared App Group and the
+      // app comes and takes it — on launch and on every resume, see
+      // AuthController.pollWidgetAction.
+      case "takePendingAction":
+        result(FatVpnWidgetSnapshot.takePendingAction())
       default:
         result(FlutterMethodNotImplemented)
       }

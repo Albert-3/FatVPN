@@ -86,6 +86,9 @@ swift_refs = [
   'FatVpnWidgetBundle.swift',
   'FatVpnWidget.swift',
   'FatVpnWidgetStrings.swift',
+  # The power button's App Intent (iOS 17+). Widget-only: the app never runs it,
+  # it only collects what it parked in the App Group.
+  'FatVpnWidgetIntents.swift',
 ].map { |f| ext_group.new_reference(f) }
 ext_group.new_reference('Info.plist')
 ext_group.new_reference('FatVpnWidget.entitlements')

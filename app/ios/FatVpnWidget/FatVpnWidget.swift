@@ -113,7 +113,7 @@ struct FatVpnWidgetEntryView: View {
                 .lineLimit(1)
             Spacer(minLength: 0)
             HStack {
-                powerButton(diameter: 44)
+                powerControl(diameter: 44)
                 Spacer(minLength: 0)
                 secondaryLine.font(.system(size: 12))
             }
@@ -121,9 +121,22 @@ struct FatVpnWidgetEntryView: View {
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .fatVpnWidgetBackground()
-        // A small widget is one tap target — SwiftUI `Link`s inside it are
-        // ignored — so the whole tile is the power button it looks like.
-        .widgetURL(snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open)
+        .widgetURL(smallTileURL)
+    }
+
+    /// What a tap *outside* the power button does on a small widget.
+    ///
+    /// From iOS 17 the button is an interactive `Button`, so the rest of the
+    /// tile is free to do what a status display should: open the app. Below 17
+    /// there are no interactive widgets and SwiftUI ignores `Link` inside a
+    /// small widget, so the whole tile stays the single tap target it has to be
+    /// — one that toggles, because a widget with a power button drawn on it
+    /// that only opens an app is worse than no button at all.
+    private var smallTileURL: URL {
+        if #available(iOSApplicationExtension 17.0, *) {
+            return FatVpnWidgetLink.open
+        }
+        return snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
     }
 
     private var mediumBody: some View {
@@ -147,16 +160,7 @@ struct FatVpnWidgetEntryView: View {
                 secondaryLine.font(.system(size: 13))
             }
             Spacer(minLength: 0)
-            // On a medium widget individual links work, so only the button
-            // toggles — tapping the status area just opens the app, which is
-            // what a user checking on their connection expects.
-            if snapshot.signedIn {
-                Link(destination: FatVpnWidgetLink.toggle) {
-                    powerButton(diameter: 62)
-                }
-            } else {
-                powerButton(diameter: 62)
-            }
+            powerControl(diameter: 62)
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -177,6 +181,39 @@ struct FatVpnWidgetEntryView: View {
             Text(snapshot.signedIn ? strings.tapToConnect : strings.openApp)
                 .foregroundColor(FatVpnWidgetPalette.textSecondary)
                 .lineLimit(1)
+        }
+    }
+
+    /// The power button as a tap target, by what the OS allows.
+    ///
+    ///  * **iOS 17+** — a real `Button`, in every family. It runs in the widget
+    ///    process, parks the request in the App Group and brings the app forward
+    ///    (see `FatVpnTogglePowerIntent`); the tile around it stays free to just
+    ///    open the app.
+    ///  * **iOS 16 and below** — a `Link` on a medium widget, and nothing at all
+    ///    on a small one, where SwiftUI ignores links and the tile's own
+    ///    `widgetURL` is the toggle instead ([smallTileURL]).
+    ///  * **No session** — not a button at all: the tile opens the app, which is
+    ///    the only place the user can do anything about that.
+    @ViewBuilder
+    private func powerControl(diameter: CGFloat) -> some View {
+        if snapshot.signedIn {
+            if #available(iOSApplicationExtension 17.0, *) {
+                Button(intent: FatVpnTogglePowerIntent()) {
+                    powerButton(diameter: diameter)
+                }
+                // Without `.plain` the system draws its own button chrome — a
+                // grey capsule behind a disc that is already a button.
+                .buttonStyle(.plain)
+            } else if family == .systemSmall {
+                powerButton(diameter: diameter)
+            } else {
+                Link(destination: FatVpnWidgetLink.toggle) {
+                    powerButton(diameter: diameter)
+                }
+            }
+        } else {
+            powerButton(diameter: diameter)
         }
     }
 

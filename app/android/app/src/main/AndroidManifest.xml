@@ -100,6 +100,25 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/fatvpn_widget_info"/>
         </receiver>
+        <!-- Runs the app's own connect logic in a background Flutter engine when
+             the widget's power button is tapped with the tunnel down, so
+             connecting does not have to open the app (see WidgetConnectService).
+
+             Not exported: it is started only by our own widget provider, and a
+             service that can raise a VPN must not be startable by other apps.
+
+             specialUse/vpn, the same type the tunnel service itself declares:
+             this exists purely to bring that tunnel up, it lives for the seconds
+             that takes, and none of the typed categories (dataSync, sync,
+             shortService) describes it any better. -->
+        <service
+            android:name=".widget.WidgetConnectService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn"/>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

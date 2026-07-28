@@ -25,12 +25,16 @@ data class FatVpnWidgetModel(
     val expiresAtMillis: Long?,
     /// True while a stop we sent has not been confirmed by the tunnel yet.
     val stopping: Boolean,
+    /// True while a connect started from the widget is still on its way — see
+    /// [FatVpnWidgetState.WIDGET_KEY_CONNECT_REQUESTED_AT]. The tunnel does not
+    /// exist yet at that point, so nothing else on the device knows about it.
+    val connecting: Boolean,
 ) {
     val isUp: Boolean
         get() = state == STATE_CONNECTED
     val isBusy: Boolean
-        get() = stopping || state == STATE_CONNECTING || state == STATE_PREPARING ||
-            state == STATE_DISCONNECTING
+        get() = stopping || connecting || state == STATE_CONNECTING ||
+            state == STATE_PREPARING || state == STATE_DISCONNECTING
 
     companion object {
         const val STATE_DISCONNECTED = "disconnected"
@@ -68,11 +72,25 @@ object FatVpnWidgetState {
     /// tunnel confirms. See [STOP_OPTIMISM_WINDOW_MS].
     const val WIDGET_KEY_STOP_REQUESTED_AT = "stopRequestedAt"
 
+    /// Set the moment a widget tap starts a connect, cleared when
+    /// [WidgetConnectService] finishes. Without it the widget would sit on
+    /// "Disconnected" for the several seconds it takes to fetch a config and
+    /// pick a node — long enough for the user to conclude the button is dead
+    /// and tap it again.
+    const val WIDGET_KEY_CONNECT_REQUESTED_AT = "connectRequestedAt"
+
     /// How long the widget is allowed to claim "disconnecting" on nothing but
     /// its own say-so. Long enough for an orderly teardown to broadcast its new
     /// state, short enough that a stop which never happened cannot leave the
     /// widget lying about a tunnel that is still up.
     private const val STOP_OPTIMISM_WINDOW_MS = 8_000L
+
+    /// The same idea for a connect, and much longer: the work behind it is two
+    /// network round trips and a ping of every candidate node. Kept just above
+    /// [WidgetConnectService]'s own timeout, so the service is always the one
+    /// that ends the attempt — this is only the backstop for a service that was
+    /// killed before it could clear the marker.
+    private const val CONNECT_OPTIMISM_WINDOW_MS = 100_000L
 
     private const val SERVICE_CLASS = "com.signbox.singbox_mm.SignboxLibboxVpnService"
 
@@ -99,12 +117,25 @@ object FatVpnWidgetState {
             else -> runtimeState
         }
 
-        val stopRequestedAt = context
-            .getSharedPreferences(WIDGET_PREFS, Context.MODE_PRIVATE)
-            .getLong(WIDGET_KEY_STOP_REQUESTED_AT, 0L)
+        val widgetPrefs = context.getSharedPreferences(WIDGET_PREFS, Context.MODE_PRIVATE)
+        val stopRequestedAt = widgetPrefs.getLong(WIDGET_KEY_STOP_REQUESTED_AT, 0L)
         val stopping = stopRequestedAt > 0L &&
             System.currentTimeMillis() - stopRequestedAt < STOP_OPTIMISM_WINDOW_MS &&
             reconciled != FatVpnWidgetModel.STATE_DISCONNECTED
+
+        val connectRequestedAt = widgetPrefs.getLong(WIDGET_KEY_CONNECT_REQUESTED_AT, 0L)
+        // Dropped as soon as the tunnel has something to say for itself: from
+        // then on its own state is the better information. Note that `error`
+        // does not count as the tunnel speaking — it is what the *previous*
+        // session left behind, and a connect that has not reached the tunnel yet
+        // must not be drawn from it.
+        val tunnelSpeaksForItself = reconciled == FatVpnWidgetModel.STATE_CONNECTED ||
+            reconciled == FatVpnWidgetModel.STATE_CONNECTING ||
+            reconciled == FatVpnWidgetModel.STATE_PREPARING ||
+            reconciled == FatVpnWidgetModel.STATE_DISCONNECTING
+        val connecting = connectRequestedAt > 0L &&
+            System.currentTimeMillis() - connectRequestedAt < CONNECT_OPTIMISM_WINDOW_MS &&
+            !tunnelSpeaksForItself
 
         return FatVpnWidgetModel(
             state = reconciled,
@@ -118,7 +149,25 @@ object FatVpnWidgetState {
             ).takeIf { reconciled == FatVpnWidgetModel.STATE_CONNECTED },
             expiresAtMillis = published.optLong("expiresAtMillis", 0L).takeIf { it > 0L },
             stopping = stopping,
+            connecting = connecting,
         )
+    }
+
+    /// Records that a connect started from the widget is under way, so the very
+    /// next redraw says so. `commit()` rather than `apply()`: the redraw is a
+    /// broadcast to another component, which would otherwise race the write.
+    fun markConnectRequested(context: Context) {
+        context.getSharedPreferences(WIDGET_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(WIDGET_KEY_CONNECT_REQUESTED_AT, System.currentTimeMillis())
+            .commit()
+    }
+
+    fun clearConnectMarker(context: Context) {
+        context.getSharedPreferences(WIDGET_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(WIDGET_KEY_CONNECT_REQUESTED_AT)
+            .commit()
     }
 
     /// Picks the session start to count from.

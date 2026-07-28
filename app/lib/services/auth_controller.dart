@@ -194,11 +194,31 @@ class AuthController extends ChangeNotifier {
       unawaited(_refreshNow());
     }
 
+    // A widget tap the platform is holding for us (iOS App Intent — see
+    // [pollWidgetAction]). Before the deep link, because on iOS this is the
+    // path that actually carries a widget tap.
+    await pollWidgetAction();
+
     _linkSubscription = _appLinks.uriLinkStream.listen(_handleUri);
     final initialUri = await _appLinks.getInitialLink();
     if (initialUri != null) {
       await _handleUri(initialUri);
     }
+  }
+
+  /// Picks up a widget tap that the platform parked instead of deep-linking.
+  ///
+  /// On iOS the widget's power button is an App Intent: it can ask the system
+  /// to open the app, but not to open a URL, so the action is left in the
+  /// shared App Group and collected here — on launch, and on every resume
+  /// (`main.dart`), since the app is frequently already running when the user
+  /// taps its widget.
+  Future<void> pollWidgetAction() async {
+    final action = await HomeWidgetBridge.instance.takePendingAction();
+    if (action == null) return;
+    log.i('Widget action collected from the platform: ${action.name}');
+    _pendingWidgetAction = action;
+    notifyListeners();
   }
 
   /// Callback for [ApiClient]: returns a freshly-refreshed access token on 401,

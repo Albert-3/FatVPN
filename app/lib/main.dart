@@ -14,6 +14,7 @@ import 'services/connection_settings_controller.dart';
 import 'services/home_widget_bridge.dart';
 import 'services/locale_controller.dart';
 import 'services/notification_service.dart';
+import 'services/widget_connect_runner.dart';
 import 'theme/app_colors.dart';
 
 void main() {
@@ -37,6 +38,43 @@ void main() {
   // Lock the app to portrait — the UI is designed for vertical phones only.
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const FatVpnApp());
+}
+
+/// Second entrypoint of the app: the tunnel being brought up from a tap on the
+/// home-screen widget's power button, with no UI anywhere in the process.
+///
+/// Started by name from `WidgetConnectService` in a background Flutter engine.
+/// Deliberately lives in this file, next to [main], and not in a library of its
+/// own: the compiler builds the program from the root library outwards, and an
+/// entrypoint nothing imports would simply not be in a release snapshot for the
+/// engine to find. `vm:entry-point` then keeps the function itself, which is
+/// otherwise dead code — nothing in Dart calls it.
+///
+/// No `runApp`: this engine has no window and no Activity. It does what the
+/// home screen's power button does and then goes away — see
+/// [WidgetConnectRunner] for why it re-checks the entitlement rather than
+/// starting from the config the last session left on disk.
+@pragma('vm:entry-point')
+Future<void> widgetConnectMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  AppLogger.instance.init();
+  log.i('Widget connect: engine started');
+  var outcome = WidgetConnectOutcome.failed;
+  try {
+    outcome = await WidgetConnectRunner().run();
+  } catch (e, stack) {
+    // Nothing may escape: an unhandled error here leaves the native service
+    // waiting for a verdict that never arrives, and the widget stuck on
+    // "Connecting…" until its optimism window runs out.
+    log.e('Widget connect: unhandled failure', e, stack);
+  }
+  log.i('Widget connect: ${outcome.name}');
+  await AppLogger.instance.flush();
+  try {
+    await widgetConnectChannel.invokeMethod<void>('finished', outcome.name);
+  } catch (e) {
+    log.w('Widget connect: could not report the outcome ($e)');
+  }
 }
 
 class FatVpnApp extends StatefulWidget {
@@ -168,6 +206,10 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _auth.refreshOnResume();
       _auth.setPairingPaused(false);
+      // A widget tap that arrived while the app was already running: on iOS the
+      // power button opens the app through an App Intent, with the action left
+      // in the shared App Group rather than in a deep link.
+      unawaited(_auth.pollWidgetAction());
     } else if (state == AppLifecycleState.paused) {
       // The user is in Telegram completing the pairing; polling from a
       // suspended app is 30 requests a minute nobody is looking at. Flush the

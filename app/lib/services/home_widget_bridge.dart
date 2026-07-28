@@ -32,7 +32,16 @@ const String homeWidgetLinkHost = 'widget';
 /// Parses `fatvpn://widget/<action>`, or null when [uri] is not a widget link.
 HomeWidgetAction? homeWidgetActionFromUri(Uri uri) {
   if (uri.host != homeWidgetLinkHost) return null;
-  final action = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+  return homeWidgetActionFromName(
+    uri.pathSegments.isEmpty ? '' : uri.pathSegments.last,
+  );
+}
+
+/// The same action names as the deep link, arriving the other way round: the
+/// iOS widget's power button is an App Intent, which can open the app but
+/// cannot hand it a URL, so it writes the name into the shared App Group and
+/// the app comes and takes it ([HomeWidgetBridge.takePendingAction]).
+HomeWidgetAction? homeWidgetActionFromName(String action) {
   switch (action) {
     case 'connect':
       return HomeWidgetAction.connect;
@@ -221,6 +230,37 @@ class HomeWidgetBridge {
         clearConnectedAt: true,
         clearExpiresAt: true,
       );
+
+  /// Takes the action a widget tap parked with the platform, leaving nothing
+  /// behind. Null when there is none.
+  ///
+  /// The pull is what makes the iOS widget's power button work at all. A
+  /// widget extension has no way to run an action itself — it has no
+  /// NetworkExtension entitlement — and an App Intent that opens the app opens
+  /// it *without* a URL, so there is no deep link to parse. It writes the
+  /// action into the shared App Group instead, and the app asks for it on
+  /// launch and on every resume.
+  ///
+  /// It doubles as the belt to the deep link's braces: `fatvpn://` reaching
+  /// Dart on iOS has never actually been tested (the app uses a SceneDelegate),
+  /// and this path does not depend on it.
+  Future<HomeWidgetAction?> takePendingAction() async {
+    if (_unsupported) return null;
+    try {
+      final name = await channel.invokeMethod<String>('takePendingAction');
+      if (name == null || name.isEmpty) return null;
+      return homeWidgetActionFromName(name);
+    } on MissingPluginException {
+      // An older platform build (or a desktop one) that only knows `publish`.
+      // Deliberately does not set [_unsupported]: publishing may well work, and
+      // a widget that stops updating is a much bigger loss than a tap that has
+      // to arrive by deep link.
+      return null;
+    } catch (e) {
+      log.w('Could not read the pending widget action: $e');
+      return null;
+    }
+  }
 
   /// Sends the current snapshot to the platform, unless it is byte-for-byte
   /// what we sent last time.

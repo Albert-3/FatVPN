@@ -38,6 +38,14 @@ class FatVpnWidgetChannel(private val context: Context) : MethodChannel.MethodCa
                 publish(arguments)
                 result.success(null)
             }
+            // Always null here, and answered rather than left unimplemented on
+            // purpose. This is the iOS path: there a widget tap cannot carry a
+            // URL and the action is parked in the App Group for the app to
+            // collect. On Android a tap is a broadcast the widget acts on
+            // directly, and the one case that does need the app arrives as a
+            // real `fatvpn://widget/...` intent. Answering keeps the shared Dart
+            // call from taking a MissingPluginException for an answer.
+            "takePendingAction" -> result.success(null)
             else -> result.notImplemented()
         }
     }

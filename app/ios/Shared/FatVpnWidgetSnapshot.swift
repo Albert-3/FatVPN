@@ -27,6 +27,24 @@ struct FatVpnWidgetSnapshot {
     static let appGroupID = "group.com.fatvpn.fatvpnApp"
     static let defaultsKey = "fatvpn.widget.snapshot"
 
+    /// Where the widget's power button leaves what it wants done, for the app to
+    /// pick up ([takePendingAction]).
+    ///
+    /// It has to be a mailbox rather than a deep link because of what the button
+    /// is on iOS 17: an App Intent, which can ask the system to open the
+    /// containing app but cannot hand it a URL. It is also the more robust of
+    /// the two — `fatvpn://` reaching Dart on iOS has never been verified — so
+    /// this is the path the button uses, and the deep link stays as the fallback
+    /// for iOS 16 and below, where a widget tap can only be a link.
+    static let pendingActionKey = "fatvpn.widget.pendingAction"
+    static let pendingActionAtKey = "fatvpn.widget.pendingActionAt"
+
+    /// How long a parked action stays worth acting on. The app is expected
+    /// within a second or two — the same tap opens it — so anything older than
+    /// this is a tap whose app launch never happened, and carrying it out at the
+    /// user's *next* launch would toggle their VPN for no visible reason.
+    static let pendingActionTTL: TimeInterval = 120
+
     /// Bumped when the shape changes, so a widget left behind by an older
     /// install renders its fallback instead of misreading fields. Mirrors
     /// `HomeWidgetSnapshot.version` on the Dart side.
@@ -103,6 +121,35 @@ struct FatVpnWidgetSnapshot {
         }
         defaults.set(stored, forKey: defaultsKey)
         reloadWidgets()
+    }
+
+    /// Parks what a widget tap asked for. Called from the widget extension's
+    /// App Intent, which runs in its own process moments before the app is
+    /// brought to the front.
+    static func requestAction(_ action: String) {
+        guard let defaults = defaults else { return }
+        defaults.set(action, forKey: pendingActionKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: pendingActionAtKey)
+    }
+
+    /// Takes the parked action, leaving nothing behind. Called by the app (see
+    /// the `fatvpn/widget` channel in AppDelegate) on launch and on every
+    /// resume, since the app is often already running when its widget is
+    /// tapped.
+    static func takePendingAction() -> String? {
+        guard let defaults = defaults,
+              let action = defaults.string(forKey: pendingActionKey) else {
+            return nil
+        }
+        let at = defaults.double(forKey: pendingActionAtKey)
+        defaults.removeObject(forKey: pendingActionKey)
+        defaults.removeObject(forKey: pendingActionAtKey)
+        // Cleared either way: an action too old to act on is also too old to
+        // keep, or it would fire at some unrelated launch later on.
+        guard at > 0, Date().timeIntervalSince1970 - at < pendingActionTTL else {
+            return nil
+        }
+        return action
     }
 
     /// Logging out does not need a method of its own: the app publishes a
