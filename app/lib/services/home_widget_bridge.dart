@@ -1,0 +1,249 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:singbox_mm/singbox_mm.dart';
+
+import '../l10n/strings.dart';
+import 'app_logger.dart';
+
+/// What a tap on the widget asked the app to do.
+///
+/// The widget cannot connect on its own: bringing the tunnel up needs a live
+/// entitlement check (`/servers` answers 402 once the subscription lapses), a
+/// fresh subscription config and, on a first run, the OS VPN consent dialog —
+/// none of which exist outside the app process. So the widget hands the intent
+/// over through a deep link and the app performs it.
+enum HomeWidgetAction {
+  connect,
+  disconnect,
+
+  /// "Do the opposite of whatever is running" — what the single power button on
+  /// the widget sends when it cannot be sure the state it drew is still current.
+  toggle,
+}
+
+/// Deep-link host reserved for widget taps. Kept distinct from the key deep
+/// link (`fatvpn://token/<code>`, see [AuthController]) because *any* app on the
+/// device can fire a `fatvpn://` intent, and a widget action must never be
+/// mistaken for a key handed to us by a stranger.
+const String homeWidgetLinkHost = 'widget';
+
+/// Parses `fatvpn://widget/<action>`, or null when [uri] is not a widget link.
+HomeWidgetAction? homeWidgetActionFromUri(Uri uri) {
+  if (uri.host != homeWidgetLinkHost) return null;
+  final action = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+  switch (action) {
+    case 'connect':
+      return HomeWidgetAction.connect;
+    case 'disconnect':
+      return HomeWidgetAction.disconnect;
+    case 'toggle':
+      return HomeWidgetAction.toggle;
+    default:
+      return null;
+  }
+}
+
+/// Everything the home-screen widgets draw.
+///
+/// Deliberately small and flat: it crosses a platform channel on every tunnel
+/// state change and is then re-read by a widget process that may run long after
+/// the app is gone, so it holds display-ready values rather than references to
+/// app state.
+@immutable
+class HomeWidgetSnapshot {
+  const HomeWidgetSnapshot({
+    this.state = VpnConnectionState.disconnected,
+    this.language = AppLanguage.ru,
+    this.signedIn = false,
+    this.locationLabel,
+    this.flagEmoji,
+    this.connectedAt,
+    this.expiresAt,
+  });
+
+  /// Bumped when the shape below changes, so a widget left over from an older
+  /// install renders its fallback instead of misreading fields.
+  static const int version = 1;
+
+  final VpnConnectionState state;
+  final AppLanguage language;
+
+  /// False when there is no session at all: the widget then offers "open the
+  /// app" rather than a power button that could only ever fail.
+  final bool signedIn;
+
+  /// Country label as the home screen shows it ("DE", or the localized
+  /// "whitelist" bucket) — null in "best server" mode, where the widget draws
+  /// its own localized label instead of a location that isn't chosen yet.
+  final String? locationLabel;
+  final String? flagEmoji;
+
+  /// Start of the running session, mirrored so the widget can tick its own
+  /// clock without waking the app. Null when not connected.
+  final DateTime? connectedAt;
+  final DateTime? expiresAt;
+
+  HomeWidgetSnapshot copyWith({
+    VpnConnectionState? state,
+    AppLanguage? language,
+    bool? signedIn,
+    String? locationLabel,
+    String? flagEmoji,
+    DateTime? connectedAt,
+    DateTime? expiresAt,
+    bool clearLocation = false,
+    bool clearConnectedAt = false,
+    bool clearExpiresAt = false,
+  }) {
+    return HomeWidgetSnapshot(
+      state: state ?? this.state,
+      language: language ?? this.language,
+      signedIn: signedIn ?? this.signedIn,
+      locationLabel: clearLocation ? null : (locationLabel ?? this.locationLabel),
+      flagEmoji: clearLocation ? null : (flagEmoji ?? this.flagEmoji),
+      connectedAt: clearConnectedAt ? null : (connectedAt ?? this.connectedAt),
+      expiresAt: clearExpiresAt ? null : (expiresAt ?? this.expiresAt),
+    );
+  }
+
+  Map<String, Object?> toMap() => <String, Object?>{
+        'v': version,
+        'state': state.wireValue,
+        'lang': language == AppLanguage.ru ? 'ru' : 'en',
+        'signedIn': signedIn,
+        'locationLabel': locationLabel,
+        'flagEmoji': flagEmoji,
+        // Milliseconds since epoch, not ISO strings: both widget runtimes work
+        // in absolute time (Android's Chronometer, SwiftUI's timer style) and
+        // neither should be parsing dates.
+        'connectedAtMillis': connectedAt?.millisecondsSinceEpoch,
+        'expiresAtMillis': expiresAt?.millisecondsSinceEpoch,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is HomeWidgetSnapshot &&
+      other.state == state &&
+      other.language == language &&
+      other.signedIn == signedIn &&
+      other.locationLabel == locationLabel &&
+      other.flagEmoji == flagEmoji &&
+      other.connectedAt == connectedAt &&
+      other.expiresAt == expiresAt;
+
+  @override
+  int get hashCode => Object.hash(
+        state,
+        language,
+        signedIn,
+        locationLabel,
+        flagEmoji,
+        connectedAt,
+        expiresAt,
+      );
+}
+
+/// Publishes [HomeWidgetSnapshot] to the platform so the Android app widget and
+/// the iOS WidgetKit extension can render the session without the app running.
+///
+/// A single instance owns the whole snapshot and callers patch the fields they
+/// know about ([update]) — the home screen knows the tunnel, `main` knows the
+/// session and the language, and neither should be able to blank the other's
+/// half by publishing a partial record.
+class HomeWidgetBridge {
+  HomeWidgetBridge._();
+
+  static final HomeWidgetBridge instance = HomeWidgetBridge._();
+
+  @visibleForTesting
+  static const MethodChannel channel = MethodChannel('fatvpn/widget');
+
+  HomeWidgetSnapshot _snapshot = const HomeWidgetSnapshot();
+  HomeWidgetSnapshot? _published;
+
+  /// True once the platform side has told us it has no widget code (desktop and
+  /// web builds share this Dart). Stops us logging the same miss forever.
+  bool _unsupported = false;
+
+  HomeWidgetSnapshot get snapshot => _snapshot;
+
+  @visibleForTesting
+  void resetForTest() {
+    _snapshot = const HomeWidgetSnapshot();
+    _published = null;
+    _unsupported = false;
+  }
+
+  /// Patches the snapshot and pushes it to the platform when something actually
+  /// changed. Every argument is optional; omitting one leaves it as it was.
+  Future<void> update({
+    VpnConnectionState? state,
+    AppLanguage? language,
+    bool? signedIn,
+    String? locationLabel,
+    String? flagEmoji,
+    DateTime? connectedAt,
+    DateTime? expiresAt,
+    bool clearLocation = false,
+    bool clearConnectedAt = false,
+    bool clearExpiresAt = false,
+  }) {
+    _snapshot = _snapshot.copyWith(
+      state: state,
+      language: language,
+      signedIn: signedIn,
+      locationLabel: locationLabel,
+      flagEmoji: flagEmoji,
+      connectedAt: connectedAt,
+      expiresAt: expiresAt,
+      clearLocation: clearLocation,
+      clearConnectedAt: clearConnectedAt,
+      clearExpiresAt: clearExpiresAt,
+    );
+    return publish();
+  }
+
+  /// Wipes everything about the session the widget could still be showing — the
+  /// location, the clock, the subscription — while keeping the language, which
+  /// is what the "not signed in" line is drawn in.
+  ///
+  /// Called when the session goes away (sign-out, or a subscription that
+  /// lapsed). A widget still naming the last country and counting a session
+  /// timer would be both wrong and a small leak from an account that is no
+  /// longer signed in on this device.
+  Future<void> clearSession({AppLanguage? language}) => update(
+        state: VpnConnectionState.disconnected,
+        language: language,
+        signedIn: false,
+        clearLocation: true,
+        clearConnectedAt: true,
+        clearExpiresAt: true,
+      );
+
+  /// Sends the current snapshot to the platform, unless it is byte-for-byte
+  /// what we sent last time.
+  ///
+  /// The de-duplication is not cosmetic: the tunnel emits state events in
+  /// bursts (the reconciliation poll re-reads it once a second while a
+  /// handshake settles), and every publish redraws a system widget.
+  Future<void> publish() async {
+    if (_unsupported) return;
+    final snapshot = _snapshot;
+    if (snapshot == _published) return;
+    try {
+      await channel.invokeMethod<void>('publish', snapshot.toMap());
+      _published = snapshot;
+    } on MissingPluginException {
+      // No widget implementation on this platform (desktop/web) — nothing is
+      // broken, there is simply nothing to draw.
+      _unsupported = true;
+    } catch (e) {
+      // A widget that fails to update is never worth an error on screen; the
+      // next state change publishes again. Deliberately does not remember the
+      // failed snapshot as published, so that retry actually happens.
+      log.w('Could not publish widget snapshot: $e');
+    }
+  }
+}

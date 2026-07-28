@@ -4,4 +4,20 @@
          flash before the Flutter splash draws its first frame. -->
     <color name="splash_background">#0B1622</color>
 	<color name="ic_launcher_background">#0B1622</color>
+
+    <!-- Home-screen widget. Mirrors lib/theme/app_colors.dart: the widget sits
+         on the same home screen as the app icon and has to read as the same
+         product. Kept as literals rather than referencing the splash colour —
+         they answer to the Dart palette, not to the launch window. -->
+    <!-- The widget card is the app's *background*, and the power disc sits on
+         it in the app's *card* colour — the same pair, in the same order, as
+         the home screen (AppColors.background behind AppColors.card). Painting
+         the card itself #152436 made the widget a flat grey slab on the
+         wallpaper and left the power button invisible against it. -->
+    <color name="widget_bg">#0B1622</color>
+    <color name="widget_card">#152436</color>
+    <color name="widget_accent">#34D399</color>
+    <color name="widget_text_primary">#FFFFFFFF</color>
+    <color name="widget_text_secondary">#8C9BAC</color>
+    <color name="widget_disabled">#3A4A5C</color>
 </resources>

@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:fatvpn_app/models/auth_session.dart';
+import 'package:fatvpn_app/models/pairing.dart';
 import 'package:fatvpn_app/services/api_client.dart';
 import 'package:fatvpn_app/services/auth_controller.dart';
 import 'package:fatvpn_app/services/token_storage.dart';
@@ -49,6 +50,16 @@ class _NoopTokenStorage extends TokenStorage {
   Future<void> markAutoTrialAttempted() async {}
   @override
   Future<void> clear() async => stored = null;
+
+  /// The pairing attempt on disk, so a killed process can resume it.
+  PairingStart? pairing;
+
+  @override
+  Future<void> savePairing(PairingStart p) async => pairing = p;
+  @override
+  Future<void> clearPairing() async => pairing = null;
+  @override
+  Future<PairingStart?> readPairing() async => pairing;
 }
 
 /// Counts /pair/status requests. [status] produces each response.
@@ -77,9 +88,10 @@ class _PairingBff {
   });
 }
 
-AuthController _controllerFor(_PairingBff bff) => AuthController(
+AuthController _controllerFor(_PairingBff bff, {_NoopTokenStorage? storage}) =>
+    AuthController(
       apiClient: ApiClient(httpClient: bff.client, baseUrl: 'http://bff.test'),
-      tokenStorage: _NoopTokenStorage(),
+      tokenStorage: storage ?? _NoopTokenStorage(),
     );
 
 void main() {
@@ -174,5 +186,75 @@ void main() {
     // This is the only case that ends with the poll still armed, so the timer
     // has to go before the framework's pending-timer check runs.
     auth.dispose();
+  });
+
+  // Pairing means the user leaves for Telegram, and Android is free to kill the
+  // app while they are there. If the attempt lives only in memory, the app comes
+  // back and mints a *new* code while the bot has already completed the old one:
+  // "✅ приложение подключено" in the chat, a spinner that never resolves in the
+  // app, and no way out but tapping the bot link again.
+  testWidgets('an attempt in flight is written to disk', (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    final bff = _PairingBff(
+      expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      status: (_) => http.Response(jsonEncode(<String, Object?>{'status': 'pending'}), 200),
+    );
+    final storage = _NoopTokenStorage();
+    final auth = _controllerFor(bff, storage: storage);
+
+    await auth.startPairing(expiredMessage: 'expired', genericMessage: 'generic');
+
+    expect(storage.pairing?.pairCode, 'ABCD12');
+    expect(storage.pairing?.pollToken, 'poll-token',
+        reason: 'the poll token is the half that cannot be re-derived');
+
+    // Drain the logger's flush timer before the pending-timer check runs.
+    await tester.pump(const Duration(seconds: 3));
+    auth.dispose();
+  });
+
+  testWidgets('a resolved attempt is not left on disk to be resumed later',
+      (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    final session = jsonEncode(<String, Object?>{
+      'status': 'completed',
+      'accessToken': 'AT1',
+      'refreshToken': 'RT1',
+      'expiresAt': DateTime.now().add(const Duration(days: 30)).toIso8601String(),
+    });
+    final bff = _PairingBff(
+      expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      status: (_) => http.Response(session, 200),
+    );
+    final storage = _NoopTokenStorage();
+    final auth = _controllerFor(bff, storage: storage);
+    addTearDown(auth.dispose);
+
+    await auth.startPairing(expiredMessage: 'expired', genericMessage: 'generic');
+    await tester.pump(const Duration(seconds: 10));
+
+    expect(auth.isLoggedIn, isTrue, reason: 'setup failed');
+    expect(storage.pairing, isNull,
+        reason: 'a consumed code would be resumed on the next cold start and '
+            'answered "expired"');
+  });
+
+  testWidgets('an expired attempt is cleared from disk too', (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    // Already past its window server-side — the poll gives up on the first tick.
+    // (Timers here run on the fake clock, which does not move DateTime.now().)
+    final bff = _PairingBff(
+      expiresAt: DateTime.now().subtract(const Duration(seconds: 1)),
+      status: (_) => http.Response(jsonEncode(<String, Object?>{'status': 'pending'}), 200),
+    );
+    final storage = _NoopTokenStorage();
+    final auth = _controllerFor(bff, storage: storage);
+    addTearDown(auth.dispose);
+
+    await auth.startPairing(expiredMessage: 'expired', genericMessage: 'generic');
+    await tester.pump(const Duration(seconds: 20));
+
+    expect(auth.pairingActive, isFalse, reason: 'setup failed');
+    expect(storage.pairing, isNull);
   });
 }

@@ -9,6 +9,7 @@ import '../models/server_country.dart';
 import '../services/api_client.dart';
 import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
+import '../services/home_widget_bridge.dart';
 import '../services/ping_service.dart';
 import '../services/vpn_controller.dart';
 import '../theme/app_colors.dart';
@@ -63,6 +64,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // while silent token refreshes do not.
   DateTime? _lastMintedAt;
 
+  // A tap on the home-screen widget waiting to be carried out — see
+  // [_maybeRunWidgetAction].
+  HomeWidgetAction? _pendingWidgetAction;
+
   bool get _connected => _vpn.isConnected;
 
   /// True when a concrete country is chosen or connected (vs "Best server"
@@ -79,6 +84,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     widget.connectionSettings.addListener(_onConnSettingsChanged);
     _lastMintedAt = widget.auth.sessionMintedAt;
     widget.auth.addListener(_onAuthChanged);
+    widget.auth.addListener(_onWidgetActionArrived);
+    // A tap on the home-screen widget is what launched us, in all likelihood:
+    // the link resolves during `AuthController.start()`, long before this
+    // screen exists, so the action is waiting rather than arriving.
+    _pendingWidgetAction = widget.auth.consumeWidgetAction();
     // Signing out (by hand, or because the server rejected the refresh) must
     // take the tunnel down with it — see [AuthController.onSessionDropped].
     widget.auth.onSessionDropped = _stopTunnelOnSignOut;
@@ -87,6 +97,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // as off while the system VPN is active.
     unawaited(_vpn.syncFromRuntime());
     _loadServers();
+  }
+
+  /// Picks up a widget tap that arrived while the app was already running (the
+  /// cold-start case is handled in [initState]).
+  void _onWidgetActionArrived() {
+    final action = widget.auth.consumeWidgetAction();
+    if (action == null) return;
+    _pendingWidgetAction = action;
+    _maybeRunWidgetAction();
+  }
+
+  /// Carries out the pending widget tap, or waits if it cannot yet.
+  ///
+  /// Connecting needs the server list, and a tap that cold-started the app
+  /// arrives ~a second before `/servers` answers. Rather than fail the tap, the
+  /// action is held until [_loadServers] calls back in.
+  void _maybeRunWidgetAction() {
+    final action = _pendingWidgetAction;
+    if (action == null || !mounted) return;
+    final wouldConnect = action == HomeWidgetAction.connect ||
+        (action == HomeWidgetAction.toggle && !_isActive);
+    if (wouldConnect && _servers.isEmpty) {
+      // Still loading: [_loadServers] runs this again when it lands. Loaded and
+      // empty (or failed): there is nothing to connect to, and the error is
+      // already on screen — drop the action instead of retrying forever.
+      if (!_loadingServers) _pendingWidgetAction = null;
+      return;
+    }
+    _pendingWidgetAction = null;
+    unawaited(_runWidgetAction(action));
+  }
+
+  Future<void> _runWidgetAction(HomeWidgetAction action) async {
+    switch (action) {
+      case HomeWidgetAction.connect:
+        if (_isActive) return;
+        await _connectCurrentSelection();
+      case HomeWidgetAction.disconnect:
+        if (_vpn.state == VpnConnectionState.disconnected) return;
+        await _vpn.disconnect();
+      case HomeWidgetAction.toggle:
+        await _onPowerButtonTap();
+    }
+  }
+
+  /// Mirrors the session into the home-screen widgets. Called from every place
+  /// that changes what they show — the tunnel state, the chosen location, the
+  /// language and the subscription.
+  void _publishWidgetSnapshot() {
+    if (!mounted) return;
+    final location = _hasSpecificLocation ? _selectedServer : null;
+    unawaited(HomeWidgetBridge.instance.update(
+      state: _vpn.state,
+      language: AppLocalizationsScope.of(context).language,
+      // Same definition as in `main` — "there is a session the widget's power
+      // button could actually use". Two publishers disagreeing on this would
+      // make the widget flip between its two layouts.
+      signedIn: widget.auth.isLoggedIn && widget.auth.subscriptionActive,
+      locationLabel: location == null
+          ? null
+          : countryLabel(location.country, S.of(context).whitelistLocations),
+      flagEmoji:
+          location == null ? null : countryCodeToFlagEmoji(location.flag),
+      clearLocation: location == null,
+      connectedAt: _vpn.sessionStartedAt,
+      clearConnectedAt: !_isActive || _vpn.sessionStartedAt == null,
+      expiresAt: widget.auth.session?.expiresAt,
+      clearExpiresAt: widget.auth.session?.expiresAt == null,
+    ));
   }
 
   /// Reloads servers when the session is replaced by a new key/subscription
@@ -168,7 +247,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _timer?.cancel();
       _timer = null;
     }
+    _publishWidgetSnapshot();
     if (mounted) setState(() {});
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Fires when the language changes (the localization scope is an inherited
+    // notifier this screen depends on), which is half of what the widget draws.
+    _publishWidgetSnapshot();
   }
 
   /// Refreshes the session label from the tunnel's persisted start time
@@ -222,11 +310,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _loadingServers = false;
       });
       unawaited(_measureBestPings(servers));
+      _publishWidgetSnapshot();
       // Right after a trial grant, bring the tunnel up automatically so the
       // user reaches Telegram (to buy a key) without a manual tap.
       if (widget.auth.consumeAutoConnect()) {
         unawaited(_autoConnect());
       }
+      // A widget tap that cold-started the app has been waiting for this list.
+      _maybeRunWidgetAction();
     } on ApiException catch (e) {
       // 402 = subscription lapsed. Drop the tunnel and route to the renew
       // screen via the auth gate instead of showing a servers error.
@@ -240,12 +331,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _serversError = S.of(context).couldNotReachServer;
         _loadingServers = false;
       });
+      // Either runs the pending widget tap against the list we already had, or
+      // drops it — what it must not do is leave it pending forever.
+      _maybeRunWidgetAction();
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _serversError = S.of(context).couldNotReachServer;
         _loadingServers = false;
       });
+      _maybeRunWidgetAction();
     }
   }
 
@@ -324,6 +419,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _serverExplicitlySelected = true;
       }
     });
+    _publishWidgetSnapshot();
     // Apply the new location immediately: if the tunnel is up, tear it down and
     // reconnect to the new choice (otherwise the change only took effect after a
     // manual off/on).
@@ -343,6 +439,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _selectedServer = country;
       _serverExplicitlySelected = true;
     });
+    _publishWidgetSnapshot();
     if (wasActive) {
       await _switchOff();
       if (!mounted) return;
@@ -429,6 +526,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _connSettingsDebounce?.cancel();
     widget.connectionSettings.removeListener(_onConnSettingsChanged);
     widget.auth.removeListener(_onAuthChanged);
+    widget.auth.removeListener(_onWidgetActionArrived);
     widget.auth.onSessionDropped = null;
     _vpn.removeListener(_handleVpnChange);
     _vpn.onAutoSwitched = null;

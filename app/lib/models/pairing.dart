@@ -20,6 +20,15 @@ class PairingStart {
   final String pairCode;
   final String pollToken;
   final DateTime expiresAt;
+
+  /// Persisted so an attempt survives the process being killed while the user
+  /// is over in Telegram — otherwise the app comes back, mints a *new* code and
+  /// waits on it forever while the bot has already completed the old one.
+  Map<String, dynamic> toJson() => {
+        'pairCode': pairCode,
+        'pollToken': pollToken,
+        'expiresAt': expiresAt.toIso8601String(),
+      };
 }
 
 enum PairingState { pending, completed, expired }

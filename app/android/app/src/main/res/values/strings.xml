@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings for the home-screen widget only. Everything else in this app is
+     localized in Dart (lib/l10n/strings.dart) — the widget cannot be, because it
+     is drawn by the launcher while the app is not running.
+
+     The language is not the phone's: FatVpnWidgetProvider resolves these against
+     the language the user picked *in the app* (see FatVpnWidgetState.localized),
+     because that is what the same user sees on the screen next to the widget.
+     values/ is the fallback for an install that has never published one. -->
+<resources>
+    <string name="widget_name">FatVPN</string>
+    <string name="widget_description">Connection status and one-tap connect</string>
+
+    <string name="widget_status_connected">Connected</string>
+    <string name="widget_status_connecting">Connecting…</string>
+    <string name="widget_status_disconnecting">Disconnecting…</string>
+    <string name="widget_status_disconnected">Disconnected</string>
+    <string name="widget_status_signed_out">Not signed in</string>
+
+    <string name="widget_location_best">Best server</string>
+
+    <!-- Kept short on purpose: in the compact layout the hint shares a line
+         with the location, and anything longer is ellipsized away. -->
+    <string name="widget_hint_tap_to_connect">Tap to connect</string>
+    <string name="widget_hint_open_app">Open the app</string>
+
+    <string name="widget_power_description">Connect or disconnect</string>
+</resources>

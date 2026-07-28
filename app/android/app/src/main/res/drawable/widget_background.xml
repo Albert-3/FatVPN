@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget card. Uses the app's background colour, not its card colour: on the
+     home screen the power button is a lighter disc *on* that background, and
+     the widget repeats the same two-tone. Corner radius matches the app's own
+     16-18dp cards rather than @android:dimen/system_app_widget_background_radius,
+     which does not exist below Android 12. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_bg" />
+    <corners android:radius="18dp" />
+</shape>

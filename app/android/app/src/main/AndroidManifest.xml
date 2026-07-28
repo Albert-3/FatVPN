@@ -74,6 +74,32 @@
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
             android:exported="false"/>
+        <!-- Home-screen widget. Exported because the launcher (a different app)
+             has to be able to send it APPWIDGET_UPDATE — that is what makes a
+             widget a widget.
+
+             The two non-widget actions it listens for are both ours and both
+             safe to receive from anywhere they could plausibly come from:
+             · ACTION_STATE_UPDATE is broadcast by our own VPN service with
+               setPackage() *and* a signature-level permission
+               (${applicationId}.permission.SIGNBOX_STATE, declared by the
+               singbox_mm plugin), so only this app can send it;
+             · TOGGLE only ever stops a tunnel or opens the app — the two things
+               the user can already do from the notification — and starts
+               nothing on its own. -->
+        <receiver
+            android:name=".widget.FatVpnWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.signbox.singbox_mm.action.STATE"/>
+                <action android:name="com.fatvpn.fatvpn_app.widget.action.TOGGLE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/fatvpn_widget_info"/>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.os.Build
+import com.fatvpn.fatvpn_app.widget.FatVpnWidgetChannel
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -16,6 +17,10 @@ class MainActivity : FlutterActivity() {
     private val channelName = "fatvpn/apps"
     private var channel: MethodChannel? = null
 
+    /// Mirrors the session into the home-screen widget. Bound to the
+    /// application context, not this Activity: what it writes outlives the UI.
+    private var widgetChannel: FatVpnWidgetChannel? = null
+
     /// One daemon worker instead of a thread per call: the only caller is the
     /// split-tunnel picker, and two overlapping enumerations would compete for
     /// the same PackageManager rather than finish sooner.
@@ -25,6 +30,9 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         worker = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "fatvpn-apps").apply { isDaemon = true }
+        }
+        widgetChannel = FatVpnWidgetChannel(applicationContext).apply {
+            attach(flutterEngine.dartExecutor.binaryMessenger)
         }
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .apply {
@@ -48,6 +56,8 @@ class MainActivity : FlutterActivity() {
         // outlives the Activity keeps it (and its window) alive.
         channel?.setMethodCallHandler(null)
         channel = null
+        widgetChannel?.detach()
+        widgetChannel = null
         worker?.shutdownNow()
         worker = null
         super.cleanUpFlutterEngine(flutterEngine)

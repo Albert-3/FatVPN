@@ -161,8 +161,14 @@ class FakeVpnPlatform with MockPlatformInterfaceMixin implements SignboxVpnPlatf
   @override
   Future<void> syncRuntimeState() async {}
 
+  /// What `getLastError` answers. Settable so a test can play back what the
+  /// tunnel service records when the user stops it from outside the app (the
+  /// notification's Stop button or the home-screen widget) — see
+  /// `VpnController._captureTunnelFailure`.
+  String? lastError;
+
   @override
-  Future<String?> getLastError() async => null;
+  Future<String?> getLastError() async => lastError;
 
   @override
   Future<String?> getSingboxVersion() async => 'fake';

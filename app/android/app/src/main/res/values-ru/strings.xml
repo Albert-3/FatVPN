@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Русские строки виджета. Формулировки совпадают со строками приложения
+     (lib/l10n/strings.dart): «Подключено», «Отключено», «Лучший сервер» — виджет
+     и главный экран стоят рядом, и разнобой в словах читается как ошибка. -->
+<resources>
+    <string name="widget_description">Статус подключения и подключение в один тап</string>
+
+    <string name="widget_status_connected">Подключено</string>
+    <string name="widget_status_connecting">Подключение…</string>
+    <string name="widget_status_disconnecting">Отключение…</string>
+    <string name="widget_status_disconnected">Отключено</string>
+    <string name="widget_status_signed_out">Вы не авторизованы</string>
+
+    <string name="widget_location_best">Лучший сервер</string>
+
+    <!-- Короткие на совесть: в компактной раскладке подсказка делит строку с
+         локацией, и «Нажмите, чтобы подключиться» там обрезалось многоточием. -->
+    <string name="widget_hint_tap_to_connect">Подключиться</string>
+    <string name="widget_hint_open_app">Откройте приложение</string>
+
+    <string name="widget_power_description">Подключить или отключить</string>
+</resources>

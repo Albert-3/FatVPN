@@ -82,6 +82,7 @@ class Strings {
     required this.trialNoCapacity,
     required this.trialFailed,
     required this.keyBoundToOtherDevice,
+    required this.keyNotFound,
     required this.deepLinkKeyTitle,
     required this.deepLinkKeyBody,
     required this.subscriptionExpiredTitle,
@@ -224,6 +225,11 @@ class Strings {
   final String trialNoCapacity;
   final String trialFailed;
   final String keyBoundToOtherDevice;
+
+  /// A key the BFF doesn't know (404) — a typo, or a code that has run out.
+  /// Kept apart from [couldNotReachServer]: telling someone who mistyped their
+  /// key that the server is down sends them looking for the wrong problem.
+  final String keyNotFound;
 
   /// Confirmation shown before a key that arrived over the `fatvpn://`
   /// deep link is exchanged — any app on the device can send one, and a
@@ -398,6 +404,7 @@ const Strings enStrings = Strings(
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
   keyBoundToOtherDevice: 'This key is already linked to another phone. Change your key in the bot to move it to this device.',
+  keyNotFound: 'No such key, or it has expired. Check the code in the bot.',
   deepLinkKeyTitle: 'Use this key?',
   deepLinkKeyBody: _enDeepLinkKeyBody,
   subscriptionExpiredTitle: 'Subscription expired',
@@ -550,6 +557,7 @@ final Strings ruStrings = Strings(
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
   keyBoundToOtherDevice: 'Этот ключ уже привязан к другому телефону. Смените ключ в боте, чтобы перенести его на это устройство.',
+  keyNotFound: 'Такого ключа нет или он истёк. Проверьте код в боте.',
   deepLinkKeyTitle: 'Использовать этот ключ?',
   deepLinkKeyBody: _ruDeepLinkKeyBody,
   subscriptionExpiredTitle: 'Подписка истекла',

@@ -127,6 +127,13 @@ workflows:
           # this line only guarantees a matching version is present to activate.
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Must follow the PacketTunnel step: this script also adds the shared
+          # widget-snapshot file to that target, which is how the tunnel tells
+          # the widget about starts and stops that happen without the app.
+          # The gem is already installed by the step above.
+          ruby app/ios/tool/add_widget_target.rb
       - name: Pod install
         script: |
           cd app/ios
@@ -180,10 +187,11 @@ workflows:
           mkdir -p /tmp/ipa-check
           unzip -q "$IPA" -d /tmp/ipa-check
           APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
-          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex"; do
+          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex" "$APP/PlugIns/FatVpnWidget.appex"; do
             # A missing appex is the worst outcome here, not a skippable one:
-            # it means add_packet_tunnel_target.rb stopped embedding the
-            # extension and the app ships with no tunnel at all.
+            # it means add_packet_tunnel_target.rb (or add_widget_target.rb)
+            # stopped embedding its extension and the app ships with no tunnel
+            # — or with a widget that can never read anything — at all.
             if [ ! -d "$BUNDLE" ]; then
               echo "Bundle missing from the exported .ipa: $BUNDLE" >&2
               exit 1
@@ -277,6 +285,10 @@ workflows:
         script: |
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_widget_target.rb
       # Kept in this workflow only: it is the debug/validation one, and the
       # ~30-60s `-showBuildSettings` pass has no business in the pipeline that
       # publishes to TestFlight.

@@ -8,6 +8,7 @@ import '../models/auth_session.dart';
 import '../models/pairing.dart';
 import 'api_client.dart';
 import 'app_logger.dart';
+import 'home_widget_bridge.dart';
 import 'token_storage.dart';
 
 /// Owns the current [AuthSession] and keeps it updated from two sources:
@@ -161,6 +162,17 @@ class AuthController extends ChangeNotifier {
       }
       // Trial button shows only for a device that hasn't used its trial yet.
       _trialAvailable = !await _tokenStorage.hasAttemptedAutoTrial();
+      // A pairing attempt the user left in flight. Android is free to kill the
+      // app while they are in Telegram, and without this the app comes back and
+      // starts a *new* code while the bot has already completed the old one —
+      // "✅ приложение подключено" in the chat, a spinner that never resolves in
+      // the app. AwaitingAuthScreen resumes the poll on the restored code.
+      if (_session == null || _session!.isExpired) {
+        _pairing = await _tokenStorage.readPairing();
+        if (_pairing != null) {
+          log.i('Restored a pairing attempt still in its window');
+        }
+      }
     } catch (error, stack) {
       // Whatever failed, the app still has to leave the splash screen: the
       // gate in main.dart watches [initializing], so an escaping exception
@@ -304,6 +316,7 @@ class AuthController extends ChangeNotifier {
     // to Home (pairing-complete does the same cleanup).
     _stopPolling();
     _pairing = null;
+    unawaited(_tokenStorage.clearPairing());
     _session = session;
     // A trial has no user-entered key code — drop any stale one from storage.
     _keyCode = null;
@@ -410,8 +423,38 @@ class AuthController extends ChangeNotifier {
   String? get pendingDeepLinkToken => _pendingDeepLinkToken;
   String? _pendingDeepLinkToken;
 
+  /// The last widget tap waiting to be carried out, or null. Consumed exactly
+  /// once by the home screen — see [consumeWidgetAction].
+  HomeWidgetAction? _pendingWidgetAction;
+
+  /// Takes the pending widget action, leaving nothing behind. Returns null when
+  /// there is none.
+  ///
+  /// The action is parked here rather than dispatched straight to the UI
+  /// because the link usually arrives *before* there is a UI to dispatch it to:
+  /// a tap on the widget cold-starts the app, and `getInitialLink` resolves
+  /// while the home screen is still several frames away.
+  HomeWidgetAction? consumeWidgetAction() {
+    final action = _pendingWidgetAction;
+    _pendingWidgetAction = null;
+    return action;
+  }
+
   Future<void> _handleUri(Uri uri) async {
     if (uri.scheme != deepLinkScheme) {
+      return;
+    }
+    // A widget tap is not a key. Without this branch the code below would take
+    // `fatvpn://widget/connect` for a short token and ask the user to accept a
+    // "key" named `connect` — every path segment of every fatvpn:// link used
+    // to end up in [pendingDeepLinkToken].
+    if (uri.host == homeWidgetLinkHost) {
+      final action = homeWidgetActionFromUri(uri);
+      if (action != null) {
+        log.i('Widget action received: ${action.name}');
+        _pendingWidgetAction = action;
+        notifyListeners();
+      }
       return;
     }
     final shortToken = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : uri.host;
@@ -425,6 +468,7 @@ class AuthController extends ChangeNotifier {
   /// Accepts the key from [pendingDeepLinkToken].
   Future<void> confirmPendingDeepLinkToken({
     required String conflictMessage,
+    required String notFoundMessage,
     required String genericMessage,
   }) async {
     final token = _pendingDeepLinkToken;
@@ -433,6 +477,7 @@ class AuthController extends ChangeNotifier {
     await exchangeShortToken(
       token,
       conflictMessage: conflictMessage,
+      notFoundMessage: notFoundMessage,
       genericMessage: genericMessage,
     );
   }
@@ -447,12 +492,18 @@ class AuthController extends ChangeNotifier {
   Future<void> exchangeShortToken(
     String shortToken, {
     required String conflictMessage,
+    required String notFoundMessage,
     required String genericMessage,
   }) async {
     try {
       _error = null;
       final deviceKey = await _tokenStorage.readOrCreateDeviceKey();
       final session = await _apiClient.exchangeToken(shortToken, deviceKey);
+      // A pasted key supersedes any pairing attempt in flight, same as a trial
+      // does — otherwise its timer keeps polling from behind the home screen.
+      _stopPolling();
+      _pairing = null;
+      unawaited(_tokenStorage.clearPairing());
       _session = session;
       _keyCode = shortToken;
       _sessionMintedAt = DateTime.now();
@@ -470,7 +521,13 @@ class AuthController extends ChangeNotifier {
         await _tokenStorage.saveSessionKind('key');
       } catch (_) {/* UI already advanced; a later refresh re-persists */}
     } on ApiException catch (e) {
-      _error = e.statusCode == 409 ? conflictMessage : genericMessage;
+      // 404 is a wrong or spent key, not an unreachable server — telling the
+      // user the network is down sends them hunting the wrong problem.
+      _error = switch (e.statusCode) {
+        409 => conflictMessage,
+        404 => notFoundMessage,
+        _ => genericMessage,
+      };
       notifyListeners();
     } catch (_) {
       _error = genericMessage;
@@ -552,6 +609,14 @@ class AuthController extends ChangeNotifier {
 
     try {
       _pairing = await _apiClient.startPairing();
+      // Persist before the first poll, so a kill between the two doesn't strand
+      // a code the bot can still complete. A storage failure must not fail the
+      // attempt itself — it only costs the resume.
+      try {
+        await _tokenStorage.savePairing(_pairing!);
+      } catch (err) {
+        log.w('Could not persist the pairing attempt ($err)');
+      }
       notifyListeners();
       _schedulePoll();
     } catch (_) {
@@ -560,6 +625,18 @@ class AuthController extends ChangeNotifier {
     } finally {
       _pairingBusy = false;
     }
+  }
+
+  /// Failure texts for an attempt that is already running. [startPairing] sets
+  /// them itself; an attempt restored from disk on a cold start never went
+  /// through it, and without this its expiry would surface as a blank error
+  /// box.
+  void setPairingMessages({
+    required String expiredMessage,
+    required String genericMessage,
+  }) {
+    _pairingExpiredMessage = expiredMessage;
+    _pairingGenericMessage = genericMessage;
   }
 
   /// Pauses polling while the app is in the background (the user is in Telegram
@@ -601,6 +678,7 @@ class AuthController extends ChangeNotifier {
   void _failPairing({required bool expired}) {
     _stopPolling();
     _pairing = null;
+    unawaited(_tokenStorage.clearPairing());
     _error = expired ? _pairingExpiredMessage : _pairingGenericMessage;
     notifyListeners();
   }
@@ -627,6 +705,7 @@ class AuthController extends ChangeNotifier {
           log.i('Pairing completed — session established');
           _stopPolling();
           _pairing = null;
+          unawaited(_tokenStorage.clearPairing());
           _session = status.session;
           // Pairing has no user-entered key code — drop any stale one.
           _keyCode = null;

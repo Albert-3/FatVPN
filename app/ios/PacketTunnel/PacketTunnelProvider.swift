@@ -253,6 +253,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 if answer.call(nil) {
                     Self.writeDiagnostics("OK: tunnel started")
                 }
+                // The app is very often not running when this happens — iOS
+                // starts this extension on demand — so the home-screen widget
+                // would otherwise keep showing "disconnected" over a live
+                // tunnel until the user opened the app.
+                FatVpnWidgetSnapshot.patchTunnelState("connected", connectedAt: Date())
             } catch {
                 // The container app can't see this process's logs, so persist the
                 // failure reason (plus the tail of sing-box's stderr) into the App
@@ -262,6 +267,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 if answer.call(error) {
                     Self.writeDiagnostics("START FAILED: \(error.localizedDescription)")
                 }
+                FatVpnWidgetSnapshot.patchTunnelState("disconnected", connectedAt: nil)
             }
         }
     }
@@ -644,6 +650,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         default:
             break
         }
+        // Same reason as on the start path: the widget is drawn by the system
+        // long after this process is gone, and nothing else will tell it the
+        // tunnel went down — a stop from Settings → VPN never reaches the app.
+        FatVpnWidgetSnapshot.patchTunnelState("disconnected", connectedAt: nil)
         stopService()
         commandServer?.close()
         commandServer = nil

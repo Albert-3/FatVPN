@@ -40,7 +40,14 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
       final needsPairing = widget.renew || !widget.auth.trialAvailable;
       if (widget.auth.pairCode != null) {
         // A code from an earlier visit is still live; resume the poll this
-        // screen's dispose stopped.
+        // screen's dispose stopped. It may also have been restored from disk
+        // after the process was killed, in which case startPairing() never ran
+        // and the failure texts are still unset.
+        final s = S.of(context);
+        widget.auth.setPairingMessages(
+          expiredMessage: s.pairingCodeExpired,
+          genericMessage: s.couldNotReachServer,
+        );
         widget.auth.setPairingPaused(false);
       } else if (needsPairing && widget.auth.error == null) {
         _startPairing(S.of(context));
@@ -443,6 +450,7 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
     await widget.auth.exchangeShortToken(
       code,
       conflictMessage: s.keyBoundToOtherDevice,
+      notFoundMessage: s.keyNotFound,
       genericMessage: s.couldNotReachServer,
     );
     if (mounted) setState(() => _submitting = false);

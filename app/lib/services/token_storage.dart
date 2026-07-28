@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/auth_session.dart';
+import '../models/pairing.dart';
 import 'secure_store.dart';
 
 class TokenStorage {
@@ -20,6 +22,7 @@ class TokenStorage {
   static const _autoTrialKey = 'auto_trial_attempted';
   static const _keyCodeKey = 'active_key_code';
   static const _sessionKindKey = 'last_session_kind';
+  static const _pairingKey = 'pending_pairing';
 
   final SecureStore _storage;
 
@@ -88,6 +91,37 @@ class TokenStorage {
 
   Future<String?> readKeyCode() => _storage.read(key: _keyCodeKey);
 
+  /// The pairing attempt in flight, if any. Held on disk because the whole
+  /// point of pairing is that the user leaves for Telegram — and Android is
+  /// free to kill the app while they are there. Without this the app comes
+  /// back, starts a *new* code, and waits on it while the bot has already
+  /// completed the old one; the user is stuck until they tap the bot link
+  /// again. Cleared as soon as the attempt resolves, one way or the other.
+  Future<void> savePairing(PairingStart pairing) =>
+      _storage.write(key: _pairingKey, value: jsonEncode(pairing.toJson()));
+
+  Future<void> clearPairing() => _storage.delete(key: _pairingKey);
+
+  Future<PairingStart?> readPairing() async {
+    final raw = await _storage.read(key: _pairingKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final pairing =
+          PairingStart.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+      // Past its 15 minutes the server won't honour it, so resuming the poll
+      // would only spend requests on a guaranteed "expired".
+      if (DateTime.now().isAfter(pairing.expiresAt)) {
+        await clearPairing();
+        return null;
+      }
+      return pairing;
+    } catch (_) {
+      // Corrupt or written by an older build — not worth failing startup over.
+      await clearPairing();
+      return null;
+    }
+  }
+
   /// Reads the stored session. The four values are fetched together: each one
   /// crosses a platform channel and is decrypted with a Keystore key, which on
   /// a budget device is 5-15 ms — and this sits directly in front of the first
@@ -122,6 +156,7 @@ class TokenStorage {
       _storage.delete(key: _expiresAtKey),
       _storage.delete(key: _accessJwtExpiresAtKey),
       _storage.delete(key: _keyCodeKey),
+      _storage.delete(key: _pairingKey),
     ]);
   }
 }

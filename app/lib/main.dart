@@ -11,6 +11,7 @@ import 'screens/splash_screen.dart';
 import 'services/app_logger.dart';
 import 'services/auth_controller.dart';
 import 'services/connection_settings_controller.dart';
+import 'services/home_widget_bridge.dart';
 import 'services/locale_controller.dart';
 import 'services/notification_service.dart';
 import 'theme/app_colors.dart';
@@ -72,7 +73,9 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     // sync runs once init resolves.
     _auth.addListener(_syncNotifications);
     _auth.addListener(_maybePromptForDeepLinkKey);
+    _auth.addListener(_syncHomeWidget);
     _locale.addListener(_syncNotifications);
+    _locale.addListener(_syncHomeWidget);
     _auth.start();
     _locale.load();
     _connectionSettings.load();
@@ -90,6 +93,31 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
       _locale.strings,
       _locale.language,
     );
+  }
+
+  /// Keeps the home-screen widgets in step with the *session*: the language
+  /// they render in, whether there is a subscription to connect with, and when
+  /// it runs out.
+  ///
+  /// The tunnel half of the snapshot comes from [HomeScreen] instead, which is
+  /// the only place that knows it — and which does not exist while the user is
+  /// signed out or their subscription has lapsed, exactly when the widget most
+  /// needs to stop offering a power button.
+  void _syncHomeWidget() {
+    // Still initializing: the stored session has not been read yet, and
+    // publishing "signed out" here would blank a perfectly good widget for the
+    // second or two it takes to resolve.
+    if (_auth.initializing) return;
+    if (!_auth.isLoggedIn || !_auth.subscriptionActive) {
+      unawaited(HomeWidgetBridge.instance.clearSession(language: _locale.language));
+      return;
+    }
+    unawaited(HomeWidgetBridge.instance.update(
+      language: _locale.language,
+      signedIn: true,
+      expiresAt: _auth.session?.expiresAt,
+      clearExpiresAt: _auth.session?.expiresAt == null,
+    ));
   }
 
   /// Asks before accepting a key that arrived over `fatvpn://` — see
@@ -122,6 +150,7 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
       if (accepted ?? false) {
         await _auth.confirmPendingDeepLinkToken(
           conflictMessage: s.keyBoundToOtherDevice,
+          notFoundMessage: s.keyNotFound,
           genericMessage: s.couldNotReachServer,
         );
       } else {
@@ -153,7 +182,9 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _auth.removeListener(_syncNotifications);
     _auth.removeListener(_maybePromptForDeepLinkKey);
+    _auth.removeListener(_syncHomeWidget);
     _locale.removeListener(_syncNotifications);
+    _locale.removeListener(_syncHomeWidget);
     _auth.dispose();
     _locale.dispose();
     _connectionSettings.dispose();

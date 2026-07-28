@@ -1021,9 +1021,21 @@ class VpnController extends ChangeNotifier {
   /// Pulls the tunnel's last-failure report (on iOS, the PacketTunnel
   /// extension's persisted reason + sing-box stderr tail) into the app log so it
   /// lands in the shareable support bundle, and surfaces it to the UI.
+  /// What the Android tunnel service records as its "error" when the stop came
+  /// from the *user* rather than from a failure — the notification's Stop
+  /// button, or the home-screen widget's power button. The plugin already
+  /// treats it as a deliberate stop (it suppresses managed-mode failover on
+  /// it); this controller did not, so a stop from outside the app was captured
+  /// as a runtime failure and put a raw `STOPPED_BY_USER` on the home screen.
+  static const _stoppedByUserMarker = 'STOPPED_BY_USER';
+
   Future<void> _captureTunnelFailure() async {
     try {
       final err = await _vpn.getLastError();
+      if (err != null && err.trim() == _stoppedByUserMarker) {
+        log.i('Tunnel stopped by the user from outside the app');
+        return;
+      }
       if (err != null && err.trim().isNotEmpty) {
         // Both the banner and the log end up somewhere the user can share, and
         // the stderr tail quotes the outbound it was dialling — see

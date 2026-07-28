@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status dot. Drawn white and tinted at runtime (setColorFilter) so one
+     drawable serves both the connected and the disconnected state. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="10dp"
+    android:height="10dp"
+    android:viewportWidth="10"
+    android:viewportHeight="10">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,0 A5,5 0 1,0 5,10 A5,5 0 1,0 5,0 Z" />
+</vector>

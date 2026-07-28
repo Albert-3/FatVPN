@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home-screen widget declaration.
+
+     updatePeriodMillis is 0 on purpose. The system's own update tick cannot be
+     faster than 30 minutes, which is useless for a connection indicator, and
+     paying for it in wakeups would buy nothing: the widget is redrawn by the
+     tunnel's state broadcast (SignboxLibboxServiceContract.ACTION_STATE_UPDATE,
+     which arrives whether or not the app is running) and by the app publishing
+     a snapshot, while the session clock ticks by itself inside a Chronometer. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/widget_fatvpn_compact"
+    android:minHeight="40dp"
+    android:minWidth="180dp"
+    android:previewImage="@mipmap/ic_launcher"
+    android:previewLayout="@layout/widget_fatvpn_wide"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="4"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

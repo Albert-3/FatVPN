@@ -66,6 +66,9 @@ class _TracingTokenStorage extends TokenStorage {
   Future<String?> readKeyCode() async => null;
 
   @override
+  Future<void> clearPairing() async {}
+
+  @override
   Future<bool> hasAttemptedAutoTrial() async => false;
 
   @override
@@ -116,6 +119,7 @@ Future<(AuthController, _TracingTokenStorage, List<String>)> _signedIn({
   await auth.exchangeShortToken(
     'KEY-1',
     conflictMessage: 'conflict',
+    notFoundMessage: 'not-found',
     genericMessage: 'generic',
   );
   expect(auth.session?.refreshToken, 'RT1', reason: 'setup failed');
