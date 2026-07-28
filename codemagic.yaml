@@ -2,7 +2,9 @@ workflows:
   ios-libbox-xcframework:
     name: iOS Libbox.xcframework build
     instance_type: mac_mini_m2
-    max_build_duration: 60
+    # gomobile builds both cores from source here (~20-30 minutes), and a cold
+    # Homebrew/Go install on the runner is on top of that.
+    max_build_duration: 120
     environment:
       xcode: latest
     scripts:
@@ -32,7 +34,18 @@ workflows:
     integrations:
       app_store_connect: Codemagic-Admin
     environment:
-      flutter: stable
+      # Pinned: `stable` moves under us, and a Flutter upgrade that changes
+      # codegen or plugin registration breaks a release build with nothing
+      # changed in this repository. Bump deliberately, alongside the SDK
+      # constraint in app/pubspec.yaml.
+      flutter: 3.44.4
+      # Deliberately NOT pinned, unlike Flutter above. Apple raises the minimum
+      # SDK an App Store Connect upload will accept once a year, so any Xcode
+      # version written here stops working on a date nobody set a reminder for —
+      # and it fails at the *upload*, after a full build. `latest` is the value
+      # that keeps satisfying that rule; pin it (e.g. `xcode: 16.2`) only to
+      # reproduce a specific past build, and expect uploads to be rejected.
+      # Same reasoning for CocoaPods, which has to keep up with Xcode.
       xcode: latest
       cocoapods: default
       ios_signing:
@@ -86,18 +99,34 @@ workflows:
         script: |
           cd app
           flutter pub get
+      - name: Analyze and test
+        script: |
+          # `set -e` is what makes this a gate at all. A script's exit code is
+          # the exit code of its *last* command, so without it a failing
+          # `flutter analyze` here would be printed, ignored, and published:
+          # only the final `flutter test` would have been able to stop the
+          # build. Four of the five checks were decorative.
+          set -e
+          # The quality gate. Without it this workflow would take whatever is on
+          # the branch straight to TestFlight — a build number is consumed on
+          # upload and never reissued, so a red build here is cheap and a bad
+          # one on a tester's phone is not.
+          cd app
+          flutter analyze
+          flutter test
+          cd packages/singbox_mm
+          flutter analyze
+          flutter test
       - name: Add PacketTunnel (Network Extension) target
         script: |
-          gem install xcodeproj --no-document
+          # Pinned: this gem rewrites Runner.xcodeproj (add_packet_tunnel_target.rb),
+          # and a major version bump would change that structure silently.
+          # Installing a version does not select it — CocoaPods pulls xcodeproj
+          # in too, and RubyGems activates the newest one installed. The script
+          # therefore declares `gem 'xcodeproj', '~> 1.27'` before its require;
+          # this line only guarantees a matching version is present to activate.
+          gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
-      - name: Diagnose PacketTunnel target build settings
-        script: |
-          cd app/ios
-          for t in Runner PacketTunnel; do
-            echo "--- $t ---"
-            xcodebuild -showBuildSettings -project Runner.xcodeproj -target "$t" -configuration Debug 2>&1 \
-              | grep -E "PRODUCT_NAME|WRAPPER_EXTENSION|TARGET_NAME|CONFIGURATION_BUILD_DIR|WRAPPER_NAME|ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES" || true
-          done
       - name: Pod install
         script: |
           cd app/ios
@@ -126,6 +155,50 @@ workflows:
           flutter build ipa --release \
             --build-number="$BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
+      - name: Verify App Group entitlement survived signing
+        script: |
+          # An App ID without the App Groups capability does not necessarily
+          # fail the signature — the entitlement can be stripped instead, and
+          # the only symptom is containerURL() returning nil at runtime: the
+          # extension's diagnostics become unreadable, getLastError answers
+          # "APP_GROUP_UNAVAILABLE", and the logout cleanup silently does
+          # nothing. Catch that here rather than on a tester's device.
+          #
+          # Read from the exported .ipa, not from build/ios/**/Runner.app: the
+          # export re-signs the bundle against export_options.plist, so the
+          # archive can carry an entitlement the uploaded build does not. That
+          # re-signing is exactly the step that can strip it.
+          set -e
+          IPA="$(ls app/build/ios/ipa/*.ipa 2>/dev/null | head -n1)"
+          if [ -z "$IPA" ]; then
+            # Not "nothing to check": the build above was supposed to produce
+            # one. Passing here would report a green gate that verified nothing.
+            echo "No .ipa under app/build/ios/ipa — nothing was verified." >&2
+            exit 1
+          fi
+          rm -rf /tmp/ipa-check
+          mkdir -p /tmp/ipa-check
+          unzip -q "$IPA" -d /tmp/ipa-check
+          APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
+          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex"; do
+            # A missing appex is the worst outcome here, not a skippable one:
+            # it means add_packet_tunnel_target.rb stopped embedding the
+            # extension and the app ships with no tunnel at all.
+            if [ ! -d "$BUNDLE" ]; then
+              echo "Bundle missing from the exported .ipa: $BUNDLE" >&2
+              exit 1
+            fi
+            echo "--- $BUNDLE ---"
+            # stderr is deliberately not silenced: when codesign itself fails,
+            # its message is the diagnosis. Hidden, the grep below would
+            # misreport the failure as a missing entitlement.
+            codesign -d --entitlements :- "$BUNDLE" > /tmp/ents.xml
+            cat /tmp/ents.xml
+            grep -q "application-groups" /tmp/ents.xml || {
+              echo "Missing App Group entitlement in $BUNDLE" >&2
+              exit 1
+            }
+          done
     artifacts:
       - app/build/ios/ipa/*.ipa
       # Only produced when the step above had to rebuild the framework.
@@ -147,7 +220,9 @@ workflows:
     # Same reason as ios-release: a stale framework is built here.
     max_build_duration: 120
     environment:
-      flutter: stable
+      # Same pin as ios-release, so a validation build validates the same
+      # toolchain the release one uses. See there for why Xcode is not pinned.
+      flutter: 3.44.4
       xcode: latest
       cocoapods: default
     scripts:
@@ -200,8 +275,11 @@ workflows:
           flutter pub get
       - name: Add PacketTunnel (Network Extension) target
         script: |
-          gem install xcodeproj --no-document
+          gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
+      # Kept in this workflow only: it is the debug/validation one, and the
+      # ~30-60s `-showBuildSettings` pass has no business in the pipeline that
+      # publishes to TestFlight.
       - name: Diagnose PacketTunnel target build settings
         script: |
           cd app/ios
