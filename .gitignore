@@ -15,7 +15,10 @@ app/**/.flutter-plugins
 app/**/.flutter-plugins-dependencies
 app/**/.packages
 app/**/build/
-app/**/pubspec.lock
+# pubspec.lock is tracked (V30): the app is an application, not a library —
+# without the lock the toolchain pin (flutter 3.44.4) reproduces only half the
+# build. singbox_mm ships inside this repo and is built only as part of the
+# app, so its lock is tracked for the same reason.
 
 # Android
 app/**/android/.gradle/

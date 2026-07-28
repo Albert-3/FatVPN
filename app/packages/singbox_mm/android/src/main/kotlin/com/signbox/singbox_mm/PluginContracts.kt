@@ -24,6 +24,7 @@ internal object PluginMethods {
     const val PING_SERVER = "pingServer"
     const val PING_SERVER_OUTSIDE_TUNNEL = "pingServerOutsideTunnel"
     const val SYNC_RUNTIME_STATE = "syncRuntimeState"
+    const val CLEAR_PERSISTED_STATE = "clearPersistedState"
 }
 
 internal object PluginStates {

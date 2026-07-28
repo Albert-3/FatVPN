@@ -120,6 +120,19 @@ internal class PluginRuntimeConfigStore(
         return runtimeConfig?.statsEmitIntervalMs ?: defaultStatsEmitIntervalMs
     }
 
+    /// Deletes every config this store may have written — the sing-box config,
+    /// the Xray config, and any `.tmp` a crashed atomic write left behind. Both
+    /// files quote the subscription's credentials verbatim, which is why a
+    /// sign-out has to reach them.
+    @Synchronized
+    fun deletePersistedConfigs() {
+        val configs = listOf(resolveConfigFile(), resolveXrayConfigFile())
+        for (file in configs) {
+            File(file.parentFile, "${file.name}.tmp").delete()
+            file.delete()
+        }
+    }
+
     private fun writeConfigAtomically(file: File, configContent: String) {
         val parent = file.parentFile ?: throw IllegalStateException("Config file has no parent")
         if (!parent.exists() && !parent.mkdirs()) {

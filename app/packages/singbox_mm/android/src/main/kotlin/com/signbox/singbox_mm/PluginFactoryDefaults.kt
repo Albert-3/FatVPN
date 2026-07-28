@@ -20,6 +20,7 @@ internal object PluginFactoryDefaults {
             pingServer = PluginMethods.PING_SERVER,
             pingServerOutsideTunnel = PluginMethods.PING_SERVER_OUTSIDE_TUNNEL,
             syncRuntime = PluginMethods.SYNC_RUNTIME_STATE,
+            clearPersistedState = PluginMethods.CLEAR_PERSISTED_STATE,
         )
 
     val channelNames =

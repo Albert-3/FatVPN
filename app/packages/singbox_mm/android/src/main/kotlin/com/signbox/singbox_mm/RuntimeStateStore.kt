@@ -77,4 +77,15 @@ internal object RuntimeStateStore {
         }
         editor.apply()
     }
+
+    /// Erases the whole snapshot. Part of `clearPersistedState`: the stored
+    /// error routinely quotes node addresses out of sing-box's stderr, and
+    /// `configPath` points at the config being erased — after a sign-out
+    /// neither may outlive the session that produced them.
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .apply()
+    }
 }

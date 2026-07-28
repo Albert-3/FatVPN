@@ -37,6 +37,9 @@ internal object PluginMethodHandlersFactory {
                 methodOperations.pingServerOutsideTunnel(arguments, result)
             },
             syncRuntime = { result -> stateQueryOperations.syncRuntimeState(result) },
+            clearPersistedState = { result ->
+                configOperations.clearPersistedState(result)
+            },
         )
     }
 }

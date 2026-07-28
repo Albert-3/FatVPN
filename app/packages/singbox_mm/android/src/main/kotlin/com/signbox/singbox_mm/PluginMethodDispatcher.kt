@@ -25,6 +25,7 @@ internal class PluginMethodDispatcher(
         val pingServer: String,
         val pingServerOutsideTunnel: String,
         val syncRuntime: String,
+        val clearPersistedState: String,
     )
 
     internal data class Handlers(
@@ -45,6 +46,7 @@ internal class PluginMethodDispatcher(
         val pingServer: (Any?, Result) -> Unit,
         val pingServerOutsideTunnel: (Any?, Result) -> Unit,
         val syncRuntime: (Result) -> Unit,
+        val clearPersistedState: (Result) -> Unit,
     )
 
     fun onMethodCall(call: MethodCall, result: Result) {
@@ -68,6 +70,7 @@ internal class PluginMethodDispatcher(
             methodNames.pingServerOutsideTunnel ->
                 handlers.pingServerOutsideTunnel(call.arguments, result)
             methodNames.syncRuntime -> handlers.syncRuntime(result)
+            methodNames.clearPersistedState -> handlers.clearPersistedState(result)
             else -> result.notImplemented()
         }
     }
