@@ -150,18 +150,35 @@ class ConnectionSettingsController extends ChangeNotifier {
     SingboxTunImplementation.gvisor,
   ];
 
+  /// Restores the saved preferences. Read as one batch rather than a chain of
+  /// awaits: eleven round trips through the platform channel, each decrypting
+  /// with a Keystore key, is a quarter of a second of the launch spent waiting
+  /// on nothing in particular.
   Future<void> load() async {
-    final dns = await _storage.read(key: _dnsKey);
-    final customDns = await _storage.read(key: _customDnsKey);
-    final stack = await _storage.read(key: _stackKey);
-    final splitEnabled = await _storage.read(key: _splitEnabledKey);
-    final splitMode = await _storage.read(key: _splitModeKey);
-    final splitPackages = await _storage.read(key: _splitPackagesKey);
-    final splitHosts = await _storage.read(key: _splitHostsKey);
-    final tunnelPackages = await _storage.read(key: _splitTunnelPackagesKey);
-    final tunnelHosts = await _storage.read(key: _splitTunnelHostsKey);
-    final splitSeeded = await _storage.read(key: _splitSeededKey);
-    final splitSeedVersion = await _storage.read(key: _splitSeedVersionKey);
+    final values = await Future.wait([
+      _storage.read(key: _dnsKey),
+      _storage.read(key: _customDnsKey),
+      _storage.read(key: _stackKey),
+      _storage.read(key: _splitEnabledKey),
+      _storage.read(key: _splitModeKey),
+      _storage.read(key: _splitPackagesKey),
+      _storage.read(key: _splitHostsKey),
+      _storage.read(key: _splitTunnelPackagesKey),
+      _storage.read(key: _splitTunnelHostsKey),
+      _storage.read(key: _splitSeededKey),
+      _storage.read(key: _splitSeedVersionKey),
+    ]);
+    final dns = values[0];
+    final customDns = values[1];
+    final stack = values[2];
+    final splitEnabled = values[3];
+    final splitMode = values[4];
+    final splitPackages = values[5];
+    final splitHosts = values[6];
+    final tunnelPackages = values[7];
+    final tunnelHosts = values[8];
+    final splitSeeded = values[9];
+    final splitSeedVersion = values[10];
     var changed = false;
     if (dns != null) {
       final match = DnsProviderPreset.values.where((p) => p.name == dns);
@@ -376,7 +393,11 @@ class ConnectionSettingsController extends ChangeNotifier {
   }
 
   /// Built fresh at each connect so preference edits take effect on reconnect.
-  SingboxFeatureSettings buildFeatureSettings() {
+  ///
+  /// [clashApiSecret] gates the tunnel's local control API — see
+  /// [MiscOptions.clashApiSecret]. The caller owns it because it also has to
+  /// present it when probing.
+  SingboxFeatureSettings buildFeatureSettings({String? clashApiSecret}) {
     final whitelist = _splitTunnelMode == SplitTunnelMode.include;
 
     // Per-app split tunneling (Android): on only when at least one app is
@@ -436,6 +457,7 @@ class ConnectionSettingsController extends ChangeNotifier {
         excludePackages:
             splitApps && !whitelist ? packages.toList() : const <String>[],
       ),
+      misc: MiscOptions(clashApiSecret: clashApiSecret),
     );
   }
 

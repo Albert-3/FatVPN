@@ -27,7 +27,14 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// the same either way.
 class SecureStore {
   SecureStore({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ?? const FlutterSecureStorage(aOptions: _android);
+
+  /// EncryptedSharedPreferences rather than the plugin's legacy Android mode,
+  /// which encrypts each value with an RSA key from the Keystore and drops it
+  /// into ordinary preferences — a path with a long history of losing its key
+  /// across OS upgrades and restores. The plugin migrates existing values on
+  /// first use; anything it can't is handled by the wipe below.
+  static const _android = AndroidOptions(encryptedSharedPreferences: true);
 
   final FlutterSecureStorage _storage;
 

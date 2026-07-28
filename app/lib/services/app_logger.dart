@@ -94,6 +94,37 @@ class AppLogger {
     _buffer.addLast(line);
     _sink?.writeln(line);
     if (kDebugMode) debugPrint(line);
+    // An error is often the last thing the process gets to say; anything still
+    // sitting in the sink's buffer when it dies is exactly the part worth
+    // having. Everything else rides the periodic flush.
+    if (level == LogLevel.error) {
+      unawaited(flush());
+    } else {
+      _scheduleFlush();
+    }
+  }
+
+  /// Writes the buffered lines through to the file.
+  ///
+  /// [IOSink] batches, and this logger's whole claim is that a crash or a
+  /// force-quit doesn't lose the trail — which was untrue as long as the only
+  /// flush happened in [clear]. Called on errors, on a short timer, and when
+  /// the app is backgrounded (where the OS may kill it without warning).
+  Future<void> flush() async {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    try {
+      await _sink?.flush();
+    } catch (_) {
+      // Best-effort: the lines are still in the in-memory buffer.
+    }
+  }
+
+  Timer? _flushTimer;
+  static const _flushInterval = Duration(seconds: 2);
+
+  void _scheduleFlush() {
+    _flushTimer ??= Timer(_flushInterval, () => unawaited(flush()));
   }
 
   /// Number of lines currently held in memory.
