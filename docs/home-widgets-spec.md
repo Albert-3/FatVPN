@@ -193,6 +193,30 @@ ios/PacketTunnel/PacketTunnelProvider.swift  patchTunnelState на старте/
 `codemagic.yaml` теперь проверяет и `PlugIns/FatVpnWidget.appex` — сборка
 покраснеет здесь, а не на телефоне тестировщика.
 
+**Это и случилось: сборка 142 (2026-07-28) упала — `Signing for "FatVpnWidget"
+requires a development team`.** App ID виджета в портале нет, поэтому профиля для
+него не нашлось: `ios_signing.bundle_identifier: com.fatvpn.fatvpnApp` ищет
+**подстрокой** (потому и подхватывает `…​.PacketTunnel`), но заводит новый App ID
+только когда не нашлось *ничего* — а основной-то нашёлся. `xcode-project
+use-profiles` молча пропускает таргет без профиля, тот остаётся на автоматической
+подписи без команды, и Xcode падает уже в архиве. Порядок действий (портал, руками
+— capability с конкретной группой через App Store Connect API не выставляется):
+
+1. developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → **+**
+   → App IDs → App.
+2. Explicit Bundle ID = `com.fatvpn.fatvpnApp.FatVpnWidget`, описание любое.
+3. Включить **App Groups** → Configure → выбрать `group.com.fatvpn.fatvpnApp`
+   (ту же, что у Runner и PacketTunnel), Save.
+4. Перезапустить `ios-release`: профиль под новый App ID Codemagic заводит сам
+   (`fetch-signing-files … --create` при `ios_signing` с интеграцией). Если шаг
+   проверки всё же скажет, что профиля нет, — создать в портале App Store
+   distribution-профиль на этот App ID руками и перезапустить ещё раз.
+   NE-capability виджету не нужна (см. §1).
+
+Шаг `Verify a profile was fetched for every bundle id` в `codemagic.yaml`
+проверяет все три bundle id **до** архива и печатает этот же список действий —
+чтобы следующий такой промах стоил секунд, а не полной сборки.
+
 **Обновление таймлайна.** Виджет не опрашивает ничего: `reloadAllTimelines()`
 зовут те, кто знает об изменении (приложение и расширение туннеля), а таймлайн
 содержит одну запись с `.after(+15 мин)` — только как страховка на случай

@@ -142,6 +142,57 @@ workflows:
         script: |
           cd app
           xcode-project use-profiles
+      - name: Verify a profile was fetched for every bundle id
+        script: |
+          set -e
+          # `use-profiles` configures a target only when it finds a profile whose
+          # App ID matches that target's bundle id, and says nothing at all when
+          # it does not. The target is then left on automatic signing with no
+          # team, and the build dies in the archive step with
+          #   Signing for "FatVpnWidget" requires a development team
+          # (build 142) — a message that names neither the missing App ID nor
+          # the portal page that fixes it.
+          #
+          # ios_signing.bundle_identifier is matched as a *substring*, so the
+          # extensions are covered by the same fetch — but only those App IDs
+          # that already exist in the portal are. The `--create` behind it does
+          # nothing here either: the search for com.fatvpn.fatvpnApp does match
+          # something, so nothing is considered missing and no App ID is made.
+          #
+          # A wildcard profile (TEAMID.*) deliberately does not count: every
+          # bundle id below carries App Groups, which a wildcard App ID cannot
+          # have, so accepting one would only move the failure later.
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          MISSING=""
+          for BUNDLE_ID in com.fatvpn.fatvpnApp \
+                           com.fatvpn.fatvpnApp.PacketTunnel \
+                           com.fatvpn.fatvpnApp.FatVpnWidget; do
+            FOUND=""
+            for PROFILE in "$PROFILES_DIR"/*.mobileprovision; do
+              [ -e "$PROFILE" ] || continue
+              # A .mobileprovision is a CMS blob; the decoded plist carries the
+              # App ID as <string>TEAMID.the.bundle.id</string>
+              # (Entitlements.application-identifier).
+              if security cms -D -i "$PROFILE" 2>/dev/null \
+                   | grep -qF ".$BUNDLE_ID</string>"; then
+                FOUND=1
+                break
+              fi
+            done
+            [ -n "$FOUND" ] || MISSING="$MISSING $BUNDLE_ID"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "No provisioning profile was fetched for:$MISSING" >&2
+            echo "" >&2
+            echo "Almost certainly the App ID itself does not exist yet. At" >&2
+            echo "developer.apple.com > Certificates, Identifiers & Profiles >" >&2
+            echo "Identifiers, create it as an explicit App ID and enable the" >&2
+            echo "App Groups capability with group.com.fatvpn.fatvpnApp (the" >&2
+            echo "widget and the tunnel read the shared snapshot through it)." >&2
+            echo "Then re-run this workflow: the profile is created for you." >&2
+            exit 1
+          fi
+          echo "A provisioning profile is present for every bundle id."
       - name: Build ipa
         script: |
           # App Store Connect consumes a build number on upload and refuses to
