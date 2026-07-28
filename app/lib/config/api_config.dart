@@ -1,6 +1,9 @@
 /// Base URL of the FatVPN BFF.
 /// Test deployment: public BFF on the bot server over HTTP. Switch to the
-/// HTTPS domain once one is set up (see the project deploy plan).
+/// HTTPS domain once one is set up (see the project deploy plan). Until then
+/// this host is the one cleartext exception in
+/// `android/app/src/main/res/xml/network_security_config.xml`; both entries go
+/// away together.
 const bffBaseUrl = 'http://87.121.221.229:5030';
 
 /// URI scheme the Telegram bot uses to deep-link a short token into the app,

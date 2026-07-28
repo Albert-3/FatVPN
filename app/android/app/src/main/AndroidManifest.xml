@@ -4,11 +4,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Re-schedule pending reminders after a device reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <!-- Exact short-notice (30/15-min-before-expiry) reminders on Android 12+.
-         Requested at runtime; on API < 31 exact alarms need no permission.
-         Using SCHEDULE_EXACT_ALARM (not USE_EXACT_ALARM) to stay within Google
-         Play policy for a non-alarm app. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- No SCHEDULE_EXACT_ALARM: expiry reminders are scheduled inexactly (see
+         NotificationService). Asking for it sent the user to a full-screen
+         system settings page on first launch, and Google Play reviews it as an
+         alarm-clock permission on an app that is not one. -->
     <!-- Backup is off: session tokens and connection settings live in secure
          storage, encrypted with a Keystore key that cannot leave the device.
          Backing the ciphertext up without its key is worse than not backing it
@@ -20,7 +19,7 @@
         android:label="fatvpn_app"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
