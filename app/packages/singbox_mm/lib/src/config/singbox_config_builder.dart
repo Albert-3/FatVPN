@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'internal/singbox_dns_builder.dart';
 import 'internal/singbox_inbound_builder.dart';
 import 'internal/singbox_route_rules_builder.dart';
@@ -128,8 +130,18 @@ class SingboxConfigBuilder {
 
     final int? clashApiPort = settings.misc.clashApiPort;
     if (clashApiPort != null && clashApiPort > 0) {
+      // Loopback is not private on Android — every installed app can reach this
+      // port — so the control API is never published without a bearer secret.
+      // A caller that needs to query it (the app's own traffic probe) hands one
+      // in; otherwise one is generated here, because an omitted secret must
+      // fail closed rather than reopen the hole. Both platforms' native health
+      // probes read the value back out of this config.
+      final String? provided = settings.misc.clashApiSecret;
+      final String clashApiSecret =
+          provided != null && provided.isNotEmpty ? provided : _randomSecret();
       experimental['clash_api'] = <String, Object?>{
         'external_controller': '127.0.0.1:$clashApiPort',
+        'secret': clashApiSecret,
       };
     }
 
@@ -789,6 +801,15 @@ class SingboxConfigBuilder {
     }
 
     outbound['transport'] = transport;
+  }
+
+  /// 128 bits from the platform CSPRNG, hex-encoded.
+  String _randomSecret() {
+    final Random random = Random.secure();
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   String _normalizeXhttpPath(Object? rawPath) {

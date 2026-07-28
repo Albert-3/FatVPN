@@ -702,6 +702,7 @@ class MiscOptions {
     this.connectionTestUrl = 'http://cp.cloudflare.com',
     this.urlTestInterval = const Duration(minutes: 10),
     this.clashApiPort = 16756,
+    this.clashApiSecret,
     this.useXrayCoreWhenPossible = false,
   }) : assert(
          clashApiPort == null || (clashApiPort > 0 && clashApiPort <= 65535),
@@ -716,6 +717,12 @@ class MiscOptions {
   /// Documented field.
   final int? clashApiPort;
 
+  /// Bearer token the control API requires. Android's loopback is shared by
+  /// every installed app, so without one any app holding `INTERNET` can read
+  /// the user's live connection list off `127.0.0.1:$clashApiPort` and switch
+  /// routing off. Callers should hand in a fresh random value per tunnel start.
+  final String? clashApiSecret;
+
   /// Documented field.
   final bool useXrayCoreWhenPossible;
 
@@ -725,6 +732,7 @@ class MiscOptions {
       'connectionTestUrl': connectionTestUrl,
       'urlTestIntervalSeconds': urlTestInterval.inSeconds,
       'clashApiPort': clashApiPort,
+      'clashApiSecret': clashApiSecret,
       'useXrayCoreWhenPossible': useXrayCoreWhenPossible,
     };
   }
@@ -744,6 +752,7 @@ class MiscOptions {
         seconds: _readInt(raw['urlTestIntervalSeconds']) ?? 600,
       ),
       clashApiPort: _readInt(raw['clashApiPort']) ?? 16756,
+      clashApiSecret: _readNullableString(raw['clashApiSecret']),
       useXrayCoreWhenPossible: _readBool(raw['useXrayCoreWhenPossible'], false),
     );
   }

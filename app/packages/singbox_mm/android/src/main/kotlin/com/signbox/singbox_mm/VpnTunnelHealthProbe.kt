@@ -58,14 +58,18 @@ internal class VpnTunnelHealthProbe(
         )
     }
 
-    /// `host:port` of the core's control API, cached per config file so a probe
+    /// Where the core's control API listens and the bearer token it demands.
+    /// The secret is null only for a config written before it became mandatory.
+    private data class ControlApi(val address: String, val secret: String?)
+
+    /// The control API of the current config, cached per config file so a probe
     /// every minute doesn't re-read and re-parse the config from disk.
     ///
     /// Volatile because the watchdog gives each tunnel a fresh probe thread:
     /// probes never run concurrently, but they do run on different threads over
     /// the life of the service.
     @Volatile
-    private var cachedControllerForConfig: Pair<String, String>? = null
+    private var cachedControllerForConfig: Pair<String, ControlApi>? = null
 
     fun run(): VpnTunnelHealthVerdict {
         val controller = resolveController() ?: return VpnTunnelHealthVerdict.UNKNOWN
@@ -109,7 +113,7 @@ internal class VpnTunnelHealthProbe(
     ///
     /// A tunnel nobody is using produces no evidence either way, and then the
     /// delay test is still the right question to ask.
-    private fun carriedTrafficSinceLastCheck(controller: String): Boolean {
+    private fun carriedTrafficSinceLastCheck(controller: ControlApi): Boolean {
         val received = receivedBytes(controller) ?: return false
         val previous = lastReceivedBytes
         lastReceivedBytes = received
@@ -120,8 +124,8 @@ internal class VpnTunnelHealthProbe(
 
     /// Total bytes received through the core's outbounds, or null when the
     /// control API can't be read.
-    private fun receivedBytes(controller: String): Long? {
-        val response = httpGet("http://$controller/connections", CONTROL_API_TIMEOUT_MS)
+    private fun receivedBytes(controller: ControlApi): Long? {
+        val response = httpGet("http://${controller.address}/connections", CONTROL_API_TIMEOUT_MS, controller.secret)
         if (response == null || response.code != HttpURLConnection.HTTP_OK) {
             return null
         }
@@ -133,8 +137,8 @@ internal class VpnTunnelHealthProbe(
     /// Tag of the proxy outbound currently in use, read back from the core
     /// rather than assumed: the tag is the config link's own fragment, which
     /// need not match anything the app knows the node by.
-    private fun activeOutboundTag(controller: String): String? {
-        val response = httpGet("http://$controller/proxies", CONTROL_API_TIMEOUT_MS)
+    private fun activeOutboundTag(controller: ControlApi): String? {
+        val response = httpGet("http://${controller.address}/proxies", CONTROL_API_TIMEOUT_MS, controller.secret)
         if (response == null || response.code != HttpURLConnection.HTTP_OK) {
             return null
         }
@@ -147,35 +151,38 @@ internal class VpnTunnelHealthProbe(
         }.getOrNull()
     }
 
-    private fun delayTestSucceeds(controller: String, tag: String, probeUrl: String): Boolean {
+    private fun delayTestSucceeds(controller: ControlApi, tag: String, probeUrl: String): Boolean {
         val encodedTag = URLEncoder.encode(tag, "UTF-8")
         val encodedUrl = URLEncoder.encode(probeUrl, "UTF-8")
         val response = httpGet(
-            url = "http://$controller/proxies/$encodedTag/delay" +
+            url = "http://${controller.address}/proxies/$encodedTag/delay" +
                 "?url=$encodedUrl&timeout=$PROBE_TIMEOUT_MS",
             // A dead outbound makes this request hang rather than fail: sing-box
             // accepts the connection and then never answers, ignoring the
             // `timeout` parameter. Our own read timeout is therefore the verdict,
             // so it has to outlast the one we asked for.
             timeoutMs = PROBE_TIMEOUT_MS + 4_000,
+            secret = controller.secret,
         )
         return response != null && response.code == HttpURLConnection.HTTP_OK
     }
 
-    /// `host:port` the core's control API listens on, or null when the config
-    /// doesn't enable one (nothing can be probed then).
-    private fun resolveController(): String? {
+    /// Where the core's control API listens and what it wants to see, or null
+    /// when the config doesn't enable one (nothing can be probed then).
+    private fun resolveController(): ControlApi? {
         val configPath = readConfigPath() ?: return null
         cachedControllerForConfig?.let { (path, controller) ->
             if (path == configPath) return controller
         }
         val controller = runCatching {
             val config = JSONObject(File(configPath).readText())
-            config.optJSONObject("experimental")
-                ?.optJSONObject("clash_api")
-                ?.optString("external_controller")
-                ?.takeIf { it.isNotEmpty() }
+            val clashApi = config.optJSONObject("experimental")?.optJSONObject("clash_api")
+                ?: return@runCatching null
+            val address = clashApi.optString("external_controller")
+                .takeIf { it.isNotEmpty() }
                 ?.let(::normalizeController)
+                ?: return@runCatching null
+            ControlApi(address, clashApi.optString("secret").takeIf { it.isNotEmpty() })
         }.onFailure {
             Log.w(logTag, "Health probe could not read the control API address", it)
         }.getOrNull() ?: return null
@@ -200,7 +207,7 @@ internal class VpnTunnelHealthProbe(
 
     /// Plain GET against the loopback control API. Returns null when the request
     /// couldn't be carried out at all.
-    private fun httpGet(url: String, timeoutMs: Int): HttpResponse? {
+    private fun httpGet(url: String, timeoutMs: Int, secret: String?): HttpResponse? {
         var opened: HttpURLConnection? = null
         return runCatching {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -208,6 +215,9 @@ internal class VpnTunnelHealthProbe(
                 connectTimeout = CONTROL_API_TIMEOUT_MS
                 readTimeout = timeoutMs
                 useCaches = false
+                if (secret != null) {
+                    setRequestProperty("Authorization", "Bearer $secret")
+                }
             }
             opened = connection
             val code = connection.responseCode

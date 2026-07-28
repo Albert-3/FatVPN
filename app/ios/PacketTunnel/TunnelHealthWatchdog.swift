@@ -252,8 +252,9 @@ final class TunnelHealthWatchdog {
     /// Tag of the proxy outbound currently in use, read back from the core
     /// rather than assumed: the tag is the config link's own fragment, which
     /// need not match anything the app knows the node by.
-    private func activeOutboundTag(_ controller: String, _ completion: @escaping (String?) -> Void) {
-        get("http://\(controller)/proxies", timeout: Self.controlAPITimeout) { status, body in
+    private func activeOutboundTag(_ controller: ControlAPI, _ completion: @escaping (String?) -> Void) {
+        get("http://\(controller.address)/proxies", secret: controller.secret, timeout: Self.controlAPITimeout) {
+            status, body in
             guard status == 200, let body,
                 let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
                 let proxies = json["proxies"] as? [String: Any]
@@ -277,7 +278,7 @@ final class TunnelHealthWatchdog {
     /// Walks [remaining] probe URLs, answering true as soon as one gets through
     /// the outbound and false only once every one of them has failed.
     private func delayTest(
-        _ controller: String,
+        _ controller: ControlAPI,
         _ tag: String,
         _ remaining: [String],
         _ completion: @escaping (Bool) -> Void
@@ -290,13 +291,13 @@ final class TunnelHealthWatchdog {
         let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: allowed) ?? tag
         let encodedURL = probeURL.addingPercentEncoding(withAllowedCharacters: allowed) ?? probeURL
         let url =
-            "http://\(controller)/proxies/\(encodedTag)/delay"
+            "http://\(controller.address)/proxies/\(encodedTag)/delay"
             + "?url=\(encodedURL)&timeout=\(Int(Self.probeTimeout * 1000))"
         // A dead outbound makes this request hang rather than fail: sing-box
         // accepts the connection and then never answers, ignoring the `timeout`
         // parameter. The session's own timeout is therefore the verdict, so it
         // has to outlast the one we asked for.
-        get(url, timeout: Self.probeTimeout + 4) { [weak self] status, _ in
+        get(url, secret: controller.secret, timeout: Self.probeTimeout + 4) { [weak self] status, _ in
             guard let self else { return }
             if status == 200 {
                 completion(true)
@@ -309,7 +310,8 @@ final class TunnelHealthWatchdog {
     /// Plain GET against the loopback control API. `nil` status means the
     /// request couldn't be carried out at all.
     private func get(
-        _ url: String, timeout: TimeInterval, _ completion: @escaping (Int?, Data?) -> Void
+        _ url: String, secret: String?, timeout: TimeInterval,
+        _ completion: @escaping (Int?, Data?) -> Void
     ) {
         guard let requestURL = URL(string: url) else {
             completion(nil, nil)
@@ -317,6 +319,9 @@ final class TunnelHealthWatchdog {
         }
         var request = URLRequest(url: requestURL)
         request.timeoutInterval = timeout
+        if let secret {
+            request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        }
         session.dataTask(with: request) { data, response, _ in
             completion((response as? HTTPURLResponse)?.statusCode, data)
         }.resume()
@@ -324,9 +329,16 @@ final class TunnelHealthWatchdog {
 
     // MARK: - Control API address
 
-    /// `host:port` the core's control API listens on, or nil when the config
-    /// doesn't enable one (nothing can be probed then).
-    private func resolveController() -> String? {
+    /// Where the core's control API listens and the bearer token it demands.
+    /// The secret is nil only for a config written before it became mandatory.
+    private struct ControlAPI {
+        let address: String
+        let secret: String?
+    }
+
+    /// The control API of the running config, or nil when the config doesn't
+    /// enable one (nothing can be probed then).
+    private func resolveController() -> ControlAPI? {
         guard let content = readConfigContent(), let data = content.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let experimental = json["experimental"] as? [String: Any],
@@ -335,7 +347,8 @@ final class TunnelHealthWatchdog {
         else {
             return nil
         }
-        return Self.normalizeController(external)
+        let secret = (clashAPI["secret"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return ControlAPI(address: Self.normalizeController(external), secret: secret)
     }
 
     /// Turns a listen address into one we can dial. A core listening on a
