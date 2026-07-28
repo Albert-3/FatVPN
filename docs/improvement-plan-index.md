@@ -8,11 +8,85 @@
 > это плохо» и предлагаемое исправление. Номера стабильны — на них можно ссылаться в
 > задачах и коммитах. Порядок работ предложен в конце каждого документа.
 
-| Документ | Область | Находок |
-|---|---|---|
-| [improvement-plan-bff.md](improvement-plan-bff.md) | Backend .NET 10 (`backend/`) | 6 critical, 9 high, 10 medium + low |
-| [improvement-plan-app-android.md](improvement-plan-app-android.md) | Flutter + Android (`app/lib`, `app/android`, `app/packages/singbox_mm`) | 5 critical, 12 high, 20 medium, 8 low |
-| [improvement-plan-ios.md](improvement-plan-ios.md) | iOS (`app/ios`, PacketTunnel NE) | 3 critical, 7 high, 12 medium, 8 low |
+## Статус на 2026-07-28
+
+Ветка `fix/bff-audit-remediation`.
+
+**BFF — закрыт.** `820b1fe` закрывает все 6 critical и все 9 high, плюс почти весь
+medium-хвост: атомарные claim'ы вместо read-modify-write в `/pair/status`,
+`/auth/refresh` и привязке ключа к телефону; grace-окно 30 с на refresh; нормализация
+`DateTimeOffset` от бота; per-IP rate limiting с `ForwardedHeaders`; валидация
+`attestationToken`; fail-fast на секретах; кеш `/servers`, индексы, фоновая очистка
+таблиц; тесты переехали на SQLite + Testcontainers (102 теста). Открытыми осознанно
+оставлены **S2** (HTTPS — ждёт домена), **S9** (проверка владения в `/internal/*` —
+требует правки бота) и остаток **S10** (лимит размера ответа панели).
+
+**Android / Flutter — закрыт статически, но всё ещё в рабочем дереве.** Закоммичено:
+release keystore (`cfe1f2b`), `allowBackup="false"` + переживание нечитаемого secure
+storage (`901ea73`). **Не закоммичено** (проверено по диффу): секрет для clash API на
+обеих платформах, `await` при сохранении ротированного refresh, disconnect при sign-out,
+идемпотентный `_ensureInitialized`, нативный внетуннельный пинг на Android через
+`VpnService.protect` (его пришлось написать с нуля), исключение x86/x86_64 из релиза,
+`network_security_config` вместо `usesCleartextTraffic`, подтверждение ключа из
+deep-link, единый `ApiClient` с кешем и рефрешем по сроку токена, устойчивый парсер
+`/config` и приоритет схем, 402 больше не проглатывается, бэк-офф и стоп-условия для
+`/pair/status`, `ApiException` без прозы, параллельные пинги с бюджетом 6, точечная
+перерисовка таймера сессии, событийное ожидание disconnect, `stderr.log` во внутреннем
+хранилище, flush логов, отказ от `SCHEDULE_EXACT_ALARM`, санитайзер диагностики,
+`encryptedSharedPreferences`, тик уведомления 3 с со skip-if-unchanged, адаптивный
+интервал watchdog'а, пакетные чтения storage, WEBP-иконки, cleanup `MethodChannel`.
+
+**Измерено:** `flutter analyze` чисто в обоих пакетах; **275 тестов** зелёные (107 passed
++ 1 намеренный skip в `app/`, 168 в плагине), три прогона подряд без флаков.
+`flutter build appbundle --release` подписан настоящим ключом, **скачивание 35.0 МБ на
+arm64 / 34.6 МБ на arm32** при лимите Play 200 МБ на base-модуль.
+
+**Осталось открытым:** certificate pinning (§1.2, ждёт HTTPS), Play Integrity (§1.8, не
+брали), ленивая догрузка иконок сплит-туннеля (§3.11, отложена как переписывание экрана),
+проброс вердикта нативного watchdog'а в Dart (§3.13, новая нативная поверхность на обеих
+платформах — без устройства не проверить) и пересборка libbox без лишних build-тегов
+(нужен Go-тулчейн). Пофайловый разбор, две находки сверх аудита (**N1**, **N2**) и три
+места, где **ошибался сам аудит**, — в `improvement-plan-app-android.md`.
+
+**Где ошибся сам аудит** (исправлено в тексте находок, а не просто помечено):
+§1.4 успела устареть между аудитом и работами — `901ea73` закрыл её раньше;
+§2.7 неверно винила URL-safe алфавит — декодер Dart его принимает, ломали только
+padding и переносы строк; §2.5 недооценила объём — `pingServerOutsideTunnel` на Android
+**не существовал**, и предложенное «убрать ветвление» уронило бы каждый пинг в
+`MissingPluginException`. Плюс две находки, которых в аудите не было вовсе (**N1** —
+параллельные пинги оказались медленнее последовательных из-за однопоточного нативного
+executor'а; **N2** — кеш из §3.4 тихо сломал «живой» подсчёт нагрузки нод).
+
+**iOS — не начат.** Ни одна из 3 critical (blackhole при `serviceStop`, утечка в
+`clearDNSCache`, отсутствие on-demand) не тронута. Единственное исключение —
+`TunnelHealthWatchdog.swift` научился предъявлять секрет clash API (это половина
+общей находки 2.2 / Android §1.6).
+
+**Что блокирует релиз:**
+
+1. **HTTPS-домен** — единственный блокер, общий для всех трёх сторон. На BFF всё готово
+   за флагом `Security:RequireHttps`; в приложении — за одной строкой `bffBaseUrl` и
+   двумя записями в `network_security_config.xml`; на iOS дополнительно нужен
+   `NSAppTransportSecurity` (без HTTPS iOS-сборка вообще не достучится до BFF).
+2. **iOS blackhole-баги** (1.1, 1.2) — «подключено, интернета нет» и окно утечки при
+   смене сети.
+3. **Приёмка на устройстве не проведена** — раздел «2a» в
+   `docs/release-test-checklist.md` отмечен только в статической части (T1–T3). Всё
+   переписанное живёт за platform channel'ами, куда хост-тесты не достают: подключение
+   как таковое, смена сервера и авто-переключение, sign-out при живом туннеле, холодный
+   старт после kill во время рефреша, диалог `fatvpn://`, санитайзер support-bundle,
+   **обновление поверх старой установки** (сменился бэкенд secure storage) и то, что
+   release-APK больше не ставится на x86_64-эмулятор.
+4. ⛔ **`TRIAL_DEVICE_KEY_SALT`** должен быть задан в окружении контейнера **до** деплоя
+   `820b1fe`, иначе BFF уйдёт в crash-loop.
+
+> Размер AAB из этого списка **ушёл**: измерен, в лимиты Play укладывается с запасом.
+
+| Документ | Область | Находок | Статус |
+|---|---|---|---|
+| [improvement-plan-bff.md](improvement-plan-bff.md) | Backend .NET 10 (`backend/`) | 6 critical, 9 high, 10 medium + low | ✅ закрыт `820b1fe`, кроме HTTPS (S2), владения в `/internal/*` (S9) и лимита ответа панели (S10) |
+| [improvement-plan-app-android.md](improvement-plan-app-android.md) | Flutter + Android (`app/lib`, `app/android`, `app/packages/singbox_mm`) | 5 critical, 12 high, 20 medium, 8 low | ✅ закрыт статически (275 тестов, analyze чисто), но **в рабочем дереве** и **без единой проверки на устройстве**; статус по каждой находке — в шапке документа |
+| [improvement-plan-ios.md](improvement-plan-ios.md) | iOS (`app/ios`, PacketTunnel NE) | 3 critical, 7 high, 12 medium, 8 low | ⬜ не начат (кроме половины 2.2 — секрет clash API) |
 
 > ⚠️ Ранее существовавший `docs/security-audit.md` (2026-07-25) **добавлен в `.gitignore`**
 > и не попадает в репозиторий. Все его пункты учтены и перенесены в
@@ -24,18 +98,18 @@
 
 Отсортировано по «ущерб × вероятность», а не по формальной критичности.
 
-| # | Что | Где | Почему первым |
-|---|---|---|---|
-| 1 | **HTTP вместо HTTPS** | `api_config.dart:4`, `Program.cs:61-65` | Refresh-токен на 90 дней и вся подписка (UUID, пароли) идут открытым текстом. Перехват = полный угон аккаунта. Для VPN-продукта разрушает саму модель угроз |
-| 2 | **Release подписан debug-ключом** | `build.gradle.kts:31-34` | Публично известный ключ: подмена приложения через sideload + доступ к signature-permission. В Google Play не загрузить |
-| 3 | **APK ~236 МБ** | `app/android/app/build.gradle.kts` | Лимит Play — 100 МБ APK / 200 МБ AAB. Сборка физически не публикуется. x86/x86_64 = 54% веса и нужны только эмулятору |
-| 4 | **Clash API без секрета на loopback** | `singbox_config_builder.dart:129-133` | Любое приложение на устройстве читает историю доменов пользователя в реальном времени и может выключить проксирование. Общая дыра Android + iOS |
-| 5 | **Потеря ротированного refresh-токена** | `auth_controller.dart:204` + `AuthController.cs:62-113` | `unawaited(save)` + reuse-detection на сервере = пользователь теряет платную подписку после неудачно совпавшего kill процесса. Чинится с обеих сторон |
-| 6 | **`serviceStop` не отменяет туннель (iOS)** | `ExtensionPlatformInterface.swift:361-363` | Интернет пропадает целиком, приложение показывает «connected». Выход только ручным тоглом |
-| 7 | **`clearDNSCache` снимает маршруты (iOS)** | `ExtensionPlatformInterface.swift:180-188` | Окно утечки трафика мимо VPN ровно при смене Wi-Fi↔LTE — самый частый сценарий |
-| 8 | **Гонки на BFF: `/pair/status`, `/auth/refresh`** | `PairController.cs:78-93`, `AuthController.cs:62-113` | Одноразовый код выдаёт две сессии; reuse-detection обходится гонкой. Проявляется как «случайные разлогины» |
-| 9 | **Нет rate limiting** | `Program.cs` | `/trial` создаёт реального пользователя в панели на каждый вызов, без лимита и с обходимым anti-abuse. Порт публичный |
-| 10 | **Пустой `attestationToken` = чужой триал** | `TrialController.cs:25` | `{"attestationToken":""}` даёт валидную сессию к триалу первого клиента. Одна строка валидации |
+| # | Что | Где | Почему первым | Статус |
+|---|---|---|---|---|
+| 1 | **HTTP вместо HTTPS** | `api_config.dart:4`, `Program.cs:61-65` | Refresh-токен на 90 дней и вся подписка (UUID, пароли) идут открытым текстом. Перехват = полный угон аккаунта. Для VPN-продукта разрушает саму модель угроз | ⬜ **блокер релиза**: нет домена. На BFF всё готово за флагом `Security:RequireHttps` |
+| 2 | **Release подписан debug-ключом** | `build.gradle.kts:31-34` | Публично известный ключ: подмена приложения через sideload + доступ к signature-permission. В Google Play не загрузить | ✅ `cfe1f2b` |
+| 3 | **APK ~236 МБ** | `app/android/app/build.gradle.kts` | Лимит Play — 100 МБ APK / 200 МБ AAB. Сборка физически не публикуется. x86/x86_64 = 54% веса и нужны только эмулятору | ✅ **измерено**: скачивание 35.0 МБ arm64 / 34.6 МБ arm32. ⚠️ Способ из плана (`ndk { abiFilters }`) не работает — сделано через Variant API |
+| 4 | **Clash API без секрета на loopback** | `singbox_config_builder.dart:129-133` | Любое приложение на устройстве читает историю доменов пользователя в реальном времени и может выключить проксирование. Общая дыра Android + iOS | ✅ рабочее дерево — случайный секрет на каждый старт туннеля, все три потребителя его предъявляют (закрывает и iOS 2.2) |
+| 5 | **Потеря ротированного refresh-токена** | `auth_controller.dart:204` + `AuthController.cs:62-113` | `unawaited(save)` + reuse-detection на сервере = пользователь теряет платную подписку после неудачно совпавшего kill процесса. Чинится с обеих сторон | ✅ обе стороны: BFF `820b1fe` (атомарная ротация + grace-окно 30 с), приложение — `await` перед сменой состояния (рабочее дерево). Проверяется пунктом T6 чек-листа |
+| 6 | **`serviceStop` не отменяет туннель (iOS)** | `ExtensionPlatformInterface.swift:361-363` | Интернет пропадает целиком, приложение показывает «connected». Выход только ручным тоглом | ⬜ |
+| 7 | **`clearDNSCache` снимает маршруты (iOS)** | `ExtensionPlatformInterface.swift:180-188` | Окно утечки трафика мимо VPN ровно при смене Wi-Fi↔LTE — самый частый сценарий | ⬜ |
+| 8 | **Гонки на BFF: `/pair/status`, `/auth/refresh`** | `PairController.cs:78-93`, `AuthController.cs:62-113` | Одноразовый код выдаёт две сессии; reuse-detection обходится гонкой. Проявляется как «случайные разлогины» | ✅ `820b1fe` |
+| 9 | **Нет rate limiting** | `Program.cs` | `/trial` создаёт реального пользователя в панели на каждый вызов, без лимита и с обходимым anti-abuse. Порт публичный | ✅ `820b1fe` |
+| 10 | **Пустой `attestationToken` = чужой триал** | `TrialController.cs:25` | `{"attestationToken":""}` даёт валидную сессию к триалу первого клиента. Одна строка валидации | ✅ `820b1fe` |
 
 ---
 
@@ -50,12 +124,27 @@
 скрытый блокер релиза). Плюс BFF S8: без `ForwardedHeaders` за Caddy редирект даст цикл,
 а per-IP rate limiter схлопнет всех клиентов в один бакет.
 
+> 🟡 **Состояние:** BFF-половина готова (`820b1fe`): `ForwardedHeaders` включены,
+> `UseHttpsRedirection`/`UseHsts` живут за флагом `Security:RequireHttps` (по умолчанию
+> выключен, иначе уже установленные сборки упрутся в 307). Осталось единственное и
+> общее для всех трёх сторон — **домен с сертификатом**. Флаг, `AllowedHosts`,
+> `bffBaseUrl` в приложении и `NSAppTransportSecurity` на iOS переключаются одним
+> согласованным шагом.
+
 **Refresh-токены.** Приложение §2.1 (сохранять на диск до смены состояния в памяти) +
 BFF B2 (атомарный claim + **grace window ~10-30 с** для повторного предъявления только
 что отротированного токена). Без grace window гонки мобильного клиента будут и дальше
 приводить к отзыву семьи. Сюда же приложение §3.4: `AuthSession.expiresAt` — это срок
 **подписки**, а не токена, поэтому приложение рефрешит по десятку раз в день на ровном
 месте; BFF должен отдавать `accessTokenExpiresAt` отдельным полем.
+
+> ✅ **BFF-половина сделана (`820b1fe`):** ротация атомарна, grace-окно —
+> **30 с** (`Jwt:RefreshGraceWindow`, настраивается). В окно семья **не** отзывается,
+> но выдаётся **новый** токен той же семьи, а не повтор токена победителя гонки —
+> хранятся только хеши. Приложению достаточно сохранять последний полученный refresh.
+> `/auth/token` и `/auth/refresh` теперь отдают `accessTokenExpiresAt` и
+> `subscriptionExpiresAt` рядом со старым `expiresAt`; **`/pair/status` и `/trial` их
+> не отдают** — приложению нужен фолбэк (см. `docs/api-contract.md`).
 
 **Clash API.** Один фикс в общем Dart-файле `singbox_config_builder.dart` закрывает
 Android §1.6 и iOS 2.2, но требует парных правок в трёх потребителях:
@@ -73,21 +162,26 @@ Android §1.6 и iOS 2.2, но требует парных правок в тр�
 **Этап 1 — блокеры релиза.** Всё, без чего приложение нельзя опубликовать:
 HTTPS-домен для BFF (BFF S2, S4, S8), release keystore, AAB с `abiFilters`,
 `allowBackup="false"`, `await` при сохранении refresh-токена.
+— 🟡 S4/S8 закрыты `820b1fe`, keystore — `cfe1f2b`; **HTTPS-домен остаётся блокером**.
 
 **Этап 2 — безопасность.** Clash API secret, rate limiting на BFF, валидация
 `attestationToken`, certificate pinning, `stderr.log` из внешнего хранилища, хранение
 конфига iOS в Keychain, санитайзер диагностики перед показом и шарингом.
+— 🟡 rate limiting и валидация `attestationToken` закрыты `820b1fe`; pinning ждёт HTTPS.
 
 **Этап 3 — корректность.** Гонки на BFF (`ExecuteUpdateAsync` вместо read-modify-write),
 iOS blackhole-баги (1.1, 1.2, 1.4, 1.5), Android `_ensureInitialized` и disconnect при
 sign-out, нормализация `DateTimeOffset` от бота.
+— 🟡 BFF-половина (гонки + `DateTimeOffset`) закрыта `820b1fe`; iOS не начат.
 
 **Этап 4 — производительность.** Кеш `/servers` и индексы БД на BFF, параллельные пинги
 и единый `ApiClient` в приложении, TUN-стек и MTU на iOS, тик уведомления и перерисовки UI.
+— 🟡 BFF-половина (кеш, индексы, фоновая очистка, таймаут HttpClient) закрыта `820b1fe`.
 
 **Этап 5 — гигиена и долг.** Локализация сообщений, Testcontainers для тестов на
 параллелизм, закрепление тулчейна в Codemagic, quality gate перед TestFlight,
 адаптивные интервалы health-check.
+— 🟡 Testcontainers закрыты `820b1fe`; Codemagic и локализация — нет.
 
 ---
 

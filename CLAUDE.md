@@ -62,6 +62,8 @@ flutter run -d emulator-5554
 
 - Android SDK lives at `C:\Android\Sdk` (moved off the default `%LOCALAPPDATA%` path because it contained a space, which breaks NDK tooling). `flutter config --android-sdk` points at it.
 - Org/package id: `com.fatvpn.fatvpn_app`.
+- **Release signing** (`cfe1f2b`): the keystore and its passwords live in `app/android/key.properties`, which is gitignored along with `*.jks`. A checkout **without** that file still builds — it falls back to the debug key and logs that it did — so `flutter run --release` works on a fresh clone and on CI. Before publishing, confirm the signature is real (`./gradlew :app:signingReport`, or `apksigner verify --print-certs` must not show `CN=Android Debug`).
+- **Release ABIs:** x86/x86_64 are excluded from `release` via the Variant API (`androidComponents.onVariants(selector().withBuildType("release")) { variant.packaging.jniLibs.excludes }`), and the bundle splits by ABI and density (language split is off — Flutter ships its own localizations). ⚠️ Do **not** "simplify" this to `ndk { abiFilters }`: AGP takes the **union** of `abiFilters` across `defaultConfig` and the build type, and the Flutter Gradle plugin populates `defaultConfig` — so a filter there widens the set instead of narrowing it (verified: the AAB still shipped x86_64). Debug stays universal so it installs on the x86_64 emulator. Ship `flutter build appbundle`, not a universal APK — measured 2026-07-28: AAB 138.6 MB on disk (70.3 MB of that is debug symbols Play does not ship), per-device download 35.0 MB arm64 / 34.6 MB arm32, well inside the 200 MB base-module limit.
 - If a `flutter run` is killed mid-build on Windows, the next Gradle run can fail with a file-lock `IOException` on `app\build\...`. Fix: `cd app/android && ./gradlew.bat --stop`, then delete `app/build`, then retry.
 
 ## Architecture
@@ -86,7 +88,7 @@ Telegram Bot ──X-Bot-Secret──► /internal/tokens
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| GET | `/health` | none | Health check |
+| GET | `/health` | none | Health check — now backed by a `DbContext` check (`ok` / `degraded`) |
 | POST | `/internal/tokens` | `X-Bot-Secret` header | Bot registers short-token → Remnawave subscription ID |
 | POST | `/internal/pair/complete` | `X-Bot-Secret` | Bot completes pairing by code → binds Account |
 | POST | `/internal/account/subscription` | `X-Bot-Secret` | Bot upserts an account's current subscription (create/change/extend) |
@@ -95,25 +97,27 @@ Telegram Bot ──X-Bot-Secret──► /internal/tokens
 | POST | `/auth/logout` | none | Best-effort refresh-token revocation (always 204) |
 | POST | `/trial` | none | Grants a trial: creates a Remnawave user on the fly, returns access+refresh |
 | POST | `/pair/start` | none | App starts pairing; returns pairCode + pollToken |
-| GET | `/pair/status` | pollToken | App polls until the bot completes pairing (returns access+refresh) |
-| GET | `/servers` | JWT Bearer | Country-grouped Remnawave node list (402 if subscription lapsed) |
-| GET | `/me` | JWT Bearer | Subscription status/expiry |
-| GET | `/config` | JWT Bearer | Subscription config proxied as-is from Remnawave (402 if lapsed) |
+| GET | `/pair/status` | pollToken (query **or** `X-Pair-Poll-Token` header) | App polls until the bot completes pairing (returns access+refresh) |
+| GET | `/servers` | JWT Bearer | Country-grouped Remnawave node list, cached 45 s (402 if subscription lapsed) |
+| GET | `/me` | JWT Bearer | Subscription status/expiry (`status` is only ever `active` or `expired`) |
+| GET | `/config` | JWT Bearer | Remnawave subscription, with our Hysteria2 hosts spliced in (402 if lapsed) |
+
+Every public endpoint is rate limited per IP (`RateLimiting:*` — 300/min global, 20/min auth, 60/min `/pair/status`, 5/hour `/trial`) and answers **429 + `Retry-After`** over budget. A failed panel call is **502**, not 500. Full contract, including the required and optional configuration keys: `docs/api-contract.md`.
 
 ### Key Design Decisions
 
 - **Bot auth**: Telegram bot calls `/internal/*` with a shared secret (`Bot:Secret`). The app never talks to Remnawave directly.
-- **Session tokens (access + refresh split, see `docs/api-contract.md` "Модель токенов")**: A session is a short access JWT (**30 min**, `Jwt:AccessTokenLifetime`) plus a long, revocable, rotating refresh token (**90 days**, `Jwt:RefreshTokenLifetime`, stored hashed as `RefreshToken`). The JWT lifetime is **decoupled** from the subscription; entitlement is checked live per request, and `/config`/`/servers` return **402** when the subscription has lapsed (vs 401 for a bad token). The app refreshes silently, so an extension or key change never forces re-pairing. **Reuse detection**: presenting an already-revoked (rotated/logged-out) refresh token revokes the whole session family, forcing a re-pair (`AuthController.RevokeFamilyAsync`).
+- **Session tokens (access + refresh split, see `docs/api-contract.md` "Модель токенов")**: A session is a short access JWT (**30 min**, `Jwt:AccessTokenLifetime`) plus a long, revocable, rotating refresh token (**90 days**, `Jwt:RefreshTokenLifetime`, stored hashed as `RefreshToken`). The JWT lifetime is **decoupled** from the subscription; entitlement is checked live per request, and `/config`/`/servers` return **402** when the subscription has lapsed (vs 401 for a bad token). The app refreshes silently, so an extension or key change never forces re-pairing. **Reuse detection**: presenting an already-revoked (rotated/logged-out) refresh token revokes the whole session family, forcing a re-pair (`AuthController.RevokeFamilyAsync`) — **except inside `Jwt:RefreshGraceWindow` (30 s)**, where a second presentation is treated as the app racing itself and is answered with another token of the same family. Rotation itself is one conditional `UPDATE`, so two parallel refreshes can no longer both succeed. The client should always keep the **last** refresh token it received.
 - **JWT claim**: `fatvpn_account_id` (pairing sessions) or `fatvpn_token_id` (legacy deep-link / trial) identifies the session; the BFF resolves the current Remnawave subscription live on each request (`SubscriptionResolver`).
 - **Pairing**: The app is the entry point — `POST /pair/start` → user opens the bot via `t.me/<bot>?start=pair<code>` → bot calls `/internal/pair/complete` → app polls `/pair/status` and connects. `Account` (keyed by Telegram user id) holds the current subscription, kept fresh by the bot. Pairing codes are **single-use**: `/pair/status` mints the session once, then flips the code to `Consumed` (`PairingStatus`) so a repeated poll can't hand out a second session; `/internal/pair/complete` only accepts a `Pending` code (409 otherwise).
-- **Trial**: `POST /trial` creates a Remnawave user on the fly (squad `Remnawave:TrialSquadUuid`, `Trial:DurationDays`, currently 2). Anti-abuse: `Device` stores a salted hash of the `attestationToken` (409 on repeat). ⚠️ The token is a random per-install key — reinstall = new trial; real Play Integrity / SSAID binding is still TODO (see `docs/api-contract.md`).
-- **Remnawave subscription proxy**: `/config` proxies raw Remnawave response as-is (currently returns base64 vless:// URIs). Sing-box JSON format requires configuring templates in Remnawave panel.
+- **Trial**: `POST /trial` creates a Remnawave user on the fly (squad `Remnawave:TrialSquadUuid`, `Trial:DurationDays`, currently 2). Anti-abuse: `Device` stores a salted hash of the `attestationToken`; the token must be **16–512 chars** (an empty one hashed to the same identity for everybody and handed the first caller's trial to every later one), and the endpoint is capped at 5/hour per IP. A device whose trial is still running gets its session **reissued** (200); 409 only once the trial is spent. ⚠️ The token is a random per-install key — reinstall = new trial; real Play Integrity / SSAID binding is still TODO (see `docs/api-contract.md`).
+- **Remnawave subscription proxy**: `/config` returns the panel's response with our Hysteria2 hosts appended — Remnawave renders them into no subscription format we consume, so `SubscriptionAugmenter` synthesizes the links itself (hosts in `Remnawave:HysteriaHosts`, on by default via `Remnawave:AugmentHysteria`). Otherwise it is passed through as-is (currently base64 `vless://` URIs); sing-box JSON format would require configuring templates in the Remnawave panel.
 
 ### Infrastructure / Configuration
 
 - **Postgres**: `fatvpn` DB on port `5433` (host), `5432` (container). Credentials: `fatvpn`/`fatvpn_dev`.
 - **Remnawave**: Base URL in `appsettings.json`; `ApiToken` via `dotnet user-secrets` (UserSecretsId: `3d5f08d5-dec7-4629-8e42-bc979ebe72cf`).
-- **JWT**: HS256, `FatVpn.Bff` issuer, `FatVpn.App` audience. Dev secret in `appsettings.Development.json`.
+- **JWT**: HS256 (algorithm pinned, `ClockSkew` 30 s), `FatVpn.Bff` issuer, `FatVpn.App` audience. Dev secret in `appsettings.Development.json` — **untracked**; copy `appsettings.Development.example.json` on a fresh clone.
 
 ### Production Server (87.121.221.229)
 
@@ -155,6 +159,7 @@ Deploy bot: `cd /opt/FatVPN && docker compose build --no-cache && docker compose
 - `docs/ui-design-spec.md` — Flutter UI spec
 - `docs/bot-integration-spec.md` — Telegram bot integration spec (deep-link token flow)
 - `docs/bot-pairing-spec.md` — standalone dev spec for the bot-side pairing changes (new Account-based onboarding)
-- `docs/improvement-plan-index.md` — **full technical audit (2026-07-27)**: top-10 issues, cross-cutting fixes, work order. Start here
-- `docs/improvement-plan-bff.md` / `-app-android.md` / `-ios.md` — per-area findings (bugs, security, performance) with file:line and proposed fixes
+- `docs/improvement-plan-index.md` — **full technical audit (2026-07-27)**: top-10 issues, cross-cutting fixes, work order, plus a **status block (2026-07-28)** saying what is closed on each front. Start here
+- `docs/improvement-plan-bff.md` / `-app-android.md` / `-ios.md` — per-area findings (bugs, security, performance) with file:line and proposed fixes, each marked with its current status. BFF is closed by `820b1fe` bar HTTPS; Android is in progress; iOS is untouched
+- `docs/release-test-checklist.md` — acceptance run before deploying. Section **2a** holds the audit's acceptance criteria (T1–T16)
 - `VPN-App-Project.md` — master project document (Russian): requirements, 10-day plan, open questions

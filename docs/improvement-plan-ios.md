@@ -361,7 +361,7 @@ Finder-бэкап и в iCloud Backup. Компрометация бэкапа =
    `URLResourceValues.isExcludedFromBackup = true`.
 3. Удалять все три артефакта в `disconnect(endSession: true)` и при логауте.
 
-### 🟠 2.2 Clash API слушает loopback **без `secret`** — любое приложение управляет VPN
+### 🟠 2.2 Clash API слушает loopback **без `secret`** — любое приложение управляет VPN — ✅ Сделано (рабочее дерево)
 **Где:** `app/packages/singbox_mm/lib/src/config/singbox_config_builder.dart:129-134`
 
 ```dart
@@ -390,6 +390,13 @@ experimental['clash_api'] = <String, Object?>{
 (`TunnelHealthWatchdog.swift:311-323`) и в `vpn_controller._probeViaSingboxApi`
 (`vpn_controller.dart:458-482`). Дополнительно — рандомизировать порт и передавать его
 расширению через start options.
+
+> **Сделано (2026-07-28, рабочее дерево, вместе с Android §1.6):** 128 бит из
+> `Random.secure()` на каждый старт туннеля кладутся в `experimental.clash_api.secret`;
+> `TunnelHealthWatchdog` читает секрет из конфига (`ControlAPI { address, secret }`) и
+> шлёт `Authorization: Bearer` во всех запросах. **Порт по-прежнему фиксированный**
+> (`16756`) и через start options не передаётся. Это единственная правка iOS-части
+> аудита — остальные находки документа не тронуты.
 
 ### 🟡 2.3 `external_controller` из конфига не валидируется → исходящий HTTP из расширения
 **Где:** `TunnelHealthWatchdog.swift:329-354` — `normalizeController` нормализует
@@ -599,3 +606,6 @@ add target → diagnose → pod install → use-profiles → build ipa → publi
 DNS-leak тест, IPv6-leak тест, смена Wi-Fi↔LTE под нагрузкой без разрыва, отключение
 через UI действительно возвращает интернет, туннель поднимается после перезагрузки
 устройства (если включён on-demand).
+
+> Эти проверки оформлены пунктами **T12–T16** в `docs/release-test-checklist.md`
+> (раздел «2a. Приёмка технического аудита»).
