@@ -48,6 +48,10 @@ final _patterns = <(RegExp, String)>[
     ),
     r'"$1": "<redacted>"'
   ),
+  // `scheme://<credential>@` where the credential itself contains `/` — an
+  // ss:// userinfo is base64 and '/' is in the base64 alphabet, so the
+  // general rule below (which stops at '/') walked straight past it.
+  (RegExp(r'(?<=://)[^\s@]{6,}@'), '<redacted>@'),
   // `user:secret@host` / `<credential>@host:port` — everything before the `@`
   // is a credential in every link scheme the app parses.
   (RegExp(r'(?<=[/:@])[^\s/:@]{6,}@'), '<redacted>@'),
@@ -57,6 +61,47 @@ final _patterns = <(RegExp, String)>[
     '<redacted-endpoint>'
   ),
 ];
+
+// ── The blunter passes below run after the structured ones ─────────────────
+// (so `password=<redacted>` keeps its label instead of being swallowed
+// whole), and each carries a filter the structured rules don't need.
+
+/// Bare IPv4, no port — a node address is a node address with or without one.
+final _bareIpv4 = RegExp(r'\b(?:\d{1,3}\.){3}\d{1,3}\b');
+
+/// Loopback and the empty address identify the phone, not the panel, and the
+/// watchdog's `127.0.0.1` / `[::1]` probes are half of every tunnel log —
+/// redacting them makes the bundle unreadable for nothing.
+const _localAddresses = {'127.0.0.1', '0.0.0.0', '::1', '::'};
+
+/// Anything that could be an IPv6 literal. Deliberately loose — the real
+/// decision is [_isIpv6]: a timestamp's `12:00:00` has the same shape, so the
+/// candidates are filtered by what only an address has (a `::`, or four-plus
+/// groups' worth of colons).
+final _ipv6Candidate = RegExp(r'(?<![\w.:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\w.:])');
+
+bool _isIpv6(String s) =>
+    !_localAddresses.contains(s) &&
+    (s.contains('::') || ':'.allMatches(s).length >= 3);
+
+/// Long hex runs — device keys, session ids, undashed uuids. 32 hex chars in
+/// a row is never prose.
+final _longHex = RegExp(r'\b[0-9a-fA-F]{32,}\b');
+
+/// Base64-ish runs — the shape of an entire encoded subscription, which used
+/// to pass through this file untouched (V26).
+final _base64Run = RegExp(r'[A-Za-z0-9+/]{20,}={0,2}');
+
+/// What separates a blob from a long word or an `outbound/vless…` tag: real
+/// base64 of real config material mixes cases and digits (or uses the `+` and
+/// `=` that never appear in prose). `initialize` and `outbound/shadowsocks`
+/// stay; `dmxlc3M6Ly8xMTExMTEx…` goes.
+bool _looksLikeBlob(String s) {
+  if (s.contains('+') || s.endsWith('=')) return true;
+  return s.contains(RegExp(r'\d')) &&
+      s.contains(RegExp(r'[a-z]')) &&
+      s.contains(RegExp(r'[A-Z]'));
+}
 
 /// Returns [raw] with credentials and node addresses replaced by placeholders.
 String sanitizeDiagnostics(String raw) {
@@ -70,5 +115,18 @@ String sanitizeDiagnostics(String raw) {
       ),
     );
   }
+  out = out.replaceAllMapped(_longHex, (_) => '<redacted-hex>');
+  out = out.replaceAllMapped(
+    _bareIpv4,
+    (m) => _localAddresses.contains(m[0]) ? m[0]! : '<redacted-ip>',
+  );
+  out = out.replaceAllMapped(
+    _ipv6Candidate,
+    (m) => _isIpv6(m[0]!) ? '<redacted-ip>' : m[0]!,
+  );
+  out = out.replaceAllMapped(
+    _base64Run,
+    (m) => _looksLikeBlob(m[0]!) ? '<redacted-blob>' : m[0]!,
+  );
   return out;
 }

@@ -1128,7 +1128,69 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         range: NSRange(output.startIndex..., in: output),
         withTemplate: template)
     }
+    // The passes a (pattern, template) pair cannot express — each one keeps
+    // something the blunt regex would eat (timestamps, loopback, outbound
+    // tags). Mirrored in app/lib/utils/sanitize.dart and
+    // PacketTunnelProvider.redactSecrets (V26).
+    output = replaceMatches(in: output, pattern: "\\b[0-9a-fA-F]{32,}\\b") { _ in
+      "<redacted-hex>"
+    }
+    output = replaceMatches(in: output, pattern: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b") { match in
+      localAddresses.contains(match) ? match : "<redacted-ip>"
+    }
+    output = replaceMatches(
+      in: output,
+      pattern: "(?<![\\w.:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\\w.:])"
+    ) { match in
+      isIpv6Literal(match) ? "<redacted-ip>" : match
+    }
+    output = replaceMatches(in: output, pattern: "[A-Za-z0-9+/]{20,}={0,2}") { match in
+      looksLikeSecretBlob(match) ? "<redacted-blob>" : match
+    }
     return output
+  }
+
+  /// Loopback identifies the phone, not the panel, and the watchdog's
+  /// `127.0.0.1` / `[::1]` probes are half of every tunnel log.
+  private static let localAddresses: Set<String> = ["127.0.0.1", "0.0.0.0", "::1", "::"]
+
+  /// A timestamp's `12:00:00` has the same shape as an IPv6 candidate; what
+  /// only an address has is a `::` or four-plus groups' worth of colons.
+  private static func isIpv6Literal(_ text: String) -> Bool {
+    if localAddresses.contains(text) { return false }
+    if text.contains("::") { return true }
+    return text.filter { $0 == ":" }.count >= 3
+  }
+
+  /// What separates a blob (an encoded subscription, a key) from a long word
+  /// or an `outbound/vless…` tag: real base64 of real config material mixes
+  /// cases and digits, or uses the `+`/`=` that never appear in prose.
+  private static func looksLikeSecretBlob(_ text: String) -> Bool {
+    if text.contains("+") || text.hasSuffix("=") { return true }
+    let hasDigit = text.rangeOfCharacter(from: .decimalDigits) != nil
+    let hasLower = text.rangeOfCharacter(from: .lowercaseLetters) != nil
+    let hasUpper = text.rangeOfCharacter(from: .uppercaseLetters) != nil
+    return hasDigit && hasLower && hasUpper
+  }
+
+  /// `stringByReplacingMatches` with a closure instead of a template, for the
+  /// passes whose replacement depends on what matched.
+  private static func replaceMatches(
+    in text: String,
+    pattern: String,
+    transform: (String) -> String
+  ) -> String {
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+    let source = text as NSString
+    var result = ""
+    var consumed = 0
+    for match in regex.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+      result += source.substring(with: NSRange(location: consumed, length: match.range.location - consumed))
+      result += transform(source.substring(with: match.range))
+      consumed = match.range.location + match.range.length
+    }
+    result += source.substring(from: consumed)
+    return result
   }
 
   /// Field names that carry a credential. One list for both notations below,
@@ -1154,6 +1216,9 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         + "(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\s\\]]+)",
       "\"$1\": \"<redacted>\""
     ),
+    // ss:// userinfo is base64 and '/' is in the base64 alphabet, so the
+    // rule below (which stops at '/') walked straight past it.
+    ("://[^\\s@]{6,}@", "://<redacted>@"),
     ("//[^\\s/@]{4,}@", "//<redacted>@"),
     ("\\b(?:\\d{1,3}\\.){3}\\d{1,3}:\\d{2,5}\\b", "<redacted-endpoint>"),
   ]

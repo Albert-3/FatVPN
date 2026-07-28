@@ -194,6 +194,86 @@ void main() {
     });
   });
 
+  group('V26 — what the first pass missed', () {
+    test('an entire base64 subscription does not pass through', () {
+      // The exact V26 finding: /config's body is one base64 blob of vless://
+      // links, and a diagnostic quoting it handed over every node at once.
+      const blob = 'dmxlc3M6Ly8xMTExMTExMS0yMjIyLTMzMzMtNDQ0NC01NTU1NTU1NTU1'
+          'NTVAMjAzLjAuMTEzLjc6NDQzP3NlY3VyaXR5PXRscyN0ZXN0';
+      final out = sanitizeDiagnostics('failed to parse subscription: $blob');
+
+      expectRedacted(out, blob, what: 'the encoded subscription');
+    });
+
+    test('a bare IPv4 without a port is still a node address', () {
+      final out =
+          sanitizeDiagnostics('dial tcp 203.0.113.7: connection refused');
+
+      expectRedacted(out, '203.0.113.7', what: 'the portless node address');
+      expect(out, contains('connection refused'));
+    });
+
+    test('IPv6 literals are redacted, bracketed or bare', () {
+      for (final raw in <String>[
+        'dial tcp [2001:db8::42]:443: unreachable',
+        'route added via 2400:cb00:2048:1::681c:83a',
+        'bind on fdfe:dcba:9876::1 failed',
+      ]) {
+        final out = sanitizeDiagnostics(raw);
+        expect(out, contains('<redacted-ip>'), reason: 'unredacted: $raw');
+        expect(out, isNot(contains('2001:db8')),
+            reason: 'an IPv6 is as much a node address as an IPv4: $out');
+      }
+    });
+
+    test('timestamps and loopback survive the IPv6 rule', () {
+      // `12:00:00` has the shape of an IPv6 candidate; the filter must tell
+      // them apart or every log line loses its clock.
+      const stamp = '[2026-07-28T12:00:00Z] INFO started';
+      expect(sanitizeDiagnostics(stamp), stamp);
+
+      const probe = 'watchdog probe ::1 alive, 127.0.0.1 reachable';
+      expect(sanitizeDiagnostics(probe), probe,
+          reason: 'loopback identifies the phone, not the panel — and it is '
+              'half of every watchdog log');
+    });
+
+    test('an ss:// credential with a slash inside is caught', () {
+      // ss:// userinfo is base64, and '/' is in the base64 alphabet — the
+      // general credential rule stops at '/' and walked straight past it.
+      const raw =
+          'parse ss://YWVzLTEyOC1nY206cGFzc3dvcmQ/8x@203.0.113.7:8388 failed';
+      final out = sanitizeDiagnostics(raw);
+
+      expectRedacted(out, 'YWVzLTEyOC1nY206cGFzc3dvcmQ',
+          what: 'the shadowsocks credential');
+    });
+
+    test('long hex runs are redacted — device keys, undashed uuids', () {
+      const hex = '09b64c8deb42ddd2952d1982966872141528d6ddee1fc2853b92a96b'
+          '7759763d';
+      final out = sanitizeDiagnostics('device key: $hex');
+
+      expectRedacted(out, hex, what: 'a 64-char hex identifier');
+    });
+
+    test('outbound tags and long words are not blobs', () {
+      // The blob rule must not eat the very things support reads first.
+      const raw = 'initialize outbound/shadowsocks[ss-out]: '
+          'outbound/hysteria2[hy2-fr] configuration reloaded';
+
+      expect(sanitizeDiagnostics(raw), raw);
+    });
+
+    test('the new passes are idempotent too', () {
+      const raw = 'dial tcp [2001:db8::42]:443 from 203.0.113.7, key '
+          '09b64c8deb42ddd2952d1982966872141528d6ddee1fc2853b92a96b7759763d';
+      final once = sanitizeDiagnostics(raw);
+
+      expect(sanitizeDiagnostics(once), once);
+    });
+  });
+
   group('the sanitiser stays usable', () {
     test('a realistic failing-start tail stays diagnosable', () {
       // The whole point of the tail. If redaction leaves nothing an engineer
