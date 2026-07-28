@@ -138,6 +138,30 @@ workflows:
         script: |
           cd app/ios
           pod install
+      - name: Fetch the widget's provisioning profile explicitly
+        script: |
+          set -e
+          # The `ios_signing` block fetches signing files once, before any of
+          # these scripts run, by substring match on com.fatvpn.fatvpnApp. That
+          # covered Runner and PacketTunnel but not FatVpnWidget (build 143
+          # failed with the widget's profile absent while the portal had it),
+          # and whatever the reason — the profile appearing between the fetch
+          # and the build, or the fetch's own scope — the fix is the same:
+          # ask for this bundle id by name, here, where the answer is current.
+          #
+          # Idempotent and cheap: if the integration already saved the profile,
+          # this re-saves the same file into the same directory that
+          # `use-profiles` reads. `--create` is the backstop for an App ID that
+          # exists with no profile on it; it cannot invent the App Groups
+          # capability, which stays a portal job (see docs/home-widgets-spec.md).
+          #
+          # Credentials come from the app_store_connect integration above, which
+          # exports APP_STORE_CONNECT_* into the environment the CLI reads.
+          app-store-connect fetch-signing-files com.fatvpn.fatvpnApp.FatVpnWidget \
+            --platform IOS \
+            --type IOS_APP_STORE \
+            --strict-match-identifier \
+            --create
       - name: Set up code signing settings on Xcode project
         script: |
           cd app
