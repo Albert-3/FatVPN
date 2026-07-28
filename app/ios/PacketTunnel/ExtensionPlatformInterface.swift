@@ -17,8 +17,25 @@ import NetworkExtension
 /// header.
 class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, LibboxCommandServerHandlerProtocol {
     private weak var tunnel: PacketTunnelProvider?
-    private var networkSettings: NEPacketTunnelNetworkSettings?
-    private var nwMonitor: NWPathMonitor?
+
+    /// Guards the two fields below (V18). They are written from Go threads —
+    /// `openTun`, `startDefaultInterfaceMonitor`, `reset` — and read from the
+    /// watchdog's queue through [hasUsableUpstream] / [isUpstreamExpensive]:
+    /// the same class of tear the provider's own `stateQueue` exists for, it
+    /// just lived in the neighbouring file without one.
+    private let stateQueue = DispatchQueue(label: "fatvpn.packet-tunnel.platform-state")
+    private var _networkSettings: NEPacketTunnelNetworkSettings?
+    private var _nwMonitor: NWPathMonitor?
+
+    private var networkSettings: NEPacketTunnelNetworkSettings? {
+        get { stateQueue.sync { _networkSettings } }
+        set { stateQueue.sync { _networkSettings = newValue } }
+    }
+
+    private var nwMonitor: NWPathMonitor? {
+        get { stateQueue.sync { _nwMonitor } }
+        set { stateQueue.sync { _nwMonitor = newValue } }
+    }
 
     init(_ tunnel: PacketTunnelProvider) {
         self.tunnel = tunnel
@@ -258,13 +275,32 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
     func clearDNSCache() {
         guard let networkSettings, let tunnel else { return }
         tunnel.reasserting = true
-        tunnel.setTunnelNetworkSettings(networkSettings) { [weak self] error in
-            // Always cleared: `reasserting` stuck at true is reported to the app
-            // as `.reasserting`, which it shows as "Connecting…" — forever.
-            tunnel.reasserting = false
-            if let error {
-                self?.log("(packet-tunnel) clearDNSCache re-apply failed: \(error.localizedDescription)")
+        // `reasserting` stuck at true is reported to the app as `.reasserting`,
+        // which it shows as "Connecting…" — forever. The callback is the usual
+        // way it gets cleared, but a callback the system never delivers must
+        // not be the only one (V22): the same hang 1.4 bounded with a timeout
+        // in `runBlocking`, this path had with no bound at all. Whichever of
+        // the two arrives first wins; the loser finds `finished` set and does
+        // nothing. `tunnel` is captured weakly on both — this closure outliving
+        // the provider must not keep the dead session's provider alive.
+        let once = DispatchQueue(label: "fatvpn.packet-tunnel.reassert-once")
+        var finished = false
+        let finish: (String?) -> Void = { [weak self, weak tunnel] failure in
+            once.sync {
+                guard !finished else { return }
+                finished = true
+                tunnel?.reasserting = false
+                if let failure { self?.log(failure) }
             }
+        }
+        tunnel.setTunnelNetworkSettings(networkSettings) { error in
+            finish(error.map {
+                "(packet-tunnel) clearDNSCache re-apply failed: \($0.localizedDescription)"
+            })
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) {
+            finish("(packet-tunnel) clearDNSCache re-apply answered nothing in 15s"
+                + " — clearing reasserting anyway")
         }
     }
 

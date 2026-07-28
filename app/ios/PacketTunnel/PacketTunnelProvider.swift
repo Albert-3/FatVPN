@@ -122,7 +122,37 @@ func runBlocking<T>(
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     private(set) var commandServer: LibboxCommandServer?
-    private lazy var platformInterface = ExtensionPlatformInterface(self)
+
+    // Not `lazy` (V19): both of these used to be, and a lazy var is not
+    // thread-safe — first touch came from four different threads (the start
+    // Task, the NE message queue, Go threads, the watchdog's queue), and a
+    // `stats` command racing `startTunnel0` could run the watchdog's
+    // initializer twice, the loser leaking with a live timer. Built once in
+    // `init()`, before any other thread can hold a reference to this object.
+    private var platformInterface: ExtensionPlatformInterface!
+    private var healthWatchdog: TunnelHealthWatchdog!
+
+    override init() {
+        super.init()
+        platformInterface = ExtensionPlatformInterface(self)
+        healthWatchdog = TunnelHealthWatchdog(
+            readConfigContent: { [weak self] in self?.tunnelOptions?["configContent"] as? String },
+            hasUpstreamNetwork: { [weak self] in self?.platformInterface.hasUsableUpstream ?? true },
+            isCorePaused: { [weak self] in self?.corePaused ?? false },
+            isNetworkExpensive: { [weak self] in self?.platformInterface.isUpstreamExpensive ?? false },
+            recover: { [weak self] in
+                guard let self else { return }
+                Task {
+                    do {
+                        try await self.reloadService()
+                    } catch {
+                        Self.writeDiagnostics("HEALTH RECOVERY FAILED: \(error.localizedDescription)")
+                    }
+                }
+            },
+            log: { [weak self] message in self?.writeMessage(message) }
+        )
+    }
 
     /// Guards every piece of cross-thread state below. `tunnelOptions` alone is
     /// written from `startTunnel0` and `handleAppMessage` (two different Tasks)
@@ -132,6 +162,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private let stateQueue = DispatchQueue(label: "fatvpn.packet-tunnel.state")
     private var _tunnelOptions: [String: NSObject]?
     private var _corePaused = false
+    private var _snapshotRefreshTimer: DispatchSourceTimer?
+    // Lines written before the command server exists (V25) — "discarding
+    // expired start options snapshot" among them, the very line T16 is
+    // checked by. Flushed the moment the server is up; capped so a start
+    // that never gets there can't grow it without bound.
+    private var _pendingLogLines: [String] = []
+    private static let pendingLogLinesCap = 50
 
     private var tunnelOptions: [String: NSObject]? {
         get { stateQueue.sync { _tunnelOptions } }
@@ -165,34 +202,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let stderrTailBytes = 6000
     private static let stderrMaxBytes: UInt64 = 256 * 1024
 
-    /// Rebuilds sing-box when the tunnel stops carrying traffic without ever
-    /// leaving `.connected` — the failure the user can otherwise only clear by
-    /// toggling the VPN by hand. See [TunnelHealthWatchdog] for why it lives in
-    /// this process rather than in the app.
-    ///
-    /// Repairs go through `reloadService`, which is `startOrReloadService` — the
-    /// very call `startTunnel` uses, on the very config content it was given, so
-    /// a recovery rebuilds exactly the tunnel that was started. (Tearing the
-    /// whole extension down and back up, the app-side equivalent, isn't an
-    /// option from in here: `cancelTunnelWithError` would leave the user with no
-    /// VPN at all, which is worse than the symptom being repaired.)
-    private lazy var healthWatchdog = TunnelHealthWatchdog(
-        readConfigContent: { [weak self] in self?.tunnelOptions?["configContent"] as? String },
-        hasUpstreamNetwork: { [weak self] in self?.platformInterface.hasUsableUpstream ?? true },
-        isCorePaused: { [weak self] in self?.corePaused ?? false },
-        isNetworkExpensive: { [weak self] in self?.platformInterface.isUpstreamExpensive ?? false },
-        recover: { [weak self] in
-            guard let self else { return }
-            Task {
-                do {
-                    try await self.reloadService()
-                } catch {
-                    Self.writeDiagnostics("HEALTH RECOVERY FAILED: \(error.localizedDescription)")
-                }
-            }
-        },
-        log: { [weak self] message in self?.writeMessage(message) }
-    )
+    // NOTE: the health watchdog — which rebuilds sing-box when the tunnel
+    // stops carrying traffic without ever leaving `.connected` — is created in
+    // `init()` above (V19). Repairs go through `reloadService`, which is
+    // `startOrReloadService`, the very call `startTunnel` uses, on the very
+    // config content it was given, so a recovery rebuilds exactly the tunnel
+    // that was started. (Tearing the whole extension down and back up isn't an
+    // option from in here: `cancelTunnelWithError` would leave the user with
+    // no VPN at all, which is worse than the symptom being repaired.)
 
     /// Where this process keeps its working state.
     ///
@@ -486,6 +503,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         let stderrURL = Self.cacheDirectory.appendingPathComponent("stderr.log")
         Self.trimStderrIfOversized(at: stderrURL)
+        // Created by us, before Go gets the path (V23): `harden` on a file
+        // that does not exist yet is two `try?` calls into the void, and if
+        // libbox then created it lazily it would carry the default protection
+        // class for the rest of the install. With the file already there the
+        // redirect appends into an inode whose attributes are set.
+        if !FileManager.default.fileExists(atPath: stderrURL.path) {
+            FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        }
+        Self.harden(stderrURL)
         var stderrError: NSError?
         LibboxRedirectStderr(stderrURL.path, &stderrError)
         Self.harden(stderrURL)
@@ -508,6 +534,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         } catch {
             throw TunnelStartupError(message: "Failed to start command server: \(error.localizedDescription)")
         }
+        flushPendingLogLines()
 
         // Before sing-box, not after: the config it is about to load names the
         // SOCKS server this core provides, and sing-box dials it as soon as the
@@ -520,8 +547,44 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // from when it launches the extension with no options, so a config that
         // failed has no business in it.
         persistStartOptions(effectiveOptions)
+        startSnapshotRefresh()
         // Only now is there a tunnel worth watching.
         healthWatchdog.start()
+    }
+
+    /// How often a *live* session re-stamps its persisted snapshot.
+    ///
+    /// The stamp used to be written once, at start (V20): a session that ran
+    /// past [snapshotMaxAge] — sessions live up to 90 days — and was then
+    /// jetsam-killed handed on-demand a snapshot older than the TTL, and the
+    /// relaunch went "discarding expired" → "Missing start options" → refused
+    /// start, on a loop, for a user who never turned anything off. Refreshing
+    /// while running makes the TTL mean what it was meant to: "this session
+    /// has been *dead* for a week", not "this session has been *up* for one".
+    private static let snapshotRefreshInterval: TimeInterval = 6 * 60 * 60
+
+    private func startSnapshotRefresh() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(
+            deadline: .now() + Self.snapshotRefreshInterval,
+            repeating: Self.snapshotRefreshInterval,
+            leeway: .seconds(600))
+        timer.setEventHandler { [weak self] in
+            guard let self, let options = self.tunnelOptions else { return }
+            self.persistStartOptions(options)
+        }
+        timer.resume()
+        stateQueue.sync {
+            _snapshotRefreshTimer?.cancel()
+            _snapshotRefreshTimer = timer
+        }
+    }
+
+    private func stopSnapshotRefresh() {
+        stateQueue.sync {
+            _snapshotRefreshTimer?.cancel()
+            _snapshotRefreshTimer = nil
+        }
     }
 
     /// Discards sing-box's stderr when it has grown past what a diagnostics
@@ -658,7 +721,31 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     func writeMessage(_ message: String) {
-        commandServer?.writeMessage(2, message: message)
+        guard let commandServer else {
+            // No server yet (V25): the early lines of `startTunnel0` — the
+            // snapshot being discarded as expired or unreadable among them —
+            // used to be written into the void. Parked until the server is up.
+            stateQueue.sync {
+                if _pendingLogLines.count < Self.pendingLogLinesCap {
+                    _pendingLogLines.append(message)
+                }
+            }
+            return
+        }
+        commandServer.writeMessage(2, message: message)
+    }
+
+    /// Replays what [writeMessage] had to park before the command server
+    /// existed. Called once, right after the server starts.
+    private func flushPendingLogLines() {
+        let backlog: [String] = stateQueue.sync {
+            let lines = _pendingLogLines
+            _pendingLogLines = []
+            return lines
+        }
+        for line in backlog {
+            commandServer?.writeMessage(2, message: "(deferred) \(line)")
+        }
     }
 
     /// Closes sing-box while leaving this tunnel session in place — the teardown
@@ -703,6 +790,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         writeMessage("(packet-tunnel) stopping, reason: \(reason)")
         healthWatchdog.stop()
+        stopSnapshotRefresh()
         // A session the user (or the system configuration) ended must not be
         // resurrectable: without this, an extension launched later without
         // options — on-demand, a restart after a jetsam kill — would reconnect

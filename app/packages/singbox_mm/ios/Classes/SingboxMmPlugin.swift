@@ -670,13 +670,17 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   }
 
   private func stopVpn(result: @escaping FlutterResult) {
-    stopTunnel {
+    // A stop that ran out the teardown timeout is still a stop — the
+    // connection keeps winding down on its own and nothing waits to start
+    // from it — so the flag is deliberately ignored here. It exists for
+    // [restartVpn], which does have something waiting.
+    stopTunnel { _ in
       result(nil)
     }
   }
 
   private func restartVpn(result: @escaping FlutterResult) {
-    stopTunnel { [weak self] in
+    stopTunnel { [weak self] reachedDown in
       guard let self else {
         result(nil)
         return
@@ -685,21 +689,36 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       // connection has actually left `.disconnecting`, which is the state
       // `startVPNTunnel` silently refuses to start from — that refusal is why
       // changing servers used to do nothing at all sometimes.
+      //
+      // And when the timeout ran out instead (V21): starting anyway means iOS
+      // drops the start on the floor while `result(nil)` reports success —
+      // the very "server change did nothing" this path was rewritten to end.
+      // An error at least reaches Dart, where a failed switch is handled.
+      guard reachedDown else {
+        result(FlutterError(
+          code: "RESTART_TIMEOUT",
+          message: "The previous tunnel was still disconnecting after "
+            + "\(Int(Self.teardownTimeout))s; not starting over it",
+          details: nil))
+        return
+      }
       self.startVpn(result: result)
     }
   }
 
-  /// Stops the tunnel and calls back once it is really down.
+  /// Stops the tunnel and calls back once it is really down — `true` — or
+  /// once [teardownTimeout] ran out with the connection still winding down —
+  /// `false`.
   ///
   /// Uses [loadExistingManager], not `loadOrCreateManager`: if there is no
   /// saved configuration there is nothing to stop, and the fabricated manager
   /// the other one returns would be attached to and observed forever with a
   /// permanently `.invalid` connection — which pins the reported state to
   /// "disconnected" no matter what the real tunnel is doing.
-  private func stopTunnel(completion: @escaping () -> Void) {
+  private func stopTunnel(completion: @escaping (Bool) -> Void) {
     loadExistingManager { [weak self] manager in
       guard let self, let manager else {
-        DispatchQueue.main.async { completion() }
+        DispatchQueue.main.async { completion(true) }
         return
       }
       self.attachManager(manager)
@@ -740,7 +759,7 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   /// this used to) means the next `startVPNTunnel` lands while the connection
   /// is still `.disconnecting`, where iOS drops it on the floor.
   private func awaitDisconnected(
-    _ manager: NETunnelProviderManager, completion: @escaping () -> Void
+    _ manager: NETunnelProviderManager, completion: @escaping (Bool) -> Void
   ) {
     // The whole body belongs on the main queue, not just the closures below.
     // This is called from a `loadExistingManager`/`saveToPreferences` callback,
@@ -751,19 +770,19 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     onPlatformThread {
       let isDown: (NEVPNStatus) -> Bool = { $0 == .disconnected || $0 == .invalid }
       if isDown(manager.connection.status) {
-        completion()
+        completion(true)
         return
       }
       var observer: NSObjectProtocol?
       var finished = false
       // Everything here now runs on the main queue, so `finished` needs no lock.
-      let finish = {
+      let finish = { (reachedDown: Bool) in
         guard !finished else { return }
         finished = true
         if let observer {
           NotificationCenter.default.removeObserver(observer)
         }
-        completion()
+        completion(reachedDown)
       }
       observer = NotificationCenter.default.addObserver(
         forName: .NEVPNStatusDidChange,
@@ -771,11 +790,14 @@ public class SingboxMmPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         queue: .main
       ) { _ in
         if isDown(manager.connection.status) {
-          finish()
+          finish(true)
         }
       }
       DispatchQueue.main.asyncAfter(deadline: .now() + Self.teardownTimeout) {
-        finish()
+        // The caller decides what a timeout means (V21): for a plain stop it
+        // is nothing, for a restart it is "do not start over a connection
+        // still in .disconnecting — iOS ignores that start silently".
+        finish(false)
       }
     }
   }

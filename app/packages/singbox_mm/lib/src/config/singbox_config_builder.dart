@@ -1290,14 +1290,26 @@ class SingboxConfigBuilder {
     required String runtimeLogLevel,
     required AdvancedOptions settings,
   }) {
-    final String resolved = _requestedLogLevel(
-      runtimeLogLevel: runtimeLogLevel,
-      settings: settings,
+    return clampLogLevel(
+      _requestedLogLevel(
+        runtimeLogLevel: runtimeLogLevel,
+        settings: settings,
+      ),
+      isRelease: kReleaseMode,
     );
-    if (kReleaseMode && (resolved == 'debug' || resolved == 'trace')) {
+  }
+
+  /// The clamp itself, pure and public (V29): the branch that matters is the
+  /// `isRelease` one, and a host test always runs in debug — folded into the
+  /// method above, the one line this class exists to enforce was the one line
+  /// no test could reach. The caller passes `kReleaseMode`; a test passes
+  /// `true`.
+  static String clampLogLevel(String requested, {required bool isRelease}) {
+    final String normalized = requested.toLowerCase();
+    if (isRelease && (normalized == 'debug' || normalized == 'trace')) {
       return 'warn';
     }
-    return resolved;
+    return normalized;
   }
 
   String _requestedLogLevel({
