@@ -12,6 +12,14 @@
 #
 # See docs/ios-vpn-tunnel-spec.md for the full tunnel architecture/plan.
 
+# `gem install xcodeproj -v 1.27.0` in CI installs that version *alongside*
+# whatever CocoaPods already dragged in — it does not make `require` load it.
+# RubyGems activates the newest installed version unless asked otherwise, so
+# the pin in codemagic.yaml only takes effect because of this line. Bounded to
+# 1.x: a major bump is what could silently change the structure this script
+# writes into Runner.xcodeproj, while 1.28.x on a developer's own machine
+# stays usable.
+gem 'xcodeproj', '~> 1.27'
 require 'xcodeproj'
 
 IOS_DIR = File.expand_path('..', __dir__)
@@ -45,11 +53,20 @@ raise '[add_packet_tunnel_target] Flutter/Debug.xcconfig or Release.xcconfig fil
 # Portal (confirmed: its "FatVPN App Store" profile lists it), so wiring the
 # entitlement here doesn't require touching/regenerating that profile.
 #
-# The App Group entitlement is deliberately NOT added here yet — Runner's
-# provisioning profile predates that capability on the App ID, and
-# re-fetching/regenerating it is riskier (see commit efb5e4b on the Runner
-# cert/key pairing) than this project wants to do until App Group config
-# sharing is actually implemented (Фаза 3+).
+# Runner's entitlements file (Runner/Runner.entitlements, wired below into
+# CODE_SIGN_ENTITLEMENTS) ALSO carries the App Group
+# `group.com.fatvpn.fatvpnApp`, and has since the extension started persisting
+# diagnostics there: the app reads diagnostics.txt and the sing-box stderr tail
+# back out of that container (SingboxMmPlugin.readLastError) and clears the
+# start-options snapshot on logout, none of which it can do without the
+# entitlement. Runner's App ID therefore needs the App Groups capability, not
+# just Network Extensions.
+#
+# If it is ever missing, signing does not necessarily fail — the entitlement can
+# be silently stripped instead, and the only symptom is `containerURL(...)`
+# returning nil, which surfaces to the user as "APP_GROUP_UNAVAILABLE" and takes
+# every tunnel diagnostic with it. The `codesign -d --entitlements` step in
+# codemagic.yaml checks the built app rather than trusting this file.
 runner_group = project.main_group.find_subpath('Runner', false)
 raise '[add_packet_tunnel_target] Runner group not found' unless runner_group
 

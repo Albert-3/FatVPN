@@ -11,6 +11,12 @@ enum TunnelHealthVerdict {
     case unknown
 }
 
+/// Cumulative byte counters the core reports for the live tunnel.
+struct TunnelTraffic {
+    let uplinkBytes: Int64
+    let downlinkBytes: Int64
+}
+
 /// Watches a live tunnel from inside the packet-tunnel extension and rebuilds
 /// sing-box when it stops carrying traffic.
 ///
@@ -23,6 +29,9 @@ enum TunnelHealthVerdict {
 /// It has to live in the extension rather than in the container app: iOS
 /// suspends the app the moment it leaves the foreground, taking every timer in
 /// it with it, while this process keeps running for as long as the tunnel does.
+/// That is also why the cadence is deliberately slow — this is the one process
+/// on the device iOS never puts to sleep, so every round it takes is spent on
+/// the user's battery and, on cellular, their data.
 final class TunnelHealthWatchdog {
     /// Two independent captive-portal endpoints, both empty 204s served from
     /// everywhere. A `dead` verdict requires *both* to fail: one blocked host
@@ -36,17 +45,45 @@ final class TunnelHealthWatchdog {
     private static let probeTimeout: TimeInterval = 8
     private static let controlAPITimeout: TimeInterval = 5
 
-    /// How often a live tunnel is asked whether it still works.
-    private static let checkInterval: TimeInterval = 60
+    /// How often a live tunnel is asked whether it still works, on an ordinary
+    /// unmetered network.
+    ///
+    /// Three minutes rather than one: the periodic tick is the *backstop*, not
+    /// the detector. Everything that actually breaks a tunnel — a network
+    /// switch, an AP re-association, coming out of sleep — already schedules an
+    /// out-of-band [checkSoon] within seconds of happening, so shortening this
+    /// buys almost no detection speed while tripling what the watchdog costs
+    /// overnight.
+    private static let baseInterval: TimeInterval = 180
+
+    /// Cadence on a metered underlay or in Low Power Mode, where each round
+    /// costs the user data or battery they have explicitly said they are short
+    /// of.
+    private static let meteredInterval: TimeInterval = 300
+
+    /// Cadence between a failed check and the one that confirms it.
+    ///
+    /// This is what keeps the slow [baseInterval] from becoming slow *detection*.
+    /// A tunnel needs [failuresBeforeRecovery] failures in a row before it is
+    /// rebuilt, so with one interval for both "is it still fine?" and "was that
+    /// blip real?" the two settings multiply: 20 s to the first verdict plus
+    /// 180 s to the second is 200 s of a dead tunnel showing `connected` — worse
+    /// than the 105 s the audit already called too slow. Asking again quickly
+    /// costs one extra round only when something is actually wrong.
+    private static let recheckInterval: TimeInterval = 20
 
     /// Slower cadence once repeated recoveries haven't helped, so a genuinely
     /// unreachable server can't turn into a battery drain.
-    private static let backoffInterval: TimeInterval = 300
+    private static let backoffInterval: TimeInterval = 600
     private static let recoveriesBeforeBackoff = 4
 
     /// A freshly started tunnel needs a moment before its first verdict means
-    /// anything — the first handshake may not have completed.
-    private static let firstCheckDelay: TimeInterval = 45
+    /// anything — the first handshake may not have completed. One TLS handshake
+    /// is enough to know, so this is short: together with [recheckInterval] and
+    /// [failuresBeforeRecovery] it sets the floor on how long a tunnel that
+    /// never worked keeps claiming it does — 20 s + 20 s, against the 105 s the
+    /// audit measured.
+    private static let firstCheckDelay: TimeInterval = 20
 
     /// Delay before an out-of-band check, long enough for whatever just changed
     /// (device wake, network switch) to settle.
@@ -64,6 +101,10 @@ final class TunnelHealthWatchdog {
         "direct", "block", "reject", "dns", "selector", "urltest", "compatible", "fallback",
     ]
 
+    /// The only hosts this process will talk to over the control API. See
+    /// [normalizeController].
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "::1", "[::1]", "localhost"]
+
     /// The config the tunnel is running, read fresh each time so a reload with
     /// a different server is probed against the right control API.
     private let readConfigContent: () -> String?
@@ -71,6 +112,13 @@ final class TunnelHealthWatchdog {
     /// Whether the device has any network for the tunnel to ride on. See
     /// [runProbe] for why a probe without one proves nothing.
     private let hasUpstreamNetwork: () -> Bool
+
+    /// Whether sing-box is paused (the device is asleep). A paused core answers
+    /// nothing, and that is not the tunnel's fault.
+    private let isCorePaused: () -> Bool
+
+    /// Whether the underlay is metered — see [meteredInterval].
+    private let isNetworkExpensive: () -> Bool
     private let recover: () -> Void
     private let log: (String) -> Void
 
@@ -80,6 +128,10 @@ final class TunnelHealthWatchdog {
     private var timer: DispatchSourceTimer?
     private var probeInFlight = false
     private var consecutiveFailures = 0
+
+    /// The repeat interval the timer is currently armed with, so
+    /// [applyInterval] can leave it alone when nothing has changed.
+    private var scheduledInterval: TimeInterval = 0
 
     /// Bumped by every [checkSoon]; a scheduled expedited probe only runs if it
     /// is still the latest one.
@@ -94,21 +146,33 @@ final class TunnelHealthWatchdog {
     /// Built eagerly rather than lazily: `get` is called both from [queue] and
     /// from URLSession's own completion thread, and a lazy property initialised
     /// from two threads is a data race.
+    ///
+    /// Cacheless and cookieless on purpose. `.ephemeral` still allocates an
+    /// in-memory URL cache of several megabytes, inside a process whose whole
+    /// budget is ~50 MB — and none of it could ever be reused, since every
+    /// request here is a liveness probe that must not be answered from a cache.
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = TunnelHealthWatchdog.probeTimeout + 4
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
         return URLSession(configuration: configuration)
     }()
 
     init(
         readConfigContent: @escaping () -> String?,
         hasUpstreamNetwork: @escaping () -> Bool,
+        isCorePaused: @escaping () -> Bool,
+        isNetworkExpensive: @escaping () -> Bool,
         recover: @escaping () -> Void,
         log: @escaping (String) -> Void
     ) {
         self.readConfigContent = readConfigContent
         self.hasUpstreamNetwork = hasUpstreamNetwork
+        self.isCorePaused = isCorePaused
+        self.isNetworkExpensive = isNetworkExpensive
         self.recover = recover
         self.log = log
     }
@@ -118,9 +182,10 @@ final class TunnelHealthWatchdog {
             guard let self, self.timer == nil else { return }
             self.consecutiveFailures = 0
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
+            self.scheduledInterval = self.desiredInterval()
             timer.schedule(
                 deadline: .now() + Self.firstCheckDelay,
-                repeating: Self.checkInterval
+                repeating: self.scheduledInterval
             )
             timer.setEventHandler { [weak self] in self?.runProbe() }
             self.timer = timer
@@ -134,15 +199,6 @@ final class TunnelHealthWatchdog {
             self.timer?.cancel()
             self.timer = nil
         }
-    }
-
-    /// Re-arms the watchdog for a tunnel that has just been rebuilt with a
-    /// different config, so the new core gets its own settle window before its
-    /// first verdict counts. The escalation counters survive on purpose (see
-    /// [recoveryAttempts]).
-    func restart() {
-        stop()
-        start()
     }
 
     /// Requests an out-of-band check shortly from now — used when the device
@@ -168,6 +224,44 @@ final class TunnelHealthWatchdog {
         }
     }
 
+    /// Cumulative traffic counters from the core's control API, or nil when it
+    /// can't be reached. The container app has no way to ask that API itself —
+    /// it listens on the extension's loopback — so this is how the traffic the
+    /// UI shows gets out of this process.
+    ///
+    /// `/connections` rather than `/traffic` despite carrying the whole
+    /// connection list with it: `/traffic` is a *stream* (the core keeps the
+    /// response open and pushes a per-second rate), so a plain request against
+    /// it would hang until this session's timeout, and a rate is not what the
+    /// UI shows anyway. `/connections` is the only endpoint with cumulative
+    /// totals, and it is the one the Android probe already uses. The cost is
+    /// bounded by the caller: the poll runs only while the app is in the
+    /// foreground with the stats channel listening.
+    func fetchTraffic(_ completion: @escaping (TunnelTraffic?) -> Void) {
+        queue.async { [weak self] in
+            guard let self, let controller = self.resolveController() else {
+                completion(nil)
+                return
+            }
+            self.get(
+                "http://\(controller.address)/connections",
+                secret: controller.secret,
+                timeout: Self.controlAPITimeout
+            ) { status, body in
+                guard status == 200, let body,
+                    let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+                else {
+                    completion(nil)
+                    return
+                }
+                completion(
+                    TunnelTraffic(
+                        uplinkBytes: (json["uploadTotal"] as? NSNumber)?.int64Value ?? 0,
+                        downlinkBytes: (json["downloadTotal"] as? NSNumber)?.int64Value ?? 0))
+            }
+        }
+    }
+
     // MARK: - Probing
 
     private func runProbe() {
@@ -177,6 +271,14 @@ final class TunnelHealthWatchdog {
         // the failures counted meanwhile would make the first real check after
         // reconnecting fire a recovery it hadn't earned.
         guard hasUpstreamNetwork() else {
+            consecutiveFailures = 0
+            return
+        }
+        // Same reasoning for a core the system asked us to pause: it is not
+        // answering because it was told not to. Counting those rounds used to
+        // turn an ordinary screen-off into a full rebuild of the core on the
+        // next two ticks.
+        guard !isCorePaused() else {
             consecutiveFailures = 0
             return
         }
@@ -207,15 +309,10 @@ final class TunnelHealthWatchdog {
                     self.log("(packet-tunnel) tunnel health restored")
                 }
                 self.consecutiveFailures = 0
-                let wasBackingOff = self.recoveryAttempts >= Self.recoveriesBeforeBackoff
-                self.recoveryAttempts = 0
                 // A tunnel that works again has earned the normal cadence back;
                 // without this the widened interval would outlive the trouble
                 // that caused it, for the rest of the session.
-                if wasBackingOff {
-                    self.timer?.schedule(
-                        deadline: .now() + Self.checkInterval, repeating: Self.checkInterval)
-                }
+                self.recoveryAttempts = 0
             case .unknown:
                 // Leave the counters alone: an inconclusive round neither
                 // accuses the tunnel nor absolves it.
@@ -229,6 +326,7 @@ final class TunnelHealthWatchdog {
                     self.attemptRecovery()
                 }
             }
+            self.applyInterval()
         }
     }
 
@@ -242,11 +340,36 @@ final class TunnelHealthWatchdog {
         consecutiveFailures = 0
         log("(packet-tunnel) rebuilding sing-box to recover the tunnel (attempt \(recoveryAttempts))")
         recover()
-        // Recovery churns the core; stretch the cadence once repeated attempts
-        // have failed so a dead server can't be retried every minute forever.
-        if recoveryAttempts == Self.recoveriesBeforeBackoff {
-            timer?.schedule(deadline: .now() + Self.backoffInterval, repeating: Self.backoffInterval)
+    }
+
+    /// The cadence this tunnel currently deserves: tightened the moment a check
+    /// fails, stretched while repeated recoveries are not helping, and stretched
+    /// again on a network the user pays for by the megabyte or a device that has
+    /// asked to be left alone.
+    private func desiredInterval() -> TimeInterval {
+        if recoveryAttempts >= Self.recoveriesBeforeBackoff {
+            return Self.backoffInterval
         }
+        // A failure in hand outranks both of the economies below: the tunnel is
+        // already suspected, and the only thing standing between the user and a
+        // repair is the confirming check.
+        if consecutiveFailures > 0 {
+            return Self.recheckInterval
+        }
+        if isNetworkExpensive() || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            return Self.meteredInterval
+        }
+        return Self.baseInterval
+    }
+
+    /// Re-arms the timer when the deserved cadence has changed, and only then —
+    /// rescheduling on every round would push the next tick a full interval out
+    /// each time and starve the periodic check entirely.
+    private func applyInterval() {
+        let interval = desiredInterval()
+        guard interval != scheduledInterval, let timer else { return }
+        scheduledInterval = interval
+        timer.schedule(deadline: .now() + interval, repeating: interval)
     }
 
     /// Tag of the proxy outbound currently in use, read back from the core
@@ -337,7 +460,7 @@ final class TunnelHealthWatchdog {
     }
 
     /// The control API of the running config, or nil when the config doesn't
-    /// enable one (nothing can be probed then).
+    /// enable one, or names an address this process refuses to dial.
     private func resolveController() -> ControlAPI? {
         guard let content = readConfigContent(), let data = content.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -347,21 +470,43 @@ final class TunnelHealthWatchdog {
         else {
             return nil
         }
+        guard let address = Self.normalizeController(external) else {
+            log("(packet-tunnel) refusing non-loopback control API: \(external)")
+            return nil
+        }
         let secret = (clashAPI["secret"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return ControlAPI(address: Self.normalizeController(external), secret: secret)
+        return ControlAPI(address: address, secret: secret)
     }
 
-    /// Turns a listen address into one we can dial. A core listening on a
-    /// wildcard is reachable on loopback, the only interface this probe may use.
-    private static func normalizeController(_ external: String) -> String {
-        guard let separator = external.lastIndex(of: ":") else { return external }
+    /// Turns a listen address into one we can dial, or nil when it isn't ours to
+    /// dial at all.
+    ///
+    /// A core listening on a wildcard is reachable on loopback, the only
+    /// interface this probe may use. Anything else is refused outright: the
+    /// address comes out of a config assembled from a subscription link and
+    /// overridable through `rawConfigPatch`, so `attacker.example:80` would have
+    /// this network extension beaconing out every few minutes — from inside the
+    /// tunnel process, carrying the active outbound's tag — and would have
+    /// sing-box publish control of the core onto the local network besides.
+    private static func normalizeController(_ external: String) -> String? {
+        guard let separator = external.lastIndex(of: ":") else { return nil }
         let port = String(external[external.index(after: separator)...])
-        guard Int(port) != nil else { return external }
+        guard Int(port) != nil else { return nil }
         let host = String(external[..<separator])
         switch host {
         case "", "0.0.0.0", "::", "[::]", "*":
             return "127.0.0.1:\(port)"
         default:
+            let normalized = host.lowercased()
+            guard loopbackHosts.contains(normalized) else { return nil }
+            // A bare IPv6 literal has to be bracketed before it can go into a
+            // URL. Unbracketed, `http://::1:16756/proxies` is not a URL at all:
+            // `URL(string:)` returns nil, every probe answers "unknown", and the
+            // watchdog stops recovering anything — silently, because the only
+            // log line on this path is the one for a refused host.
+            if normalized == "::1" {
+                return "[::1]:\(port)"
+            }
             return "\(host):\(port)"
         }
     }

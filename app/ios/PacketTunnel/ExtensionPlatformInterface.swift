@@ -30,6 +30,10 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         nwMonitor = nil
     }
 
+    private func log(_ message: String) {
+        tunnel?.writeMessage(message)
+    }
+
     // MARK: - LibboxPlatformInterfaceProtocol
 
     func openTun(_ options: LibboxTunOptionsProtocol?, ret0_: UnsafeMutablePointer<Int32>?) throws {
@@ -48,9 +52,26 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         if options.getAutoRoute() {
             settings.mtu = NSNumber(value: options.getMTU())
 
-            if let dnsServer = try? options.getDNSServerAddress() {
-                settings.dnsSettings = NEDNSSettings(servers: [dnsServer.value])
+            // Not `try?`. A swallowed failure here left `dnsSettings` nil, which
+            // is not "no DNS" but "the system's own resolvers" — every lookup
+            // then leaves the device over the physical interface, in the clear,
+            // with no error and no log line to say so. A tunnel that cannot
+            // carry DNS is a tunnel that must not come up.
+            let dnsServer: LibboxStringBox
+            do {
+                dnsServer = try options.getDNSServerAddress()
+            } catch {
+                throw TunnelStartupError(
+                    message: "openTun: sing-box provided no DNS server address "
+                        + "(\(error.localizedDescription))")
             }
+            let dnsSettings = NEDNSSettings(servers: [dnsServer.value])
+            // The canonical pattern (WireGuard-iOS, sing-box-for-apple): an
+            // empty match domain is the "" suffix every name ends with, which
+            // forces iOS to send *all* queries to the tunnel's resolver instead
+            // of letting some system paths keep their own.
+            dnsSettings.matchDomains = [""]
+            settings.dnsSettings = dnsSettings
 
             var ipv4Addresses: [String] = []
             var ipv4Masks: [String] = []
@@ -69,7 +90,15 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
             ipv4Settings.excludedRoutes = routePrefixes(options.getInet4RouteExcludeAddress()).map {
                 NEIPv4Route(destinationAddress: $0.address(), subnetMask: $0.mask())
             }
-            settings.ipv4Settings = ipv4Settings
+            // Claiming a default route on a family the interface holds no
+            // address for is undefined: iOS either rejects the whole settings
+            // object (openTun fails) or ignores that half of it — and the
+            // second outcome sends every packet of that family around the
+            // tunnel, over the physical interface, with the user's real
+            // address. That is exactly what happened to IPv6 under the default
+            // config (`ipv6RouteMode = disable` + `domain_strategy =
+            // ipv4_only`), and a DNS-leak test cannot see it.
+            settings.ipv4Settings = ipv4Addresses.isEmpty ? nil : ipv4Settings
 
             var ipv6Addresses: [String] = []
             var ipv6Prefixes: [NSNumber] = []
@@ -88,7 +117,12 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
             ipv6Settings.excludedRoutes = routePrefixes(options.getInet6RouteExcludeAddress()).map {
                 NEIPv6Route(destinationAddress: $0.address(), networkPrefixLength: NSNumber(value: $0.prefix()))
             }
-            settings.ipv6Settings = ipv6Settings
+            settings.ipv6Settings = ipv6Addresses.isEmpty ? nil : ipv6Settings
+
+            if ipv4Addresses.isEmpty && ipv6Addresses.isEmpty {
+                throw TunnelStartupError(
+                    message: "openTun: sing-box assigned the tunnel no address at all")
+            }
         }
 
         if options.isHTTPProxyEnabled() {
@@ -113,7 +147,10 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
             }
         }
 
-        guard let tunFd = Self.tunnelFileDescriptor(packetFlow: tunnel.packetFlow) else {
+        guard let tunFd = Self.tunnelFileDescriptor(
+            packetFlow: tunnel.packetFlow,
+            log: { [weak self] message in self?.log(message) })
+        else {
             throw TunnelStartupError(message: "openTun: unable to obtain tunnel file descriptor")
         }
         ret0_.pointee = tunFd
@@ -136,6 +173,22 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
     /// own utun — the system's other utun* interfaces belong to other processes
     /// and aren't in this fd table.
     ///
+    /// The scan runs to `getdtablesize()` rather than a hardcoded 1024, so it
+    /// cannot miss a descriptor on a process that was given a larger table.
+    ///
+    /// When more than one utun descriptor is open, **there is no way to tell
+    /// which one is ours** — iOS exposes no mapping from NEPacketTunnelFlow to a
+    /// descriptor, which is the whole reason this scan exists, and descriptor
+    /// numbers say nothing about age either (the kernel hands out the lowest
+    /// free one, so a reused low number can be the newest interface). So this
+    /// keeps the shipped choice — the first match, which is what the device
+    /// testing behind the current build ran on — and logs when the situation is
+    /// ambiguous, so a case that has never actually been observed becomes
+    /// visible instead of silently picking wrong. In practice a packet-tunnel
+    /// provider holds exactly one: libbox closes the previous utun before
+    /// `openTun` runs again on a reload, and a closed descriptor fails the
+    /// getsockopt below.
+    ///
     /// Must be called only *after* setTunnelNetworkSettings has been applied:
     /// the utun interface (and thus its fd) doesn't exist until then.
     ///
@@ -143,21 +196,34 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
     /// UTUN_OPT_IFNAME / IFNAMSIZ live in <sys/kern_control.h> and
     /// <net/if_utun.h>, absent from the Swift module without a bridging header,
     /// and are ABI-fixed.
-    static func tunnelFileDescriptor(packetFlow: NEPacketTunnelFlow) -> Int32? {
+    static func tunnelFileDescriptor(
+        packetFlow: NEPacketTunnelFlow,
+        log: ((String) -> Void)? = nil
+    ) -> Int32? {
         let sysprotoControl: Int32 = 2  // SYSPROTO_CONTROL (getsockopt level)
         let utunOptIfName: Int32 = 2    // UTUN_OPT_IFNAME (option name)
         let ifNameSize = 16             // IFNAMSIZ
 
-        for fd in Int32(0)...1024 {
+        var matches: [(fd: Int32, name: String)] = []
+        let limit = max(getdtablesize(), 1024)
+        for fd in Int32(0)..<Int32(limit) {
             var buffer = [CChar](repeating: 0, count: ifNameSize)
             var length = socklen_t(buffer.count)
             let resolved = getsockopt(fd, sysprotoControl, utunOptIfName, &buffer, &length) == 0
             guard resolved else { continue }
-            if String(cString: buffer).hasPrefix("utun") {
-                return fd
+            let name = String(cString: buffer)
+            if name.hasPrefix("utun") {
+                matches.append((fd, name))
             }
         }
-        return nil
+        guard let chosen = matches.first else { return nil }
+        if matches.count > 1 {
+            log?(
+                "(packet-tunnel) ambiguous TUN descriptor: \(matches.count) utun "
+                    + "interfaces open (\(matches.map { $0.name }.joined(separator: ", "))) "
+                    + "— using \(chosen.name), which may be the wrong one")
+        }
+        return chosen.fd
     }
 
     private func routePrefixes(_ iterator: (any LibboxRoutePrefixIteratorProtocol)?) -> [LibboxRoutePrefix] {
@@ -177,12 +243,27 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         // which the OS already does correctly for NEPacketTunnelProvider.
     }
 
+    /// sing-box asks for the system resolver cache to be dropped — which it
+    /// does on every network event: Wi-Fi↔LTE, an AP re-association, a DHCP
+    /// renewal.
+    ///
+    /// Re-applying the settings we already have is enough to make iOS
+    /// reinstall the resolvers. This used to clear them to `nil` first, and
+    /// that window — hundreds of milliseconds, longer on a slow device — is a
+    /// live tunnel with *no routes at all*: everything sent during it leaves
+    /// over the physical interface with the user's real address and their
+    /// carrier's DNS. Worse, both callbacks were ignored, so a failed re-apply
+    /// left the tunnel permanently route-less while iOS still reported
+    /// `.connected`.
     func clearDNSCache() {
         guard let networkSettings, let tunnel else { return }
         tunnel.reasserting = true
-        tunnel.setTunnelNetworkSettings(nil) { _ in
-            tunnel.setTunnelNetworkSettings(networkSettings) { _ in
-                tunnel.reasserting = false
+        tunnel.setTunnelNetworkSettings(networkSettings) { [weak self] error in
+            // Always cleared: `reasserting` stuck at true is reported to the app
+            // as `.reasserting`, which it shows as "Connecting…" — forever.
+            tunnel.reasserting = false
+            if let error {
+                self?.log("(packet-tunnel) clearDNSCache re-apply failed: \(error.localizedDescription)")
             }
         }
     }
@@ -206,7 +287,13 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
             }
         }
         monitor.start(queue: DispatchQueue.global(qos: .utility))
-        semaphore.wait()
+        // Bounded: this blocks a Go thread inside service start, and a first
+        // path update that never arrives (no network at all at launch) would
+        // otherwise hang the whole tunnel start rather than starting it with an
+        // interface it learns about a moment later.
+        if semaphore.wait(timeout: .now() + 10) == .timedOut {
+            log("(packet-tunnel) no network path reported within 10s; starting anyway")
+        }
     }
 
     private func reportDefaultInterface(_ listener: LibboxInterfaceUpdateListenerProtocol, _ path: Network.NWPath) {
@@ -248,6 +335,13 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         guard let path = nwMonitor?.currentPath else { return true }
         if path.status == .unsatisfied { return false }
         return path.availableInterfaces.contains { !$0.name.hasPrefix("utun") }
+    }
+
+    /// Whether the underlay is metered (cellular, or a personal hotspot). The
+    /// watchdog widens its interval over one: every round costs a TLS handshake
+    /// out of the user's data allowance, and this process runs 24/7.
+    var isUpstreamExpensive: Bool {
+        nwMonitor?.currentPath.isExpensive ?? false
     }
 
     func findConnectionOwner(_ ipProtocol: Int32, sourceAddress: String?, sourcePort: Int32, destinationAddress: String?, destinationPort: Int32) throws -> LibboxConnectionOwner {
@@ -296,8 +390,12 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         }
     }
 
+    /// Whether this session is a kill switch — the app sets
+    /// `NEVPNProtocol.includeAllNetworks` to the same value, and sing-box needs
+    /// to know so it does not route around a tunnel nothing may escape.
+    /// Off unless the user asked for it (see SingboxMmPlugin.configure).
     func includeAllNetworks() -> Bool {
-        false
+        tunnel?.includeAllNetworksRequested ?? false
     }
 
     func localDNSTransport() -> (any LibboxLocalDNSTransportProtocol)? {
@@ -342,7 +440,10 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
     }
 
     func serviceReload() throws {
-        let _: Void = try runBlocking { [weak self] completion in
+        // 30s rather than the default: a reload restarts the core and can wait
+        // on a handshake. Still bounded, because this blocks a Go thread while
+        // the detached Task below may need one.
+        let _: Void = try runBlocking(timeout: 30) { [weak self] completion in
             guard let self, let tunnel = self.tunnel else {
                 completion(.success(()))
                 return
@@ -358,8 +459,16 @@ class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, Lib
         }
     }
 
+    /// sing-box asked for the service to stop — which, coming from the core, is
+    /// a request to end the *session*, not merely to close the core.
+    ///
+    /// Closing the core alone left `NEPacketTunnelNetworkSettings` applied: the
+    /// default route still pointed into a utun with nothing reading it, so the
+    /// user lost the internet entirely (not "the VPN dropped" — "there is no
+    /// network") while iOS and the app both went on reporting `connected`, with
+    /// the session timer running. Only a manual toggle cleared it.
     func serviceStop() throws {
-        tunnel?.stopService()
+        tunnel?.shutdownTunnel()
     }
 
     func setSystemProxyEnabled(_ enabled: Bool) throws {
