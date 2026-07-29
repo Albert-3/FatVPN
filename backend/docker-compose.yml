@@ -8,7 +8,9 @@ services:
       POSTGRES_PASSWORD: fatvpn_dev
       POSTGRES_DB: fatvpn
     ports:
-      - "5433:5432"
+      # Localhost only — Docker-published ports bypass ufw, so this bind is the
+      # real protection for Postgres.
+      - "127.0.0.1:5433:5432"
     volumes:
       - fatvpn-postgres-data:/var/lib/postgresql/data
 
@@ -17,7 +19,10 @@ services:
     container_name: fatvpn-bff
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5030:5030"
+      # Public: the shipped app builds still point at http://87.121.221.229:5030.
+      # Kept open alongside HTTPS so phones already in people's hands keep
+      # working; retire it once every build has moved to the domain.
+      - "5030:5030"
     environment:
       ConnectionStrings__FatVpn: "Host=fatvpn-postgres;Port=5432;Database=fatvpn;Username=fatvpn;Password=fatvpn_dev"
       Jwt__Secret: "${JWT_SECRET}"
@@ -34,8 +39,42 @@ services:
       # looks like it came from the proxy and shares one rate-limit bucket.
       ReverseProxy__KnownNetworks__0: "172.16.0.0/12"
       ASPNETCORE_ENVIRONMENT: "Production"
+      Trial__DurationMinutes: "0"
+      Trial__DurationDays: "2"
     depends_on:
       - postgres
+    networks:
+      - default
+      # Shared with the bot's compose, so the bot reaches us at
+      # http://fatvpn-bff:5030. Remove this and pairing stops working.
+      - fatvpn_default
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: fatvpn-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named volumes rather than bind mounts: /data holds the issued
+      # certificate and the ACME account key, and losing those means re-issuing
+      # on every deploy — which Let's Encrypt rate-limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - bff
+    networks:
+      - default
 
 volumes:
   fatvpn-postgres-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  # Declared by the bot's compose (/opt/FatVPN/docker-compose.yml), which is not
+  # in this repository. External so a deploy here never tries to own it.
+  fatvpn_default:
+    external: true

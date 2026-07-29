@@ -11,8 +11,10 @@ FatVPN is a cross-platform VPN app (Flutter mobile + .NET 10 BFF + Telegram bot)
 All commands run from the `backend/` directory unless noted.
 
 ```bash
-# Start Postgres (required before running the API)
-docker-compose up -d
+# Start Postgres (required before running the API). Name the service: a bare
+# `up -d` would also start the bff and caddy containers, which is what the
+# server wants and a developer running `dotnet run` does not.
+docker compose up -d postgres
 
 # Build
 dotnet build FatVpn.Bff.slnx
@@ -125,11 +127,16 @@ Every public endpoint is rate limited per IP (`RateLimiting:*` — 300/min globa
 
 | Component | Path | Container |
 |---|---|---|
-| BFF | `/opt/fatvpn-bff/backend/` | `fatvpn-bff` (**public** `0.0.0.0:5030`, HTTP) |
+| BFF | `/opt/fatvpn-bff/backend/` | `fatvpn-bff` (**public** `0.0.0.0:5030`, HTTP — see below) |
+| Caddy | same compose | `fatvpn-caddy` (`80`/`443`, TLS for `api.fatklyuchi.space`) |
 | Bot (Python) | `/opt/FatVPN/` | `fatvpn-bot` |
 | Postgres | — | `fatvpn-postgres` (`127.0.0.1:5433`, localhost-only) |
 
-> **State as of 2026-07-06:** BFF is exposed publicly over **HTTP** for the pairing demo (app APK points at `http://87.121.221.229:5030`). The BFF checkout is on branch **`feat/pairing-onboarding`**, not `master` — merge once validated. `ufw` is enabled (allows `22`/`5030`/`4444`). Postgres was moved off `0.0.0.0` to localhost. Next: HTTPS + domain (see `docs/app-bff-integration.md` pairing section).
+> **HTTPS is live (2026-07-30): `https://api.fatklyuchi.space`.** Caddy runs beside the BFF in the same compose and holds a Let's Encrypt certificate; `http://` redirects to it. The domain is the customer's, in **their** Cloudflare account, delegated to Cloudflare nameservers — but every record is **`DNS only` (grey cloud), and must stay that way**: the free proxy passes only HTTP/HTTPS on its own port list and no UDP at all, so an orange cloud kills VLESS on a non-standard port and Hysteria2 (QUIC) outright. That is what took the nodes down the one time it was tried. `sub.fatklyuchi.space` is separately fronted by **Yandex Cloud CDN**, not Cloudflare.
+>
+> Plain `http://87.121.221.229:5030` is **deliberately still open**: builds already on people's phones point at it. Retire it only once every shipped build uses the domain — a new APK is not enough, the old ones have to be gone.
+>
+> `ufw` allows `22`/`80`/`443`/`5030`/`4444`. Postgres is bound to localhost. The checkout is on `master`; deployment config (`docker-compose.yml`, `Caddyfile`) is tracked, and only `.env` is local — so `git pull` on the server is clean.
 
 Docker network `fatvpn_default` is shared between `fatvpn-bot` and `fatvpn-bff` so the bot reaches BFF via `http://fatvpn-bff:5030`. The network is declared in both compose files — no manual `docker network connect` needed after restarts:
 - Bot compose (`/opt/FatVPN/docker-compose.yml`): `networks.default.name: fatvpn_default`

@@ -1,0 +1,3 @@
+api.fatklyuchi.space {
+	reverse_proxy bff:5030
+}
