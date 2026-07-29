@@ -42,6 +42,10 @@ internal static class TestHelpers
         RefreshTokenLifetime = TimeSpan.FromDays(90),
     };
 
+    /// <summary>Matches the shipped default (3 devices per key) unless a test
+    /// wants a different ceiling.</summary>
+    public static AuthOptions Auth(int maxDevicesPerKey = 3) => new() { MaxDevicesPerKey = maxDevicesPerKey };
+
     public static IOptions<T> Opt<T>(T value) where T : class => Options.Create(value);
 
     public static JwtTokenService JwtService() => new(Opt(Jwt()));

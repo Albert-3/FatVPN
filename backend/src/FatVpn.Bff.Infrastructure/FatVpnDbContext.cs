@@ -9,6 +9,7 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Trial> Trials => Set<Trial>();
     public DbSet<Token> Tokens => Set<Token>();
+    public DbSet<TokenDevice> TokenDevices => Set<TokenDevice>();
     public DbSet<TrialSubscriptionSlot> TrialSubscriptionSlots => Set<TrialSubscriptionSlot>();
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<PairingCode> PairingCodes => Set<PairingCode>();
@@ -24,10 +25,19 @@ public class FatVpnDbContext(DbContextOptions<FatVpnDbContext> options) : DbCont
         modelBuilder.Entity<PairingCode>().HasIndex(p => p.PollToken).IsUnique();
         modelBuilder.Entity<RefreshToken>().HasIndex(r => r.TokenHash).IsUnique();
 
+        // The device cap, enforced by the database rather than by a count-then-
+        // insert: only one device can hold a given slot of a given key, and a
+        // device can hold only one slot. Racing redemptions block on these and
+        // then see the winner's committed row, so the outcome doesn't depend on
+        // who read first.
+        modelBuilder.Entity<TokenDevice>().HasIndex(d => new { d.TokenId, d.SlotIndex }).IsUnique();
+        modelBuilder.Entity<TokenDevice>().HasIndex(d => new { d.TokenId, d.DeviceKeyHash }).IsUnique();
+
         // RefreshTokens is the fastest-growing table (one row per /auth/refresh,
         // ~48/device/day). Without these, revoking a session family and the
         // nightly cleanup both sequentially scan it.
         modelBuilder.Entity<RefreshToken>().HasIndex(r => new { r.AccountId, r.RevokedAt });
+        modelBuilder.Entity<RefreshToken>().HasIndex(r => new { r.FamilyId, r.RevokedAt });
         modelBuilder.Entity<RefreshToken>().HasIndex(r => new { r.TokenId, r.RevokedAt });
         modelBuilder.Entity<RefreshToken>().HasIndex(r => r.ExpiresAt);
 

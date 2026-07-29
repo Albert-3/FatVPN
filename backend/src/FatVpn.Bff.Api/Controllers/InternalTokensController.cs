@@ -17,6 +17,7 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
     public async Task<IActionResult> RegisterToken([FromBody] RegisterTokenRequest request, CancellationToken ct)
     {
         var token = await db.Tokens.SingleOrDefaultAsync(t => t.ShortToken == request.ShortToken, ct);
+        var isReissue = token is not null;
         if (token is null)
         {
             token = new Token
@@ -31,9 +32,16 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
         token.RemnawaveSubscriptionId = request.RemnawaveSubscriptionId;
         // Npgsql rejects a non-zero offset on timestamptz; the bot sends Moscow time.
         token.ExpiresAt = request.ExpiresAt.ToUniversalTime();
-        // Reissuing a key unbinds it, so a user who changed/reinstalled their
-        // phone can re-activate on the new device ("Поменять ключ" in the bot).
+        // Reissuing a key frees every device slot, so a user who replaced their
+        // phones can re-activate on the new ones ("Поменять ключ" in the bot).
+        // The legacy single-slot column is cleared too — it is no longer read,
+        // but a rollback to the previous image would read it again.
         token.BoundDeviceKeyHash = null;
+        if (isReissue)
+        {
+            var tokenId = token.Id;
+            await db.TokenDevices.Where(d => d.TokenId == tokenId).ExecuteDeleteAsync(ct);
+        }
 
         // Whose key this is, when the bot says so. Deliberately does NOT touch
         // the account's active subscription: handing the user a code to look at

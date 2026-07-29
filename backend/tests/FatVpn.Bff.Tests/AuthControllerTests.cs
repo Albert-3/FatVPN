@@ -10,9 +10,12 @@ namespace FatVpn.Bff.Tests;
 public class AuthControllerTests
 {
     private static AuthController NewController(
-        Infrastructure.FatVpnDbContext db, Infrastructure.Auth.JwtOptions? jwt = null)
+        Infrastructure.FatVpnDbContext db,
+        Infrastructure.Auth.JwtOptions? jwt = null,
+        int maxDevicesPerKey = 3)
         => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(),
                TestHelpers.Opt(new TrialOptions()), TestHelpers.Opt(jwt ?? TestHelpers.Jwt()),
+               TestHelpers.Opt(TestHelpers.Auth(maxDevicesPerKey)),
                Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthController>.Instance);
 
     [Fact]
@@ -76,11 +79,12 @@ public class AuthControllerTests
 
         Assert.IsType<OkObjectResult>(result);
         var token = await db.Tokens.AsNoTracking().SingleAsync(t => t.ShortToken == "K");
-        Assert.NotNull(token.BoundDeviceKeyHash);
+        var slot = Assert.Single(await db.TokenDevices.AsNoTracking().Where(d => d.TokenId == token.Id).ToListAsync());
+        Assert.Equal(0, slot.SlotIndex);
     }
 
     [Fact]
-    public async Task ExchangeToken_SameDeviceReentersKey_Succeeds()
+    public async Task ExchangeToken_SameDeviceReentersKey_SucceedsWithoutTakingASecondSlot()
     {
         using var db = TestHelpers.NewDb();
         db.Tokens.Add(new Token
@@ -95,10 +99,13 @@ public class AuthControllerTests
         var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
 
         Assert.IsType<OkObjectResult>(result);
+        // Re-entering a key on the same phone (reinstall, sign-out, second paste)
+        // must not eat one of the other phones' slots.
+        Assert.Single(await db.TokenDevices.AsNoTracking().ToListAsync());
     }
 
     [Fact]
-    public async Task ExchangeToken_DifferentDevice_ReturnsConflict()
+    public async Task ExchangeToken_ThreeDevices_AllSucceedAndTheFourthConflicts()
     {
         using var db = TestHelpers.NewDb();
         db.Tokens.Add(new Token
@@ -109,17 +116,77 @@ public class AuthControllerTests
         });
         await db.SaveChangesAsync();
 
-        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
-        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-B"), default);
+        foreach (var device in new[] { "device-A", "device-B", "device-C" })
+        {
+            Assert.IsType<OkObjectResult>(
+                await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", device), default));
+        }
 
-        Assert.IsType<ConflictResult>(result);
+        var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        // The app tells "already on 3 devices" from "bound to another phone" by
+        // this code, so it must survive refactors of the response shape.
+        Assert.Contains(AuthController.DeviceLimitError, conflict.Value!.ToString());
+        Assert.Equal(3, await db.TokenDevices.CountAsync());
     }
 
     [Fact]
-    public async Task ExchangeToken_NoAttestation_IssuesWithoutBinding()
+    public async Task RegisterToken_Reissue_FreesEveryDeviceSlot()
+    {
+        // "Поменять ключ" in the bot is how a user who replaced their phones gets
+        // back in, so a reissue has to release all three slots, not just one.
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            RemnawaveSubscriptionId = "sub-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        foreach (var device in new[] { "device-A", "device-B", "device-C" })
+        {
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", device), default);
+        }
+        Assert.IsType<ConflictObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default));
+
+        await new InternalTokensController(db).RegisterToken(
+            new RegisterTokenRequest("K", "sub-1", DateTimeOffset.UtcNow.AddDays(30)), default);
+
+        Assert.Empty(await db.TokenDevices.AsNoTracking().ToListAsync());
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default));
+    }
+
+    [Fact]
+    public async Task ExchangeToken_SecondDevice_ConflictsWhenTheLimitIsOne()
+    {
+        // The old "one key = one phone" rule is now just Auth:MaxDevicesPerKey = 1.
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        await NewController(db, maxDevicesPerKey: 1)
+            .ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+        var result = await NewController(db, maxDevicesPerKey: 1)
+            .ExchangeToken(new ExchangeTokenRequest("K", "device-B"), default);
+
+        Assert.IsType<ConflictObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task ExchangeToken_NoAttestation_IssuesWithoutTakingASlot()
     {
         // Older app builds send no attestation; the session is still issued and
-        // the key stays unbound so a real device can claim it later.
+        // every slot stays free so real devices can claim them later.
         using var db = TestHelpers.NewDb();
         db.Tokens.Add(new Token
         {
@@ -132,8 +199,7 @@ public class AuthControllerTests
         var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K"), default);
 
         Assert.IsType<OkObjectResult>(result);
-        var token = await db.Tokens.AsNoTracking().SingleAsync(t => t.ShortToken == "K");
-        Assert.Null(token.BoundDeviceKeyHash);
+        Assert.Empty(await db.TokenDevices.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -315,7 +381,7 @@ public class AuthControllerTests
     public async Task Refresh_ReusedRotatedToken_RevokesWholeFamily()
     {
         // Reusing an already-rotated (revoked, unexpired) token signals theft:
-        // every active refresh token for the same account must be revoked.
+        // every active refresh token in that rotation chain must be revoked.
         using var db = TestHelpers.NewDb();
         var refreshSvc = TestHelpers.RefreshService();
         var account = new Account { Id = Guid.NewGuid(), ExpiresAt = DateTimeOffset.UtcNow.AddDays(5) };
@@ -324,7 +390,8 @@ public class AuthControllerTests
         var (staleRaw, stale) = refreshSvc.Create(account.Id, null);
         stale.RevokedAt = DateTimeOffset.UtcNow.AddMinutes(-10); // rotated out long ago
         db.RefreshTokens.Add(stale);
-        var (_, live) = refreshSvc.Create(account.Id, null); // the current live token
+        // What that rotation handed back — same session, so same family.
+        var (_, live) = refreshSvc.Create(account.Id, null, stale.SessionStartedAt, stale.FamilyId);
         db.RefreshTokens.Add(live);
         await db.SaveChangesAsync();
 
@@ -374,7 +441,7 @@ public class AuthControllerTests
         var (raw, entity) = refreshSvc.Create(account.Id, null);
         entity.RevokedAt = DateTimeOffset.UtcNow.AddSeconds(-2);
         db.RefreshTokens.Add(entity);
-        var (_, live) = refreshSvc.Create(account.Id, null);
+        var (_, live) = refreshSvc.Create(account.Id, null, entity.SessionStartedAt, entity.FamilyId);
         db.RefreshTokens.Add(live);
         await db.SaveChangesAsync();
 
@@ -429,7 +496,7 @@ public class AuthControllerTests
         await db.SaveChangesAsync();
 
         var controller = new AuthController(db, TestHelpers.JwtService(), refreshSvc,
-            TestHelpers.Opt(new TrialOptions()), TestHelpers.Opt(jwt),
+            TestHelpers.Opt(new TrialOptions()), TestHelpers.Opt(jwt), TestHelpers.Opt(TestHelpers.Auth()),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthController>.Instance);
         Assert.IsType<OkObjectResult>(await controller.Refresh(new RefreshRequest(raw), default));
 

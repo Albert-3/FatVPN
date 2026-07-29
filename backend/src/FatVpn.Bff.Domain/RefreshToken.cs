@@ -18,6 +18,16 @@ public class RefreshToken
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>
+    /// The chain of rotations this token belongs to — one per sign-in, carried
+    /// across every rotation. Reuse-detection revokes a family, and that used to
+    /// mean the whole account: with one key on three phones, a single phone
+    /// replaying a spent token (restored backup, cloned install) would sign the
+    /// other two out of a paid subscription. Scoping it here keeps the blast
+    /// radius at the device that actually leaked.
+    /// </summary>
+    public Guid FamilyId { get; set; }
+
+    /// <summary>
     /// When the session this token belongs to first started, carried across every
     /// rotation. Rotation used to hand out a full lifetime each time, so a phone
     /// that opened the app once a week stayed signed in forever; this is what

@@ -52,6 +52,14 @@ builder.Services.AddOptions<JwtOptions>()
     .Validate(o => o.RefreshTokenLifetime > TimeSpan.Zero, "Jwt:RefreshTokenLifetime must be positive.")
     .ValidateOnStart();
 
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection("Auth"))
+    // Zero would refuse every device including the first, and a negative value
+    // would make the slot-claiming UPDATE match nothing — both lock every user
+    // out of their own key, so fail at startup instead.
+    .Validate(o => o.MaxDevicesPerKey >= 1, "Auth:MaxDevicesPerKey must be at least 1.")
+    .ValidateOnStart();
+
 builder.Services.AddOptions<RemnawaveOptions>()
     .Bind(builder.Configuration.GetSection("Remnawave"))
     .Validate(o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out _), "Remnawave:BaseUrl must be an absolute URL.")

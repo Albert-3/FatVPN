@@ -26,10 +26,11 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
     private PairController NewPairController()
         => new(postgres.NewDb(), TestHelpers.JwtService(), TestHelpers.RefreshService());
 
-    private AuthController NewAuthController()
+    private AuthController NewAuthController(int maxDevicesPerKey = 3)
         => new(postgres.NewDb(), TestHelpers.JwtService(), TestHelpers.RefreshService(),
                TestHelpers.Opt(new TrialOptions { DeviceKeySalt = "salt" }),
                TestHelpers.Opt(TestHelpers.Jwt()),
+               TestHelpers.Opt(TestHelpers.Auth(maxDevicesPerKey)),
                NullLogger<AuthController>.Instance);
 
     private TrialController NewTrialController()
@@ -111,7 +112,8 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
         var accountId = Guid.NewGuid();
         var (raw, stale) = refreshSvc.Create(accountId, null);
         stale.RevokedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
-        var (_, live) = refreshSvc.Create(accountId, null);
+        // The successor that rotation handed back: same session, same family.
+        var (_, live) = refreshSvc.Create(accountId, null, stale.SessionStartedAt, stale.FamilyId);
         await using (var seed = postgres.NewDb())
         {
             seed.Accounts.Add(new Account { Id = accountId, ExpiresAt = DateTimeOffset.UtcNow.AddDays(30) });
@@ -124,6 +126,37 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
 
         await using var db = postgres.NewDb();
         Assert.False(await db.RefreshTokens.AnyAsync(r => r.RevokedAt == null));
+    }
+
+    [SkippableFact]
+    public async Task Refresh_ReuseOnOneDevice_LeavesTheOtherDevicesSignedIn()
+    {
+        RequireDocker();
+        await postgres.ResetAsync();
+
+        // One key, three phones — three independent sessions on one account. The
+        // phone that replays a spent token must not take the other two down with
+        // it; before families were scoped, a restored backup did exactly that.
+        var refreshSvc = TestHelpers.RefreshService();
+        var accountId = Guid.NewGuid();
+        var (replayed, compromised) = refreshSvc.Create(accountId, null);
+        compromised.RevokedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var (_, phoneTwo) = refreshSvc.Create(accountId, null);
+        var (_, phoneThree) = refreshSvc.Create(accountId, null);
+        await using (var seed = postgres.NewDb())
+        {
+            seed.Accounts.Add(new Account { Id = accountId, ExpiresAt = DateTimeOffset.UtcNow.AddDays(30) });
+            seed.RefreshTokens.AddRange(compromised, phoneTwo, phoneThree);
+            await seed.SaveChangesAsync();
+        }
+
+        Assert.IsType<UnauthorizedResult>(
+            await NewAuthController().Refresh(new RefreshRequest(replayed), default));
+
+        await using var db = postgres.NewDb();
+        var live = await db.RefreshTokens.AsNoTracking()
+            .Where(r => r.RevokedAt == null).Select(r => r.Id).ToListAsync();
+        Assert.Equal(new[] { phoneTwo.Id, phoneThree.Id }.Order(), live.Order());
     }
 
     [SkippableFact]
@@ -146,28 +179,56 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
     }
 
     [SkippableFact]
-    public async Task ExchangeToken_TwoDevicesRaceOneKey_OnlyOneBinds()
+    public async Task ExchangeToken_ManyDevicesRaceOneKey_AdmitsExactlyTheLimit()
     {
         RequireDocker();
         await postgres.ResetAsync();
-
-        await using (var seed = postgres.NewDb())
-        {
-            seed.Tokens.Add(new Token
-            {
-                Id = Guid.NewGuid(), ShortToken = "RACEKEY",
-                RemnawaveSubscriptionId = "sub", ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
-                CreatedAt = DateTimeOffset.UtcNow,
-            });
-            await seed.SaveChangesAsync();
-        }
+        await SeedRaceKeyAsync();
 
         var results = await Task.WhenAll(Enumerable.Range(0, Racers).Select(i =>
             NewAuthController().ExchangeToken(
                 new ExchangeTokenRequest("RACEKEY", $"device-{i}-{new string('x', 20)}"), default)));
 
-        Assert.Equal(1, results.Count(r => r is OkObjectResult));
-        Assert.Equal(Racers - 1, results.Count(r => r is ConflictResult));
+        // Counting the rows and then deciding would let all eight through; the
+        // unique slot index is what holds the line at three.
+        Assert.Equal(3, results.Count(r => r is OkObjectResult));
+        Assert.Equal(Racers - 3, results.Count(r => r is ConflictObjectResult));
+
+        await using var db = postgres.NewDb();
+        var slots = await db.TokenDevices.AsNoTracking().Select(d => d.SlotIndex).ToListAsync();
+        Assert.Equal([0, 1, 2], slots.Order());
+    }
+
+    [SkippableFact]
+    public async Task ExchangeToken_OneDeviceRacesItself_TakesASingleSlot()
+    {
+        RequireDocker();
+        await postgres.ResetAsync();
+        await SeedRaceKeyAsync();
+
+        // One phone firing several exchanges at once: the unique index rejects the
+        // duplicate rows, and every claimed-but-unused slot must be given back.
+        var device = $"device-solo-{new string('x', 20)}";
+        var results = await Task.WhenAll(Enumerable.Range(0, Racers).Select(_ =>
+            NewAuthController().ExchangeToken(new ExchangeTokenRequest("RACEKEY", device), default)));
+
+        Assert.All(results, r => Assert.IsType<OkObjectResult>(r));
+
+        await using var db = postgres.NewDb();
+        // One row, and the other two slots left free for the user's other phones.
+        Assert.Equal(1, await db.TokenDevices.CountAsync());
+    }
+
+    private async Task SeedRaceKeyAsync()
+    {
+        await using var seed = postgres.NewDb();
+        seed.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(), ShortToken = "RACEKEY",
+            RemnawaveSubscriptionId = "sub", ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await seed.SaveChangesAsync();
     }
 
     [SkippableFact]

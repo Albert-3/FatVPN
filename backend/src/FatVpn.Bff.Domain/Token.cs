@@ -8,9 +8,10 @@ public class Token
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
-    /// Salted hash of the device that first redeemed this key. Null until first
-    /// use; a different device presenting the same key is refused (one key = one
-    /// phone). Reset by <c>/internal/tokens</c> reissue so a new phone can claim it.
+    /// Salted hash of the device that first redeemed this key, back when a key
+    /// was one phone's alone. Superseded by <see cref="TokenDevice"/> and no
+    /// longer read — kept so rolling back to the previous image finds the column
+    /// it expects. Still cleared on reissue for that same reason.
     public string? BoundDeviceKeyHash { get; set; }
 
     /// The <see cref="Account"/> this key belongs to, when the bot told us whose

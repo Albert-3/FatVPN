@@ -66,7 +66,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var db = NewDbCore();
         await db.Database.ExecuteSqlRawAsync(
-            """TRUNCATE "RefreshTokens", "PairingCodes", "Accounts", "Trials", "Devices", "Tokens" CASCADE;""");
+            """TRUNCATE "RefreshTokens", "PairingCodes", "Accounts", "Trials", "Devices", "TokenDevices", "Tokens" CASCADE;""");
     }
 }
 
