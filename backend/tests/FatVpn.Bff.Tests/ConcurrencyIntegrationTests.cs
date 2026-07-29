@@ -24,14 +24,25 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
         => Skip.If(postgres.ConnectionString is null, "Docker is not available; skipping the PostgreSQL integration tests.");
 
     private PairController NewPairController()
-        => new(postgres.NewDb(), TestHelpers.JwtService(), TestHelpers.RefreshService());
+    {
+        // One context per controller, as a request gets — and the slot service
+        // must share it, or it would not see rows the controller just wrote.
+        var db = postgres.NewDb();
+        return new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(),
+                   TestHelpers.Opt(new TrialOptions { DeviceKeySalt = "salt" }),
+                   TestHelpers.Slots(db));
+    }
 
     private AuthController NewAuthController(int maxDevicesPerKey = 3)
-        => new(postgres.NewDb(), TestHelpers.JwtService(), TestHelpers.RefreshService(),
-               TestHelpers.Opt(new TrialOptions { DeviceKeySalt = "salt" }),
-               TestHelpers.Opt(TestHelpers.Jwt()),
-               TestHelpers.Opt(TestHelpers.Auth(maxDevicesPerKey)),
-               NullLogger<AuthController>.Instance);
+    {
+        var db = postgres.NewDb();
+        return new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(),
+                   TestHelpers.Opt(new TrialOptions { DeviceKeySalt = "salt" }),
+                   TestHelpers.Opt(TestHelpers.Jwt()),
+                   TestHelpers.Opt(TestHelpers.Auth(maxDevicesPerKey)),
+                   TestHelpers.Slots(db, maxDevicesPerKey),
+                   NullLogger<AuthController>.Instance);
+    }
 
     private TrialController NewTrialController()
         => new(postgres.NewDb(), TestHelpers.JwtService(), TestHelpers.RefreshService(),
@@ -179,7 +190,7 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
     }
 
     [SkippableFact]
-    public async Task ExchangeToken_ManyDevicesRaceOneKey_AdmitsExactlyTheLimit()
+    public async Task ExchangeToken_ManyDevicesRaceOneKey_NeverExceedsTheLimit()
     {
         RequireDocker();
         await postgres.ResetAsync();
@@ -189,14 +200,19 @@ public class ConcurrencyIntegrationTests(PostgresFixture postgres)
             NewAuthController().ExchangeToken(
                 new ExchangeTokenRequest("RACEKEY", $"device-{i}-{new string('x', 20)}"), default)));
 
-        // Counting the rows and then deciding would let all eight through; the
-        // unique slot index is what holds the line at three.
-        Assert.Equal(3, results.Count(r => r is OkObjectResult));
-        Assert.Equal(Racers - 3, results.Count(r => r is ConflictObjectResult));
+        // Eight phones arriving at once now evict each other rather than queue,
+        // so *who* gets in is genuinely racy and asserting on it would be a coin
+        // toss. What must never bend is the cap.
+        Assert.All(results, r => Assert.True(r is OkObjectResult or ConflictObjectResult,
+            $"unexpected {r.GetType().Name}"));
 
         await using var db = postgres.NewDb();
         var slots = await db.TokenDevices.AsNoTracking().Select(d => d.SlotIndex).ToListAsync();
-        Assert.Equal([0, 1, 2], slots.Order());
+        // Counting rows and then deciding would let all eight through; the unique
+        // slot index is what holds the line — one device per slot, three slots.
+        Assert.InRange(slots.Count, 1, 3);
+        Assert.Equal(slots.Count, slots.Distinct().Count());
+        Assert.All(slots, s => Assert.InRange(s, 0, 2));
     }
 
     [SkippableFact]

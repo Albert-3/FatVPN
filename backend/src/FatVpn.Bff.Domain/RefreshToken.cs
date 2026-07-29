@@ -36,9 +36,32 @@ public class RefreshToken
     /// </summary>
     public DateTimeOffset SessionStartedAt { get; set; }
 
+    /// <summary>
+    /// Which device this session belongs to, carried across every rotation. It is
+    /// the same salted hash a <see cref="TokenDevice"/> slot is keyed by, which is
+    /// what lets the server answer two questions it otherwise could not: when was
+    /// this device last heard from (refresh moves the slot's clock), and which
+    /// sessions must end when its slot is taken away. Null for sessions opened by
+    /// pairing, by an app build that sends no attestation, or before this column
+    /// existed — those hold no slot, so there is nothing to tie them to.
+    /// </summary>
+    public string? DeviceKeyHash { get; set; }
+
     /// <summary>Set when the token is rotated out or explicitly revoked; a
     /// non-null value means the token is no longer usable.</summary>
     public DateTimeOffset? RevokedAt { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="RevokedAt"/> was set by an ordinary rotation, as
+    /// opposed to a session someone ended: a device evicted from its slot, a
+    /// sign-out, or a family revoked after detected reuse. Only a rotation may be
+    /// forgiven inside <c>Jwt:RefreshGraceWindow</c> — without this distinction
+    /// the window resurrected sessions that had just been revoked on purpose,
+    /// because both look identical once the timestamp is set. Deciding it from
+    /// "does the family still have a live token" cannot work: in a genuine race
+    /// the losers may look before the winner has committed its successor.
+    /// </summary>
+    public bool RotatedOut { get; set; }
 
     public bool IsActive(DateTimeOffset now) => RevokedAt is null && ExpiresAt > now;
 }

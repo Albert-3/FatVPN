@@ -16,6 +16,7 @@ public class AuthControllerTests
         => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(),
                TestHelpers.Opt(new TrialOptions()), TestHelpers.Opt(jwt ?? TestHelpers.Jwt()),
                TestHelpers.Opt(TestHelpers.Auth(maxDevicesPerKey)),
+               TestHelpers.Slots(db, maxDevicesPerKey),
                Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthController>.Instance);
 
     [Fact]
@@ -71,6 +72,8 @@ public class AuthControllerTests
         {
             Id = Guid.NewGuid(),
             ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
         });
         await db.SaveChangesAsync();
@@ -79,7 +82,8 @@ public class AuthControllerTests
 
         Assert.IsType<OkObjectResult>(result);
         var token = await db.Tokens.AsNoTracking().SingleAsync(t => t.ShortToken == "K");
-        var slot = Assert.Single(await db.TokenDevices.AsNoTracking().Where(d => d.TokenId == token.Id).ToListAsync());
+        var slot = Assert.Single(await db.TokenDevices.AsNoTracking()
+            .Where(d => d.SubscriptionId == token.RemnawaveSubscriptionId).ToListAsync());
         Assert.Equal(0, slot.SlotIndex);
     }
 
@@ -91,6 +95,8 @@ public class AuthControllerTests
         {
             Id = Guid.NewGuid(),
             ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
         });
         await db.SaveChangesAsync();
@@ -104,72 +110,301 @@ public class AuthControllerTests
         Assert.Single(await db.TokenDevices.AsNoTracking().ToListAsync());
     }
 
-    [Fact]
-    public async Task ExchangeToken_ThreeDevices_AllSucceedAndTheFourthConflicts()
+    private static string Hash(string device)
+        => Infrastructure.DeviceKeyHasher.Compute(device, new TrialOptions().DeviceKeySalt);
+
+    /// <summary>The raw refresh secret out of an /auth/token or /auth/refresh
+    /// response — the only place it exists, since the table stores its hash.</summary>
+    private static string RawRefresh(IActionResult result)
     {
-        using var db = TestHelpers.NewDb();
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(result).Value);
+        return System.Text.Json.JsonDocument.Parse(json)
+            .RootElement.GetProperty("refreshToken").GetString()!;
+    }
+
+    /// <summary>Fills every slot of key <c>K</c> and spreads the devices' last
+    /// contact a day apart, oldest first, so which one is stalest is a fact of
+    /// the fixture rather than of how fast the test happened to run. Returns each
+    /// device's refresh secret.</summary>
+    private static async Task<Dictionary<string, string>> KeyOnDevicesAsync(
+        Infrastructure.FatVpnDbContext db, params string[] devices)
+    {
         db.Tokens.Add(new Token
         {
             Id = Guid.NewGuid(),
             ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
         });
+        await db.SaveChangesAsync();
+
+        var secrets = new Dictionary<string, string>();
+        for (var i = 0; i < devices.Length; i++)
+        {
+            secrets[devices[i]] = RawRefresh(
+                await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", devices[i]), default));
+
+            var slot = await db.TokenDevices.SingleAsync(d => d.DeviceKeyHash == Hash(devices[i]));
+            slot.LastSeenAt = DateTimeOffset.UtcNow.AddDays(i - devices.Length);
+            await db.SaveChangesAsync();
+        }
+
+        return secrets;
+    }
+
+    private static Task<bool> HoldsSlotAsync(Infrastructure.FatVpnDbContext db, string device)
+        => db.TokenDevices.AsNoTracking().AnyAsync(d => d.DeviceKeyHash == Hash(device));
+
+    [Fact]
+    public async Task ExchangeToken_TwoCodesForOneSubscription_ShareTheSameSlots()
+    {
+        // The bot mints a new code every time it shows a key's screen, and slots
+        // used to hang off the code row — so four codes meant twelve devices on
+        // one subscription. They are the same key to the user, and now to us.
+        using var db = TestHelpers.NewDb();
+        foreach (var code in new[] { "CODE-ONE", "CODE-TWO" })
+        {
+            db.Tokens.Add(new Token
+            {
+                Id = Guid.NewGuid(),
+                ShortToken = code,
+                RemnawaveSubscriptionId = "sub-shared",
+                ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+            });
+        }
         await db.SaveChangesAsync();
 
         foreach (var device in new[] { "device-A", "device-B", "device-C" })
         {
             Assert.IsType<OkObjectResult>(
-                await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", device), default));
+                await NewController(db).ExchangeToken(new ExchangeTokenRequest("CODE-ONE", device), default));
         }
 
+        // A fourth phone through the *other* code of the same key: it takes a
+        // slot from that key, it does not get a fresh set of three.
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("CODE-TWO", "device-D"), default));
+
+        Assert.Equal(3, await db.TokenDevices.CountAsync());
+    }
+
+    [Fact]
+    public async Task ExchangeToken_FourthDevice_TakesTheSlotOfTheLeastRecentlySeen()
+    {
+        using var db = TestHelpers.NewDb();
+        await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+
         var result = await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default);
+
+        Assert.IsType<OkObjectResult>(result);
+        // Still three: the cap is what the limit means, and D is in because A —
+        // longest unheard-from — is out. Nobody had to reissue the key.
+        Assert.Equal(3, await db.TokenDevices.CountAsync());
+        Assert.False(await HoldsSlotAsync(db, "device-A"));
+        Assert.True(await HoldsSlotAsync(db, "device-B"));
+        Assert.True(await HoldsSlotAsync(db, "device-C"));
+        Assert.True(await HoldsSlotAsync(db, "device-D"));
+    }
+
+    [Fact]
+    public async Task ExchangeToken_EvictedDevice_LosesItsSessionToo()
+    {
+        using var db = TestHelpers.NewDb();
+        await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+        var evictedHash = Hash("device-A");
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default);
+
+        // Losing the slot has to end the session as well: a phone holding a
+        // 90-day refresh token would otherwise keep working, and the count of
+        // slots would stop describing who is actually connected.
+        var evicted = await db.RefreshTokens.AsNoTracking()
+            .Where(r => r.DeviceKeyHash == evictedHash).ToListAsync();
+        Assert.NotEmpty(evicted);
+        Assert.All(evicted, r => Assert.NotNull(r.RevokedAt));
+
+        var survivorHash = Hash("device-B");
+        var survivor = await db.RefreshTokens.AsNoTracking()
+            .Where(r => r.DeviceKeyHash == survivorHash).ToListAsync();
+        Assert.All(survivor, r => Assert.Null(r.RevokedAt));
+    }
+
+    [Fact]
+    public async Task Refresh_KeepsADeviceOutOfTheEvictionQueue()
+    {
+        using var db = TestHelpers.NewDb();
+        var secrets = await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+
+        // A is the stalest by the fixture — until its owner opens the app.
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).Refresh(new RefreshRequest(secrets["device-A"]), default));
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default);
+
+        // A refreshed, so B is now the stalest and goes instead.
+        Assert.True(await HoldsSlotAsync(db, "device-A"));
+        Assert.False(await HoldsSlotAsync(db, "device-B"));
+    }
+
+    [Fact]
+    public async Task Refresh_AfterTheDeviceWasEvicted_IsRefusedInsideTheGraceWindow()
+    {
+        // The grace window exists for the app racing itself, where the winning
+        // call leaves a live successor. A revoked session has none — and letting
+        // the window forgive that undid the eviction seconds after it happened.
+        using var db = TestHelpers.NewDb();
+        var secrets = await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default);
+
+        Assert.IsType<UnauthorizedResult>(
+            await NewController(db).Refresh(new RefreshRequest(secrets["device-A"]), default));
+    }
+
+    [Fact]
+    public async Task Refresh_AfterSigningOut_IsRefusedInsideTheGraceWindow()
+    {
+        using var db = TestHelpers.NewDb();
+        var secrets = await KeyOnDevicesAsync(db, "device-A");
+
+        await NewController(db).Logout(new RefreshRequest(secrets["device-A"]), default);
+
+        Assert.IsType<UnauthorizedResult>(
+            await NewController(db).Refresh(new RefreshRequest(secrets["device-A"]), default));
+    }
+
+    [Fact]
+    public async Task Logout_GivesTheDeviceSlotBack()
+    {
+        using var db = TestHelpers.NewDb();
+        var secrets = await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+
+        Assert.IsType<NoContentResult>(
+            await NewController(db).Logout(new RefreshRequest(secrets["device-B"]), default));
+
+        // Before this, the only way to free a slot was reissuing the key — which
+        // frees all three and changes it — so a phone that was sold or wiped kept
+        // its place for good.
+        Assert.False(await HoldsSlotAsync(db, "device-B"));
+        Assert.Equal(2, await db.TokenDevices.CountAsync());
+        Assert.True(await HoldsSlotAsync(db, "device-A"));
+    }
+
+    [Fact]
+    public async Task Logout_ReplayedAfterTheSessionEnded_LeavesSlotsAlone()
+    {
+        using var db = TestHelpers.NewDb();
+        var secrets = await KeyOnDevicesAsync(db, "device-A", "device-B", "device-C");
+        await NewController(db).Logout(new RefreshRequest(secrets["device-B"]), default);
+
+        // B comes back and takes a slot again; the old logout call, replayed,
+        // must not dislodge the live session it now has.
+        Assert.IsType<OkObjectResult>(
+            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-B"), default));
+        await NewController(db).Logout(new RefreshRequest(secrets["device-B"]), default);
+
+        Assert.True(await HoldsSlotAsync(db, "device-B"));
+    }
+
+    [Fact]
+    public async Task ExchangeToken_NoDevicesToEvict_StillConflicts()
+    {
+        // maxDevicesPerKey = 0 leaves nothing to take and nothing to free, so the
+        // eviction path must not turn a refusal into an admission.
+        using var db = TestHelpers.NewDb();
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+
+        var result = await NewController(db, maxDevicesPerKey: 0)
+            .ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
 
         var conflict = Assert.IsType<ConflictObjectResult>(result);
         // The app tells "already on 3 devices" from "bound to another phone" by
         // this code, so it must survive refactors of the response shape.
         Assert.Contains(AuthController.DeviceLimitError, conflict.Value!.ToString());
-        Assert.Equal(3, await db.TokenDevices.CountAsync());
+        Assert.Empty(await db.TokenDevices.ToListAsync());
     }
 
     [Fact]
-    public async Task RegisterToken_Reissue_FreesEveryDeviceSlot()
+    public async Task RegisterToken_ReissueOntoANewSubscription_FreesTheOldOnesSlots()
     {
-        // "Поменять ключ" in the bot is how a user who replaced their phones gets
-        // back in, so a reissue has to release all three slots, not just one.
+        // "Поменять ключ" mints a fresh subscription and points the code at it.
+        // Whoever was connected to the old one is connected to nothing now, so
+        // its slots go back — that is how a user who replaced their phones gets in.
         using var db = TestHelpers.NewDb();
-        db.Tokens.Add(new Token
-        {
-            Id = Guid.NewGuid(),
-            ShortToken = "K",
-            RemnawaveSubscriptionId = "sub-1",
-            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
-        });
-        await db.SaveChangesAsync();
+        await SeedKeyAsync(db, "K", "sub-old");
 
         foreach (var device in new[] { "device-A", "device-B", "device-C" })
         {
             await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", device), default);
         }
-        Assert.IsType<ConflictObjectResult>(
-            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default));
+        Assert.Equal(3, await db.TokenDevices.CountAsync());
 
-        await new InternalTokensController(db).RegisterToken(
-            new RegisterTokenRequest("K", "sub-1", DateTimeOffset.UtcNow.AddDays(30)), default);
+        await new InternalTokensController(db, TestHelpers.Slots(db)).RegisterToken(
+            new RegisterTokenRequest("K", "sub-new", DateTimeOffset.UtcNow.AddDays(30)), default);
 
         Assert.Empty(await db.TokenDevices.AsNoTracking().ToListAsync());
-        Assert.IsType<OkObjectResult>(
-            await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-D"), default));
+        // All three can come back on the new subscription without displacing one
+        // another, which a fourth arrival would otherwise have done.
+        foreach (var device in new[] { "device-A", "device-B", "device-C" })
+        {
+            Assert.IsType<OkObjectResult>(
+                await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", device), default));
+        }
+        Assert.Equal(3, await db.TokenDevices.CountAsync());
     }
 
     [Fact]
-    public async Task ExchangeToken_SecondDevice_ConflictsWhenTheLimitIsOne()
+    public async Task RegisterToken_SameSubscriptionAgain_LeavesTheSlotsAlone()
     {
-        // The old "one key = one phone" rule is now just Auth:MaxDevicesPerKey = 1.
+        // The bot also re-posts a code unchanged — to expire it, say. Nothing
+        // about the subscription changed, so nobody lost their connection, and
+        // wiping the slots would have signed three phones out for nothing.
+        using var db = TestHelpers.NewDb();
+        await SeedKeyAsync(db, "K", "sub-same");
+
+        await NewController(db).ExchangeToken(new ExchangeTokenRequest("K", "device-A"), default);
+
+        await new InternalTokensController(db, TestHelpers.Slots(db)).RegisterToken(
+            new RegisterTokenRequest("K", "sub-same", DateTimeOffset.UtcNow.AddDays(30)), default);
+
+        Assert.True(await HoldsSlotAsync(db, "device-A"));
+    }
+
+    private static async Task SeedKeyAsync(
+        Infrastructure.FatVpnDbContext db, string code, string subscriptionId)
+    {
+        db.Tokens.Add(new Token
+        {
+            Id = Guid.NewGuid(),
+            ShortToken = code,
+            RemnawaveSubscriptionId = subscriptionId,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ExchangeToken_SecondDevice_TakesOverWhenTheLimitIsOne()
+    {
+        // The old "one key = one phone" rule is now just Auth:MaxDevicesPerKey = 1
+        // — and the newcomer takes the single slot rather than being turned away.
         using var db = TestHelpers.NewDb();
         db.Tokens.Add(new Token
         {
             Id = Guid.NewGuid(),
             ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
         });
         await db.SaveChangesAsync();
@@ -179,7 +414,10 @@ public class AuthControllerTests
         var result = await NewController(db, maxDevicesPerKey: 1)
             .ExchangeToken(new ExchangeTokenRequest("K", "device-B"), default);
 
-        Assert.IsType<ConflictObjectResult>(result);
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(1, await db.TokenDevices.CountAsync());
+        Assert.True(await HoldsSlotAsync(db, "device-B"));
+        Assert.False(await HoldsSlotAsync(db, "device-A"));
     }
 
     [Fact]
@@ -192,6 +430,8 @@ public class AuthControllerTests
         {
             Id = Guid.NewGuid(),
             ShortToken = "K",
+            // Slots hang off the subscription, so a key without one takes none.
+            RemnawaveSubscriptionId = "sub-K",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(5),
         });
         await db.SaveChangesAsync();
@@ -416,9 +656,11 @@ public class AuthControllerTests
 
         var (raw, entity) = refreshSvc.Create(account.Id, null);
         entity.RevokedAt = DateTimeOffset.UtcNow.AddSeconds(-2);
+        // Rotated out, not revoked — the distinction the grace window turns on.
+        entity.RotatedOut = true;
         db.RefreshTokens.Add(entity);
-        var (_, live) = refreshSvc.Create(account.Id, null); // what the winner handed back
-        db.RefreshTokens.Add(live);
+        var (_, live) = refreshSvc.Create(account.Id, null, entity.SessionStartedAt, entity.FamilyId);
+        db.RefreshTokens.Add(live); // what the winner handed back
         await db.SaveChangesAsync();
 
         var result = await NewController(db).Refresh(new RefreshRequest(raw), default);
@@ -497,6 +739,7 @@ public class AuthControllerTests
 
         var controller = new AuthController(db, TestHelpers.JwtService(), refreshSvc,
             TestHelpers.Opt(new TrialOptions()), TestHelpers.Opt(jwt), TestHelpers.Opt(TestHelpers.Auth()),
+            TestHelpers.Slots(db),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AuthController>.Instance);
         Assert.IsType<OkObjectResult>(await controller.Refresh(new RefreshRequest(raw), default));
 

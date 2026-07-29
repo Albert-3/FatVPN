@@ -262,7 +262,7 @@ public class AccountKeyBindingTests
         db.Accounts.Add(Seeded(db, "sub-active"));
         await db.SaveChangesAsync();
 
-        var result = await new InternalTokensController(db).RegisterToken(
+        var result = await new InternalTokensController(db, TestHelpers.Slots(db)).RegisterToken(
             new RegisterTokenRequest("NEWKEY", "sub-other", DateTimeOffset.UtcNow.AddDays(30), 42),
             default);
 
@@ -278,7 +278,7 @@ public class AccountKeyBindingTests
     {
         using var db = TestHelpers.NewDb();
 
-        await new InternalTokensController(db).RegisterToken(
+        await new InternalTokensController(db, TestHelpers.Slots(db)).RegisterToken(
             new RegisterTokenRequest("K", "sub-1", DateTimeOffset.UtcNow.AddDays(30), 99), default);
 
         var account = await db.Accounts.AsNoTracking().SingleAsync();
@@ -292,7 +292,7 @@ public class AccountKeyBindingTests
         // A bot build that predates the field must keep working exactly as before.
         using var db = TestHelpers.NewDb();
 
-        await new InternalTokensController(db).RegisterToken(
+        await new InternalTokensController(db, TestHelpers.Slots(db)).RegisterToken(
             new RegisterTokenRequest("K", "sub-1", DateTimeOffset.UtcNow.AddDays(30)), default);
 
         Assert.Null((await db.Tokens.AsNoTracking().SingleAsync()).AccountId);

@@ -3,6 +3,7 @@ using System;
 using FatVpn.Bff.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FatVpn.Bff.Infrastructure.Migrations
 {
     [DbContext(typeof(FatVpnDbContext))]
-    partial class FatVpnDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260729224056_MarkRotatedRefreshTokens")]
+    partial class MarkRotatedRefreshTokens
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -95,9 +98,6 @@ namespace FatVpn.Bff.Infrastructure.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("DeviceKeyHash")
-                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
@@ -230,16 +230,15 @@ namespace FatVpn.Bff.Infrastructure.Migrations
                     b.Property<int>("SlotIndex")
                         .HasColumnType("integer");
 
-                    b.Property<string>("SubscriptionId")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<Guid>("TokenId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SubscriptionId", "DeviceKeyHash")
+                    b.HasIndex("TokenId", "DeviceKeyHash")
                         .IsUnique();
 
-                    b.HasIndex("SubscriptionId", "SlotIndex")
+                    b.HasIndex("TokenId", "SlotIndex")
                         .IsUnique();
 
                     b.ToTable("TokenDevices");

@@ -26,4 +26,14 @@ public class PairingCode
     public PairingStatus Status { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
+
+    /// <summary>
+    /// Salted hash of the attestation token of the phone that started this
+    /// attempt, carried from /pair/start so /pair/status can charge the session
+    /// to a device slot. Without it pairing was a way onto a subscription that
+    /// the device cap could not see, and pressing "Подключить через Telegram"
+    /// connected any number of phones. Null for app builds that send nothing,
+    /// which pair exactly as they did before.
+    /// </summary>
+    public string? DeviceKeyHash { get; set; }
 }

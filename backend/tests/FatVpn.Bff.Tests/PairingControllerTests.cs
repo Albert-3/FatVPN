@@ -3,6 +3,7 @@ using FatVpn.Bff.Api.Auth;
 using FatVpn.Bff.Api.Controllers;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure.Bot;
+using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -12,7 +13,8 @@ namespace FatVpn.Bff.Tests;
 public class PairControllerTests
 {
     private static PairController NewController(Infrastructure.FatVpnDbContext db)
-        => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService());
+        => new(db, TestHelpers.JwtService(), TestHelpers.RefreshService(),
+               TestHelpers.Opt(new TrialOptions()), TestHelpers.Slots(db));
 
     private static string Str(object value, string prop)
         => JsonSerializer.Serialize(value) is var json
@@ -23,7 +25,7 @@ public class PairControllerTests
     public async Task Start_CreatesPendingPairing()
     {
         using var db = TestHelpers.NewDb();
-        var result = await NewController(db).Start(default);
+        var result = await NewController(db).Start(null, default);
 
         Assert.IsType<OkObjectResult>(result);
         var pairing = Assert.Single(db.PairingCodes);
@@ -96,6 +98,80 @@ public class PairControllerTests
         var ok = Assert.IsType<OkObjectResult>(await NewController(db).Status("poll3", default));
         Assert.Equal("completed", Str(ok.Value!, "status"));
         Assert.Single(db.RefreshTokens);
+    }
+
+    [Fact]
+    public async Task Status_Completed_ChargesTheSessionToADeviceSlot()
+    {
+        // Pairing is a way onto a subscription like any other. While it counted
+        // for nothing, the three-device cap only applied to users who pasted the
+        // code instead of pressing "Подключить через Telegram".
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            CurrentSubscriptionId = "sub-paired",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        };
+        db.Accounts.Add(account);
+        db.PairingCodes.Add(new PairingCode
+        {
+            Id = Guid.NewGuid(), Code = "DEV1", PollToken = "polldev",
+            Status = PairingStatus.Completed, AccountId = account.Id,
+            DeviceKeyHash = "hash-of-the-pairing-phone",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+        });
+        await db.SaveChangesAsync();
+
+        var ok = Assert.IsType<OkObjectResult>(await NewController(db).Status("polldev", default));
+        Assert.Equal("completed", Str(ok.Value!, "status"));
+
+        var slot = Assert.Single(await db.TokenDevices.AsNoTracking().ToListAsync());
+        Assert.Equal("sub-paired", slot.SubscriptionId);
+        Assert.Equal("hash-of-the-pairing-phone", slot.DeviceKeyHash);
+        // And the session knows its device, so signing out or being evicted can
+        // find the slot again.
+        Assert.Equal("hash-of-the-pairing-phone",
+            (await db.RefreshTokens.AsNoTracking().SingleAsync()).DeviceKeyHash);
+    }
+
+    [Fact]
+    public async Task Status_CompletedWithoutADevice_StillPairs()
+    {
+        // App builds that send no attestation at /pair/start keep working, and
+        // take no slot — the same concession /auth/token has always made.
+        using var db = TestHelpers.NewDb();
+        var account = new Account
+        {
+            Id = Guid.NewGuid(),
+            CurrentSubscriptionId = "sub-paired",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        };
+        db.Accounts.Add(account);
+        db.PairingCodes.Add(new PairingCode
+        {
+            Id = Guid.NewGuid(), Code = "OLD1", PollToken = "pollold",
+            Status = PairingStatus.Completed, AccountId = account.Id,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+        });
+        await db.SaveChangesAsync();
+
+        var ok = Assert.IsType<OkObjectResult>(await NewController(db).Status("pollold", default));
+        Assert.Equal("completed", Str(ok.Value!, "status"));
+        Assert.Empty(await db.TokenDevices.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Start_WithAnAttestation_RemembersTheDevice()
+    {
+        using var db = TestHelpers.NewDb();
+        var result = await NewController(db)
+            .Start(new StartPairingRequest("this-phones-attestation-token"), default);
+
+        Assert.IsType<OkObjectResult>(result);
+        // Recorded at /pair/start because that is the request the phone makes;
+        // the later poll carries nothing but the poll token.
+        Assert.NotNull(Assert.Single(db.PairingCodes).DeviceKeyHash);
     }
 
     [Fact]
@@ -177,6 +253,75 @@ public class InternalPairControllerTests
         Assert.Equal(777, account.TelegramUserId);
         Assert.Equal("sub-777", account.CurrentSubscriptionId);
         Assert.Equal("GALHKEYCODE", account.CurrentKeyCode);
+    }
+
+    [Fact]
+    public async Task Complete_SwitchingKeyWithoutACode_DropsThePreviousKeysCode()
+    {
+        // The bot names a key but not its code, which is the ordinary pairing
+        // call. Holding on to the code we already had would show the app the
+        // code of the key it just left, and pasting that on a second phone
+        // would put it on a different subscription.
+        using var db = TestHelpers.NewDb();
+        db.Accounts.Add(new Account
+        {
+            Id = Guid.NewGuid(),
+            TelegramUserId = 777,
+            CurrentSubscriptionId = "sub-old",
+            CurrentKeyCode = "CODE-OF-THE-OLD-KEY",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(10),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        });
+        db.PairingCodes.Add(new PairingCode
+        {
+            Id = Guid.NewGuid(), Code = "SWITCH", PollToken = "p2",
+            Status = PairingStatus.Pending,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+        });
+        await db.SaveChangesAsync();
+
+        var result = await NewController(db, Secret).Complete(
+            new CompletePairingRequest("SWITCH", 777, "sub-new", DateTimeOffset.UtcNow.AddDays(30)),
+            default);
+
+        Assert.IsType<OkResult>(result);
+        var account = await db.Accounts.SingleAsync();
+        Assert.Equal("sub-new", account.CurrentSubscriptionId);
+        Assert.Null(account.CurrentKeyCode);
+    }
+
+    [Fact]
+    public async Task Complete_SameKeyWithoutACode_KeepsTheCodeItAlreadyShows()
+    {
+        // Re-pairing onto the key already in use says nothing new about the
+        // code, and blanking it would drop a good value for no reason.
+        using var db = TestHelpers.NewDb();
+        db.Accounts.Add(new Account
+        {
+            Id = Guid.NewGuid(),
+            TelegramUserId = 778,
+            CurrentSubscriptionId = "sub-same",
+            CurrentKeyCode = "STILL-VALID",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(10),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow,
+        });
+        db.PairingCodes.Add(new PairingCode
+        {
+            Id = Guid.NewGuid(), Code = "SAME", PollToken = "p3",
+            Status = PairingStatus.Pending,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10),
+        });
+        await db.SaveChangesAsync();
+
+        var result = await NewController(db, Secret).Complete(
+            new CompletePairingRequest("SAME", 778, "sub-same", DateTimeOffset.UtcNow.AddDays(30)),
+            default);
+
+        Assert.IsType<OkResult>(result);
+        var account = await db.Accounts.SingleAsync();
+        Assert.Equal("STILL-VALID", account.CurrentKeyCode);
     }
 
     [Fact]

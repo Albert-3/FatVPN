@@ -1,11 +1,14 @@
+using System.ComponentModel.DataAnnotations;
 using FatVpn.Bff.Api.Infrastructure;
 using FatVpn.Bff.Api.Pairing;
 using FatVpn.Bff.Domain;
 using FatVpn.Bff.Infrastructure;
 using FatVpn.Bff.Infrastructure.Auth;
+using FatVpn.Bff.Infrastructure.TrialPool;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace FatVpn.Bff.Api.Controllers;
 
@@ -14,16 +17,24 @@ namespace FatVpn.Bff.Api.Controllers;
 public class PairController(
     FatVpnDbContext db,
     IJwtTokenService jwtTokenService,
-    IRefreshTokenService refreshTokenService) : ControllerBase
+    IRefreshTokenService refreshTokenService,
+    IOptions<TrialOptions> trialOptions,
+    Auth.DeviceSlots deviceSlots) : ControllerBase
 {
     private static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(15);
 
     /// <summary>App starts a pairing attempt; shows the code/QR and opens the bot.</summary>
     [HttpPost("start")]
     [EnableRateLimiting(RateLimitPolicies.Auth)]
-    public async Task<IActionResult> Start(CancellationToken ct)
+    public async Task<IActionResult> Start([FromBody] StartPairingRequest? request, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
+        // Recorded now rather than at /pair/status because that is the request
+        // the phone makes: by the time the session is minted we are answering a
+        // poll, which carries nothing but the poll token.
+        var deviceKeyHash = string.IsNullOrEmpty(request?.AttestationToken)
+            ? null
+            : DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
 
         // Let the unique index detect a collision instead of pre-checking: the
         // old loop cost up to five database round trips on every /pair/start, and
@@ -39,6 +50,7 @@ public class PairController(
                 Status = PairingStatus.Pending,
                 CreatedAt = now,
                 ExpiresAt = now + CodeLifetime,
+                DeviceKeyHash = deviceKeyHash,
             };
             db.PairingCodes.Add(pairing);
 
@@ -119,8 +131,20 @@ public class PairController(
                 return Ok(new { status = "expired" });
             }
 
+            // Pairing counts against the subscription's device slots, exactly as
+            // pasting the code does — otherwise the cap the customer asked for
+            // applies only to users who did not press the other button. A phone
+            // arriving where every slot is taken evicts the one longest unheard
+            // from, so this does not turn "connect through Telegram" into a
+            // failure the user cannot act on.
+            if (!string.IsNullOrEmpty(pairing.DeviceKeyHash))
+            {
+                await deviceSlots.TryAdmitAsync(account.CurrentSubscriptionId, pairing.DeviceKeyHash, ct);
+            }
+
             var accessToken = jwtTokenService.CreateAccessTokenForAccount(account);
-            var (refreshRaw, refreshEntity) = refreshTokenService.Create(account.Id, tokenId: null);
+            var (refreshRaw, refreshEntity) = refreshTokenService.Create(
+                account.Id, tokenId: null, deviceKeyHash: pairing.DeviceKeyHash);
             db.RefreshTokens.Add(refreshEntity);
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -138,3 +162,8 @@ public class PairController(
         return Ok(new { status = "pending" });
     }
 }
+
+/// <summary>Optional body of /pair/start. The whole request used to carry no
+/// body at all, so it stays optional: app builds that send nothing pair as
+/// before, without taking a device slot.</summary>
+public sealed record StartPairingRequest([StringLength(512)] string? AttestationToken = null);

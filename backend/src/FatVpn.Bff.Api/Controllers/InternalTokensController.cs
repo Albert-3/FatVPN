@@ -11,13 +11,13 @@ namespace FatVpn.Bff.Api.Controllers;
 [ApiController]
 [Route("internal/tokens")]
 [Authorize(Policy = BotSecretRequirement.PolicyName)]
-public class InternalTokensController(FatVpnDbContext db) : ControllerBase
+public class InternalTokensController(FatVpnDbContext db, Auth.DeviceSlots deviceSlots) : ControllerBase
 {
     [HttpPost]
     public async Task<IActionResult> RegisterToken([FromBody] RegisterTokenRequest request, CancellationToken ct)
     {
         var token = await db.Tokens.SingleOrDefaultAsync(t => t.ShortToken == request.ShortToken, ct);
-        var isReissue = token is not null;
+        var replacedSubscriptionId = token?.RemnawaveSubscriptionId;
         if (token is null)
         {
             token = new Token
@@ -32,15 +32,19 @@ public class InternalTokensController(FatVpnDbContext db) : ControllerBase
         token.RemnawaveSubscriptionId = request.RemnawaveSubscriptionId;
         // Npgsql rejects a non-zero offset on timestamptz; the bot sends Moscow time.
         token.ExpiresAt = request.ExpiresAt.ToUniversalTime();
-        // Reissuing a key frees every device slot, so a user who replaced their
-        // phones can re-activate on the new ones ("Поменять ключ" in the bot).
-        // The legacy single-slot column is cleared too — it is no longer read,
-        // but a rollback to the previous image would read it again.
+        // The legacy single-slot column is cleared too — it is no longer read, but
+        // a rollback to the previous image would read it again.
         token.BoundDeviceKeyHash = null;
-        if (isReissue)
+
+        // "Поменять ключ" mints a fresh subscription and points this code at it;
+        // whoever was connected to the old one is connected to nothing now, so its
+        // slots go back. Only when the subscription actually changed: the bot also
+        // re-posts a code unchanged (to expire it, say), and that used to free
+        // every slot of a key nobody had touched.
+        if (!string.IsNullOrEmpty(replacedSubscriptionId)
+            && replacedSubscriptionId != request.RemnawaveSubscriptionId)
         {
-            var tokenId = token.Id;
-            await db.TokenDevices.Where(d => d.TokenId == tokenId).ExecuteDeleteAsync(ct);
+            await deviceSlots.ReleaseSubscriptionAsync(replacedSubscriptionId, ct);
         }
 
         // Whose key this is, when the bot says so. Deliberately does NOT touch

@@ -89,6 +89,9 @@ builder.Services.AddOptions<ReverseProxyOptions>()
 
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+// The device cap, shared by /auth/token and /pair/status — both are ways onto a
+// subscription and both have to count against the same slots.
+builder.Services.AddScoped<FatVpn.Bff.Api.Auth.DeviceSlots>();
 builder.Services.AddHttpClient<IRemnawaveClient, RemnawaveClient>((sp, client) =>
     {
         var remnawaveOptions = sp.GetRequiredService<IOptions<RemnawaveOptions>>().Value;

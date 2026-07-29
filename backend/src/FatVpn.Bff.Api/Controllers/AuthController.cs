@@ -22,6 +22,7 @@ public class AuthController(
     IOptions<TrialOptions> trialOptions,
     IOptions<JwtOptions> jwtOptions,
     IOptions<AuthOptions> authOptions,
+    Auth.DeviceSlots deviceSlots,
     ILogger<AuthController> logger) : ControllerBase
 {
     /// <summary>Returned in the 409 body when a key has no device slots left, so
@@ -71,14 +72,15 @@ public class AuthController(
         // a slot; the device that already holds one re-enters freely. A missing/
         // empty attestation (older app builds) issues a session without taking a
         // slot at all, so existing clients keep working during rollout.
+        string? deviceHash = null;
         if (!string.IsNullOrEmpty(request.AttestationToken))
         {
-            var deviceHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
-            if (!await TryAdmitDeviceAsync(token.Id, deviceHash, ct))
+            deviceHash = DeviceKeyHasher.Compute(request.AttestationToken, trialOptions.Value.DeviceKeySalt);
+            if (!await deviceSlots.TryAdmitAsync(token.RemnawaveSubscriptionId, deviceHash, ct))
             {
                 logger.LogWarning(
-                    "Rejected /auth/token for {TokenId}: key already on its {Max} devices",
-                    token.Id, authOptions.Value.MaxDevicesPerKey);
+                    "Rejected /auth/token for subscription {SubscriptionId}: already on its {Max} devices",
+                    token.RemnawaveSubscriptionId, authOptions.Value.MaxDevicesPerKey);
                 return Conflict(new { error = DeviceLimitError });
             }
         }
@@ -98,12 +100,14 @@ public class AuthController(
             account.UpdatedAt = DateTimeOffset.UtcNow;
 
             accessToken = jwtTokenService.CreateAccessTokenForAccount(account);
-            (refreshRaw, refreshEntity) = refreshTokenService.Create(account.Id, tokenId: null);
+            (refreshRaw, refreshEntity) = refreshTokenService.Create(
+                account.Id, tokenId: null, deviceKeyHash: deviceHash);
         }
         else
         {
             accessToken = jwtTokenService.CreateAccessToken(token);
-            (refreshRaw, refreshEntity) = refreshTokenService.Create(accountId: null, tokenId: token.Id);
+            (refreshRaw, refreshEntity) = refreshTokenService.Create(
+                accountId: null, tokenId: token.Id, deviceKeyHash: deviceHash);
         }
 
         db.RefreshTokens.Add(refreshEntity);
@@ -121,59 +125,6 @@ public class AuthController(
             accessTokenExpiresAt = DateTimeOffset.UtcNow + jwtOptions.Value.AccessTokenLifetime,
         });
     }
-
-    /// <summary>Gives <paramref name="deviceHash"/> one of the key's device slots,
-    /// or reports that they are all taken. Idempotent for a device that already
-    /// holds one.</summary>
-    private async Task<bool> TryAdmitDeviceAsync(Guid tokenId, string deviceHash, CancellationToken ct)
-    {
-        if (await HoldsASlotAsync(tokenId, deviceHash, ct))
-        {
-            return true;
-        }
-
-        // Take the lowest slot this device can get. Deciding from a count would
-        // be a read followed by a write, and four phones redeeming the same key
-        // at once all read "room for one more"; here the unique index on
-        // (TokenId, SlotIndex) decides, and a loser simply tries the next slot.
-        for (var slot = 0; slot < authOptions.Value.MaxDevicesPerKey; slot++)
-        {
-            var entry = db.TokenDevices.Add(new TokenDevice
-            {
-                Id = Guid.NewGuid(),
-                TokenId = tokenId,
-                SlotIndex = slot,
-                DeviceKeyHash = deviceHash,
-                BoundAt = DateTimeOffset.UtcNow,
-            });
-
-            try
-            {
-                // Its own SaveChanges: losing a slot is an ordinary outcome here
-                // and must not take the session's refresh token down with it.
-                await db.SaveChangesAsync(ct);
-                return true;
-            }
-            catch (DbUpdateException)
-            {
-                // Either the slot went to someone else, or this same device is
-                // already in and we collided with its own row. The writer we lost
-                // to has committed by the time the violation surfaces, so asking
-                // now gives a settled answer rather than a racy one.
-                entry.State = EntityState.Detached;
-                if (await HoldsASlotAsync(tokenId, deviceHash, ct))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private Task<bool> HoldsASlotAsync(Guid tokenId, string deviceHash, CancellationToken ct)
-        => db.TokenDevices.AsNoTracking()
-            .AnyAsync(d => d.TokenId == tokenId && d.DeviceKeyHash == deviceHash, ct);
 
     /// <summary>Exchanges a refresh token for a fresh access token, rotating the
     /// refresh token. Entitlement is not checked here — a lapsed subscription can
@@ -197,7 +148,12 @@ public class AuthController(
         // every provider the tests run against.
         var claimed = await db.RefreshTokens
             .Where(r => r.TokenHash == hash && r.RevokedAt == null)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.RevokedAt, revokedAt), ct);
+            // Stamped as a rotation in the same statement that spends the token,
+            // so the losers of a race can tell this apart from a revocation
+            // without waiting for the winner's successor row to land.
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.RevokedAt, revokedAt)
+                .SetProperty(r => r.RotatedOut, true), ct);
 
         var stored = await db.RefreshTokens.AsNoTracking()
             .SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
@@ -219,7 +175,14 @@ public class AuthController(
             var benignRace = rotatedAgo is not null
                 && rotatedAgo >= TimeSpan.Zero
                 && rotatedAgo <= jwtOptions.Value.RefreshGraceWindow
-                && stored.ExpiresAt > now;
+                && stored.ExpiresAt > now
+                // Only an ordinary rotation is forgiven here. Without this the
+                // window forgave every revocation too, so a session ended on
+                // purpose — device evicted, signed out, family revoked after
+                // detected theft — came back to life if the client refreshed
+                // within the next 30 seconds. It did exactly that on the test
+                // server the first time eviction ran.
+                && stored.RotatedOut;
 
             if (!benignRace)
             {
@@ -276,11 +239,21 @@ public class AuthController(
 
         // The presented token was already revoked by the atomic claim above. The
         // session's original start travels with the rotation so an absolute
-        // lifetime, when configured, can't be reset by simply refreshing.
+        // lifetime, when configured, can't be reset by simply refreshing, and the
+        // device travels with it so the next rotation can still be attributed.
         var (refreshRaw, refreshEntity) = refreshTokenService.Create(
-            stored.AccountId, stored.TokenId, stored.SessionStartedAt, stored.FamilyId);
+            stored.AccountId, stored.TokenId, stored.SessionStartedAt, stored.FamilyId,
+            stored.DeviceKeyHash);
         db.RefreshTokens.Add(refreshEntity);
         await db.SaveChangesAsync(ct);
+
+        // A refresh is the app being used, which is exactly what "least recently
+        // seen" should measure. Done after the rotation is committed so a failure
+        // here cannot cost the caller their session.
+        if (!string.IsNullOrEmpty(stored.DeviceKeyHash))
+        {
+            await deviceSlots.MarkSeenAsync(stored.DeviceKeyHash, ct);
+        }
 
         return Ok(new
         {
@@ -298,10 +271,28 @@ public class AuthController(
     public async Task<IActionResult> Logout([FromBody] RefreshRequest request, CancellationToken ct)
     {
         var hash = refreshTokenService.Hash(request.RefreshToken);
+
+        // Read before revoking: which device is signing out is only knowable from
+        // the row, and the update below does not return it.
+        var stored = await db.RefreshTokens.AsNoTracking()
+            .SingleOrDefaultAsync(r => r.TokenHash == hash, ct);
+
         var revokedAt = (DateTimeOffset?)DateTimeOffset.UtcNow;
-        await db.RefreshTokens
+        var revoked = await db.RefreshTokens
             .Where(r => r.TokenHash == hash && r.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.RevokedAt, revokedAt), ct);
+
+        // Signing out gives the slot back. Without this the only way to free one
+        // was reissuing the key, which frees all three and changes the key — so
+        // selling a phone quietly cost a slot for good. Only on a token we
+        // actually revoked, so a replayed logout can't dislodge a live device.
+        if (revoked == 1 && !string.IsNullOrEmpty(stored?.DeviceKeyHash))
+        {
+            // Every slot this device holds, not just one subscription's: a session
+            // keeps no link back to which slot it was admitted on, and signing out
+            // means this phone is done, which is the honest reading either way.
+            await deviceSlots.ReleaseDeviceAsync(stored.DeviceKeyHash, ct);
+        }
 
         return NoContent();
     }

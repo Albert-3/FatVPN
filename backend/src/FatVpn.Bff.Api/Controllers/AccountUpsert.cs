@@ -52,12 +52,23 @@ internal static class AccountUpsert
             return account;
         }
 
+        var switchingKey = account.CurrentSubscriptionId != subscriptionId;
+
         account.CurrentSubscriptionId = subscriptionId;
         // Only overwrite the displayed key code when the caller actually sent one,
         // so a bot build that predates this field doesn't wipe a good value.
         if (!string.IsNullOrEmpty(keyCode))
         {
             account.CurrentKeyCode = keyCode;
+        }
+        else if (switchingKey)
+        {
+            // Moving onto another key with no code to show for it: the code we
+            // hold belongs to the key being left behind. Keeping it would put
+            // someone else's code under "текущий ключ" in the app, and pasting
+            // that on a second phone would land it on a different subscription.
+            // No code at all is honest — the app falls back to the id.
+            account.CurrentKeyCode = null;
         }
 
         // Npgsql only accepts a DateTimeOffset with a zero offset for

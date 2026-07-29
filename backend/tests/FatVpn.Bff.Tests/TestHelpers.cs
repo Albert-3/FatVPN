@@ -52,6 +52,13 @@ internal static class TestHelpers
 
     public static RefreshTokenService RefreshService() => new(Opt(Jwt()));
 
+    /// <summary>The device cap, wired to the same DbContext the controller under
+    /// test uses — slots are shared state, so a second context would not see the
+    /// rows a test just wrote.</summary>
+    public static Api.Auth.DeviceSlots Slots(FatVpnDbContext db, int maxDevicesPerKey = 3)
+        => new(db, Opt(Auth(maxDevicesPerKey)),
+               Microsoft.Extensions.Logging.Abstractions.NullLogger<Api.Auth.DeviceSlots>.Instance);
+
     /// <summary>Attaches an HttpContext carrying the given claims to a controller,
     /// so <c>User</c>/<c>Request.Headers</c> resolve inside the action.</summary>
     public static void WithUser(this ControllerBase controller, params Claim[] claims)
