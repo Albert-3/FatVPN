@@ -55,6 +55,7 @@ class Strings {
     required this.noUsableServers,
     required this.bestServers,
     required this.seeAll,
+    required this.refreshServers,
     required this.chooseLocation,
     required this.allLocations,
     required this.serversCount,
@@ -82,6 +83,7 @@ class Strings {
     required this.trialNoCapacity,
     required this.trialFailed,
     required this.keyBoundToOtherDevice,
+    required this.keyDeviceLimitReached,
     required this.keyNotFound,
     required this.deepLinkKeyTitle,
     required this.deepLinkKeyBody,
@@ -185,6 +187,9 @@ class Strings {
   final String bestServers;
   final String seeAll;
 
+  /// Tooltip on the home header's refresh button.
+  final String refreshServers;
+
   final String chooseLocation;
   final String allLocations;
   final String Function(int count) serversCount;
@@ -225,6 +230,11 @@ class Strings {
   final String trialNoCapacity;
   final String trialFailed;
   final String keyBoundToOtherDevice;
+
+  /// The key has taken all of its device slots (409 `device_limit`). Distinct
+  /// from [keyBoundToOtherDevice]: a key runs on three phones now, so "linked
+  /// to another phone" would read as a bug to someone on their own second one.
+  final String keyDeviceLimitReached;
 
   /// A key the BFF doesn't know (404) — a typo, or a code that has run out.
   /// Kept apart from [couldNotReachServer]: telling someone who mistyped their
@@ -377,6 +387,7 @@ const Strings enStrings = Strings(
   noUsableServers: 'No servers are available on this subscription. Try again or contact support.',
   bestServers: 'Best servers',
   seeAll: 'See all',
+  refreshServers: 'Refresh server list',
   chooseLocation: 'Choose location',
   allLocations: 'ALL LOCATIONS',
   serversCount: _enServersCount,
@@ -404,6 +415,7 @@ const Strings enStrings = Strings(
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
   keyBoundToOtherDevice: 'This key is already linked to another phone. Change your key in the bot to move it to this device.',
+  keyDeviceLimitReached: 'This key is already in use on 3 devices. Change your key in the bot to free them up.',
   keyNotFound: 'No such key, or it has expired. Check the code in the bot.',
   deepLinkKeyTitle: 'Use this key?',
   deepLinkKeyBody: _enDeepLinkKeyBody,
@@ -526,6 +538,7 @@ final Strings ruStrings = Strings(
   noUsableServers: 'На этой подписке нет доступных серверов. Повторите попытку или напишите в поддержку.',
   bestServers: 'Лучшие серверы',
   seeAll: 'Смотреть все',
+  refreshServers: 'Обновить список серверов',
   chooseLocation: 'Выбор локации',
   allLocations: 'ВСЕ ЛОКАЦИИ',
   serversCount: (n) => '$n ${_ruPluralServers(n)}',
@@ -557,6 +570,7 @@ final Strings ruStrings = Strings(
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
   keyBoundToOtherDevice: 'Этот ключ уже привязан к другому телефону. Смените ключ в боте, чтобы перенести его на это устройство.',
+  keyDeviceLimitReached: 'Этот ключ уже используется на 3 устройствах. Чтобы освободить места, смените ключ в боте.',
   keyNotFound: 'Такого ключа нет или он истёк. Проверьте код в боте.',
   deepLinkKeyTitle: 'Использовать этот ключ?',
   deepLinkKeyBody: _ruDeepLinkKeyBody,

@@ -110,6 +110,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.auth.exchangeShortToken(
       code,
       conflictMessage: s.keyBoundToOtherDevice,
+      deviceLimitMessage: s.keyDeviceLimitReached,
       notFoundMessage: s.keyNotFound,
       genericMessage: s.couldNotReachServer,
     );

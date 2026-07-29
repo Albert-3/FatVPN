@@ -188,6 +188,7 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
       if (accepted ?? false) {
         await _auth.confirmPendingDeepLinkToken(
           conflictMessage: s.keyBoundToOtherDevice,
+          deviceLimitMessage: s.keyDeviceLimitReached,
           notFoundMessage: s.keyNotFound,
           genericMessage: s.couldNotReachServer,
         );

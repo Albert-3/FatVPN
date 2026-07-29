@@ -477,6 +477,7 @@ class _ManualKeyEntryState extends State<_ManualKeyEntry> {
     await widget.auth.exchangeShortToken(
       code,
       conflictMessage: s.keyBoundToOtherDevice,
+      deviceLimitMessage: s.keyDeviceLimitReached,
       notFoundMessage: s.keyNotFound,
       genericMessage: s.couldNotReachServer,
     );

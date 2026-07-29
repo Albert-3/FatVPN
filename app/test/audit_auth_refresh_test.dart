@@ -119,6 +119,7 @@ Future<(AuthController, _TracingTokenStorage, List<String>)> _signedIn({
   await auth.exchangeShortToken(
     'KEY-1',
     conflictMessage: 'conflict',
+    deviceLimitMessage: 'device-limit',
     notFoundMessage: 'not-found',
     genericMessage: 'generic',
   );

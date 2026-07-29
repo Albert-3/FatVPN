@@ -527,6 +527,7 @@ class AuthController extends ChangeNotifier {
   /// Accepts the key from [pendingDeepLinkToken].
   Future<void> confirmPendingDeepLinkToken({
     required String conflictMessage,
+    required String deviceLimitMessage,
     required String notFoundMessage,
     required String genericMessage,
   }) async {
@@ -536,6 +537,7 @@ class AuthController extends ChangeNotifier {
     await exchangeShortToken(
       token,
       conflictMessage: conflictMessage,
+      deviceLimitMessage: deviceLimitMessage,
       notFoundMessage: notFoundMessage,
       genericMessage: genericMessage,
     );
@@ -551,6 +553,7 @@ class AuthController extends ChangeNotifier {
   Future<void> exchangeShortToken(
     String shortToken, {
     required String conflictMessage,
+    required String deviceLimitMessage,
     required String notFoundMessage,
     required String genericMessage,
   }) async {
@@ -583,7 +586,9 @@ class AuthController extends ChangeNotifier {
       // 404 is a wrong or spent key, not an unreachable server — telling the
       // user the network is down sends them hunting the wrong problem.
       _error = switch (e.statusCode) {
-        409 => conflictMessage,
+        // A key now runs on several phones, so "linked to another phone" is only
+        // still true for a server that predates the limit and sends a bare 409.
+        409 => e.code == 'device_limit' ? deviceLimitMessage : conflictMessage,
         404 => notFoundMessage,
         _ => genericMessage,
       };

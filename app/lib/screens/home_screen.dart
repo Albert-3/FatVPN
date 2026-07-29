@@ -349,7 +349,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadServers() async {
+  /// [force] bypasses the client-side cache. Anything the user asked for by
+  /// hand — the refresh button, a retry after an error — has to reach the
+  /// network, or it looks broken: the cache outlives the BFF's own by minutes.
+  Future<void> _loadServers({bool force = false}) async {
     // Signing out mid-load leaves no session to load with, and the two network
     // calls behind this take up to 30 s — plenty of time for that to happen.
     final session = widget.auth.session;
@@ -359,7 +362,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _serversError = null;
     });
     try {
-      final servers = await _apiClient.getUsableServers();
+      final servers = await _apiClient.getUsableServers(force: force);
       if (!mounted) return;
       setState(() {
         _servers = servers;
@@ -503,6 +506,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           apiClient: _apiClient,
           selectedCountry:
               _serverExplicitlySelected ? _selectedServer?.country : null,
+          onSubscriptionExpired: widget.auth.notifyExpired,
         ),
       ),
     );
@@ -653,7 +657,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             children: [
               const SizedBox(height: 8),
-              _buildHeader(),
+              _buildHeader(s),
               const SizedBox(height: 20),
               _buildLocationSelector(s),
               const Spacer(),
@@ -670,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(Strings s) {
     return SizedBox(
       height: 48,
       child: Stack(
@@ -694,19 +698,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: IconButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    auth: widget.auth,
-                    connectionSettings: widget.connectionSettings,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  // Greyed out while a load is in flight, so a second tap can't
+                  // start a parallel pair of requests over the same list.
+                  onPressed: _loadingServers ? null : () => _loadServers(force: true),
+                  tooltip: s.refreshServers,
+                  icon: Icon(
+                    Icons.refresh,
+                    color: _loadingServers
+                        ? AppColors.textSecondary.withValues(alpha: 0.4)
+                        : AppColors.textSecondary,
                   ),
                 ),
-              ),
-              icon: const Icon(
-                Icons.settings,
-                color: AppColors.textSecondary,
-              ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => SettingsScreen(
+                        auth: widget.auth,
+                        connectionSettings: widget.connectionSettings,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(
+                    Icons.settings,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -924,7 +945,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                   ),
                 ),
-                TextButton(onPressed: _loadServers, child: Text(s.retry)),
+                TextButton(
+                  onPressed: () => _loadServers(force: true),
+                  child: Text(s.retry),
+                ),
               ],
             ),
           )

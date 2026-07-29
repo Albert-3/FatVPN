@@ -154,10 +154,26 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException('token_exchange_failed', statusCode: response.statusCode);
+      // The 409 body distinguishes "no slots left" from the bare conflict older
+      // servers return, so the app can name the real reason.
+      throw ApiException(_errorCode(response.body) ?? 'token_exchange_failed',
+          statusCode: response.statusCode);
     }
 
     return AuthSession.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// The `error` field of an error body, or null if there isn't one — every
+  /// failure path here has to survive an HTML error page from a proxy.
+  static String? _errorCode(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final code = decoded['error'];
+        if (code is String && code.isNotEmpty) return code;
+      }
+    } catch (_) {/* not JSON */}
+    return null;
   }
 
   /// Requests a free trial for this device. [attestationToken] is the stable

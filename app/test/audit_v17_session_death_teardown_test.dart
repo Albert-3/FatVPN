@@ -120,6 +120,7 @@ void main() {
     await auth.exchangeShortToken(
       'KEY-1',
       conflictMessage: 'conflict',
+      deviceLimitMessage: 'device-limit',
       notFoundMessage: 'not-found',
       genericMessage: 'generic',
     );

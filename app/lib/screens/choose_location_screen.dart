@@ -26,6 +26,7 @@ class ChooseLocationScreen extends StatefulWidget {
     required this.apiClient,
     this.initialServers = const [],
     this.selectedCountry,
+    this.onSubscriptionExpired,
   });
 
   /// The app's shared client. Taken rather than built here: this screen can
@@ -37,6 +38,11 @@ class ChooseLocationScreen extends StatefulWidget {
   /// Country code currently active, or null when "best server" (auto) is active
   /// — used to highlight the current choice.
   final String? selectedCountry;
+
+  /// Called when the panel reports the subscription has lapsed (402). This
+  /// screen has no auth controller of its own, and the caller owns the routing
+  /// to the renew screen.
+  final VoidCallback? onSubscriptionExpired;
 
   @override
   State<ChooseLocationScreen> createState() => _ChooseLocationScreenState();
@@ -75,13 +81,28 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
         _servers = servers;
         _loading = false;
       });
+    } on ApiException catch (e) {
+      // 402 = the subscription lapsed while this screen was open. Home routes to
+      // the renew screen on this; here it used to be swallowed by the catch-all
+      // below and shown as "can't reach the server", sending the user to check
+      // their Wi-Fi over an expired subscription.
+      if (e.statusCode == 402) {
+        widget.onSubscriptionExpired?.call();
+        if (mounted) Navigator.of(context).maybePop();
+        return;
+      }
+      _showLoadFailure();
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = S.of(context).couldNotReachServer;
-        _loading = false;
-      });
+      _showLoadFailure();
     }
+  }
+
+  void _showLoadFailure() {
+    if (!mounted) return;
+    setState(() {
+      _error = S.of(context).couldNotReachServer;
+      _loading = false;
+    });
   }
 
   void _toggleExpanded(ServerCountry country) {
@@ -140,7 +161,12 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
           children: [
             Text(_error!, style: const TextStyle(color: Colors.redAccent)),
             const SizedBox(height: 12),
-            TextButton(onPressed: _loadServers, child: Text(s.retry)),
+            // force: the retry is the user asking again, and the 5-minute client
+            // cache would otherwise answer it without a request leaving the phone.
+            TextButton(
+              onPressed: () => _loadServers(force: true),
+              child: Text(s.retry),
+            ),
           ],
         ),
       );
@@ -250,8 +276,14 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
             ),
           ),
           IconButton(
-            onPressed: () => _loadServers(force: true),
-            icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
+            onPressed: _loading ? null : () => _loadServers(force: true),
+            tooltip: s.refreshServers,
+            icon: Icon(
+              Icons.refresh,
+              color: _loading
+                  ? AppColors.textSecondary.withValues(alpha: 0.4)
+                  : AppColors.textSecondary,
+            ),
           ),
         ],
       ),
