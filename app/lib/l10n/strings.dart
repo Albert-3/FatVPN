@@ -231,9 +231,11 @@ class Strings {
   final String trialFailed;
   final String keyBoundToOtherDevice;
 
-  /// The key has taken all of its device slots (409 `device_limit`). Distinct
-  /// from [keyBoundToOtherDevice]: a key runs on three phones now, so "linked
-  /// to another phone" would read as a bug to someone on their own second one.
+  /// The key's device slots were all taken at the moment we asked (409
+  /// `device_limit`). A fourth phone normally takes the place of whichever has
+  /// gone longest unused, so this is now only reached when several devices
+  /// arrive at once — hence "try again" rather than the old advice to change
+  /// the key, which would have thrown all three off to admit one.
   final String keyDeviceLimitReached;
 
   /// A key the BFF doesn't know (404) — a typo, or a code that has run out.
@@ -415,7 +417,7 @@ const Strings enStrings = Strings(
   trialNoCapacity: 'No trial slots available right now. Please try later.',
   trialFailed: 'Could not start the trial. Check your connection and try again.',
   keyBoundToOtherDevice: 'This key is already linked to another phone. Change your key in the bot to move it to this device.',
-  keyDeviceLimitReached: 'This key is already in use on 3 devices. Change your key in the bot to free them up.',
+  keyDeviceLimitReached: 'This key is busy on its other devices right now. Please try again in a moment.',
   keyNotFound: 'No such key, or it has expired. Check the code in the bot.',
   deepLinkKeyTitle: 'Use this key?',
   deepLinkKeyBody: _enDeepLinkKeyBody,
@@ -570,7 +572,7 @@ final Strings ruStrings = Strings(
   trialNoCapacity: 'Сейчас нет свободных пробных слотов. Попробуйте позже.',
   trialFailed: 'Не удалось запустить пробный период. Проверьте соединение и повторите.',
   keyBoundToOtherDevice: 'Этот ключ уже привязан к другому телефону. Смените ключ в боте, чтобы перенести его на это устройство.',
-  keyDeviceLimitReached: 'Этот ключ уже используется на 3 устройствах. Чтобы освободить места, смените ключ в боте.',
+  keyDeviceLimitReached: 'Ключ сейчас занят на других устройствах. Повторите попытку через несколько секунд.',
   keyNotFound: 'Такого ключа нет или он истёк. Проверьте код в боте.',
   deepLinkKeyTitle: 'Использовать этот ключ?',
   deepLinkKeyBody: _ruDeepLinkKeyBody,

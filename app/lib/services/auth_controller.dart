@@ -672,7 +672,17 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _pairing = await _apiClient.startPairing();
+      // Named so pairing counts against the key's device slots — otherwise
+      // "Подключить через Telegram" is a way past the three-device limit.
+      // A storage failure here must not sink the attempt: pairing without a
+      // device is how every build before this one worked.
+      String? deviceKey;
+      try {
+        deviceKey = await _tokenStorage.readOrCreateDeviceKey();
+      } catch (err) {
+        log.w('Could not read this device\'s key ($err)');
+      }
+      _pairing = await _apiClient.startPairing(attestationToken: deviceKey);
       // Persist before the first poll, so a kill between the two doesn't strand
       // a code the bot can still complete. A storage failure must not fail the
       // attempt itself — it only costs the resume.

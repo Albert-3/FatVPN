@@ -198,9 +198,18 @@ class ApiClient {
   }
 
   /// Starts a pairing attempt; the app shows the code/QR and opens the bot.
-  Future<PairingStart> startPairing() async {
+  ///
+  /// [attestationToken] identifies this phone so pairing counts against the
+  /// subscription's device slots, exactly as pasting a code does. Optional
+  /// because the server accepts a body-less call from older builds — but leaving
+  /// it out means connecting through Telegram ignores the device limit.
+  Future<PairingStart> startPairing({String? attestationToken}) async {
     final response = await _httpClient
-        .post(Uri.parse('$_baseUrl/pair/start'))
+        .post(
+          Uri.parse('$_baseUrl/pair/start'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({'attestationToken': ?attestationToken}),
+        )
         .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
