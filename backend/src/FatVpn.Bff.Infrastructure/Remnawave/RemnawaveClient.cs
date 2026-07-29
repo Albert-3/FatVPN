@@ -55,15 +55,57 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
             throw new RemnawaveException($"Malformed subscription id '{subscriptionId}'");
         }
 
+        var id = Uri.EscapeDataString(subscriptionId);
         return await CallAsync(async () =>
         {
-            using var response = await httpClient.GetAsync($"/sub/{Uri.EscapeDataString(subscriptionId)}", ct);
-            response.EnsureSuccessStatusCode();
+            // `/api/sub/{id}`, not `/sub/{id}`: the browser-facing route is the
+            // one an operator puts behind an auth portal, and on 2026-07-29 that
+            // is exactly what happened — Caddy started answering `/sub/*` with a
+            // 302 to a caddy-security login page, which followed to a 200 page of
+            // HTML. Every app then saw a subscription with no links in it and
+            // said "no servers on this subscription". The `/api` route serves the
+            // same body and is the one the panel's own API surface lives on.
+            var response = await httpClient.GetAsync($"/api/sub/{id}", ct);
+            // Older panels only have the browser route; fall back rather than
+            // strand every user on a 502 if this ever runs against one.
+            if (response.StatusCode is System.Net.HttpStatusCode.NotFound
+                or System.Net.HttpStatusCode.MethodNotAllowed)
+            {
+                response.Dispose();
+                response = await httpClient.GetAsync($"/sub/{id}", ct);
+            }
 
-            var content = await response.Content.ReadAsStringAsync(ct);
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? "text/plain";
-            return (content, contentType);
+            using (response)
+            {
+                response.EnsureSuccessStatusCode();
+
+                var content = await response.Content.ReadAsStringAsync(ct);
+                var contentType = response.Content.Headers.ContentType?.ToString() ?? "text/plain";
+                EnsureNotAWebPage(content, contentType);
+                return (content, contentType);
+            }
         }, "Fetching subscription config", ct);
+    }
+
+    /// <summary>
+    /// Rejects a "subscription" that is really an HTML page — a login portal, a
+    /// CDN interstitial, a panel error page. Such a body is a perfectly valid 200
+    /// as far as HTTP is concerned, and passing it through cost us a day of
+    /// "the app shows no servers": downstream it parses to zero links, which is
+    /// indistinguishable from a subscription that genuinely has none. Failing
+    /// here turns it into a 502 the user reads as "the server is unreachable".
+    /// </summary>
+    private static void EnsureNotAWebPage(string content, string contentType)
+    {
+        var looksLikeHtml = contentType.Contains("text/html", StringComparison.OrdinalIgnoreCase)
+            || content.AsSpan().TrimStart().StartsWith("<", StringComparison.Ordinal);
+        if (looksLikeHtml)
+        {
+            throw new RemnawaveException(
+                "The panel answered the subscription request with an HTML page "
+                + $"(content-type '{contentType}') instead of a subscription — "
+                + "is /api/sub behind an auth portal?");
+        }
     }
 
     public async Task<RemnawaveTrialUser> CreateTrialUserAsync(DateTimeOffset expiresAt, CancellationToken ct = default)

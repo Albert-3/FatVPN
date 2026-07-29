@@ -102,6 +102,12 @@ builder.Services.AddHttpClient<IRemnawaveClient, RemnawaveClient>((sp, client) =
         // The panel sits behind Cloudflare; recycling pooled connections means
         // an upstream IP change is picked up without restarting the container.
         PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        // No endpoint of the panel's answers with a redirect, so following one
+        // can only ever land somewhere that isn't the panel — which is precisely
+        // how a login portal in front of /sub returned HTTP 200 and a page of
+        // HTML where the subscription should have been. Leave the 302 visible so
+        // EnsureSuccessStatusCode turns it into a 502.
+        AllowAutoRedirect = false,
     });
 // Deliberately no AddStandardResilienceHandler: its default retry policy also
 // retries POSTs, and a retried POST /api/users would leave orphan trial users
