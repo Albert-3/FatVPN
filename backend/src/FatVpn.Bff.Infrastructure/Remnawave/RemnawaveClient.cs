@@ -65,14 +65,14 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
             // HTML. Every app then saw a subscription with no links in it and
             // said "no servers on this subscription". The `/api` route serves the
             // same body and is the one the panel's own API surface lives on.
-            var response = await httpClient.GetAsync($"/api/sub/{id}", ct);
+            var response = await GetSubscriptionAsync($"/api/sub/{id}", ct);
             // Older panels only have the browser route; fall back rather than
             // strand every user on a 502 if this ever runs against one.
             if (response.StatusCode is System.Net.HttpStatusCode.NotFound
                 or System.Net.HttpStatusCode.MethodNotAllowed)
             {
                 response.Dispose();
-                response = await httpClient.GetAsync($"/sub/{id}", ct);
+                response = await GetSubscriptionAsync($"/sub/{id}", ct);
             }
 
             using (response)
@@ -85,6 +85,33 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
                 return (content, contentType);
             }
         }, "Fetching subscription config", ct);
+    }
+
+    /// <summary>
+    /// User-Agent sent with a subscription request. Remnawave picks the rendering
+    /// template by client, and answers a request that carries no User-Agent at all
+    /// with 404 <c>{"isFound":false,"message":"Resource not found"}</c> — which
+    /// HttpClient does by default, since it sends no User-Agent of its own. That
+    /// is how <c>/api/sub</c> 404'd for the BFF while the same URL served 17 links
+    /// to curl a minute earlier; the 404 then fell through to <c>/sub</c> and its
+    /// login portal, and every app got a 502.
+    /// <para>
+    /// Deliberately a name the panel does not recognize: a known client's
+    /// User-Agent (Happ, v2rayNG, …) switches the body to that client's own
+    /// format, and what the app parses is the default base64 list of links.
+    /// </para>
+    /// </summary>
+    private const string SubscriptionUserAgent = "FatVpn.Bff/1.0";
+
+    /// <summary>
+    /// GETs a subscription route with the header the panel requires — see
+    /// <see cref="SubscriptionUserAgent"/>. Caller owns the response.
+    /// </summary>
+    private async Task<HttpResponseMessage> GetSubscriptionAsync(string path, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.UserAgent.ParseAdd(SubscriptionUserAgent);
+        return await httpClient.SendAsync(request, ct);
     }
 
     /// <summary>
