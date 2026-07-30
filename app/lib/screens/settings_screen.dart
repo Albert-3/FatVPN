@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _buySubscription() async {
+  Future<void> _openBot() async {
     await launchUrl(telegramBotLink(), mode: LaunchMode.externalApplication);
   }
 
@@ -678,7 +678,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
-            onPressed: _buySubscription,
+            onPressed: _openBot,
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.accent,
               side: const BorderSide(color: AppColors.accent),
@@ -689,7 +689,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             icon: const Icon(Icons.telegram, size: 20),
             label: Text(
-              s.buySubscription,
+              s.connectWithTelegram,
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
           ),

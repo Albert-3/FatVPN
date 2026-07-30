@@ -100,11 +100,12 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
   }
 
   /// Telegram/pairing CTA. Filled (primary) when it's the top action, outlined
-  /// (secondary) when the free-trial button already sits above it.
+  /// (secondary) when the free-trial button already sits above it. Renew mode
+  /// carries the same label as onboarding on purpose — see [Strings.connectWithTelegram].
   Widget _telegramButton(Strings s, {required bool primary}) {
     final icon = const Icon(Icons.telegram, size: 22);
     final label = Text(
-      widget.renew ? s.renewViaTelegram : s.connectWithTelegram,
+      s.connectWithTelegram,
       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
     );
     const padding = EdgeInsets.symmetric(vertical: 14);
@@ -213,8 +214,8 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                           const SizedBox(height: 20),
 
                           // First run with an unused trial: the only path is the free
-                          // trial. The user buys a subscription in Telegram afterwards
-                          // and enters/pastes the key from Settings.
+                          // trial. Afterwards the user connects their account in the
+                          // bot, or enters/pastes the key from Settings.
                           if (!widget.renew && auth.trialAvailable) ...[
                             FilledButton.icon(
                               onPressed: auth.trialBusy

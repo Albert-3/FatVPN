@@ -28,7 +28,6 @@ class Strings {
     required this.keyCopied,
     required this.connectKey,
     required this.connectKeyHint,
-    required this.buySubscription,
     required this.contactSupport,
     required this.logsManagement,
     required this.applicationLogs,
@@ -89,7 +88,6 @@ class Strings {
     required this.deepLinkKeyBody,
     required this.subscriptionExpiredTitle,
     required this.subscriptionExpiredSubtitle,
-    required this.renewViaTelegram,
     required this.checkAgain,
     required this.splitTunneling,
     required this.appsBypassVpn,
@@ -152,7 +150,6 @@ class Strings {
   final String keyCopied;
   final String connectKey;
   final String connectKeyHint;
-  final String buySubscription;
   final String contactSupport;
   final String logsManagement;
   final String applicationLogs;
@@ -211,6 +208,13 @@ class Strings {
   final String trialUsedSubtitle;
   final String trialResumableTitle;
   final String trialResumableSubtitle;
+  /// The one label for every button that opens the FatVPN bot — onboarding,
+  /// the lapsed-access screen and the key block in Settings. It used to be
+  /// three: "Buy via Telegram" and "Renew via Telegram" were calls to action
+  /// pointing at a purchasing mechanism outside the App Store (App Store
+  /// Review Guideline 3.1.1) and a standing rejection risk. Nothing in the app
+  /// names a price, a purchase or a renewal now; the bot is only ever where
+  /// the account is connected. Keep it that way when adding copy near it.
   final String connectWithTelegram;
   final String pairingWaiting;
   final String pairingScanHint;
@@ -250,7 +254,6 @@ class Strings {
   final String Function(String keyCode) deepLinkKeyBody;
   final String subscriptionExpiredTitle;
   final String subscriptionExpiredSubtitle;
-  final String renewViaTelegram;
   final String checkAgain;
 
   final String splitTunneling;
@@ -362,7 +365,6 @@ const Strings enStrings = Strings(
   keyCopied: 'Key copied',
   connectKey: 'CONNECT A KEY',
   connectKeyHint: 'Have a key from the bot? Paste it to connect.',
-  buySubscription: 'Buy via Telegram',
   contactSupport: 'Contact support',
   logsManagement: 'LOGS MANAGEMENT',
   applicationLogs: 'Application logs',
@@ -397,11 +399,11 @@ const Strings enStrings = Strings(
   whitelistLocations: 'Whitelists',
   switchedToFasterServer: _enSwitchedToFasterServer,
   openBotTitle: 'Start for free',
-  openBotSubtitle: 'Get 2 days free, or enter your key right away if you already have one. A subscription is bought in the FatVPN Telegram bot.',
-  trialUsedTitle: 'Connect a subscription',
-  trialUsedSubtitle: 'Your free trial has ended. Buy a subscription in the FatVPN Telegram bot, or enter your key if you already have one.',
+  openBotSubtitle: 'Get 2 days free, or enter your key right away if you already have one.',
+  trialUsedTitle: 'Connect a key',
+  trialUsedSubtitle: 'Your free trial has ended. Enter your key if you already have one, or connect your account in the FatVPN bot.',
   trialResumableTitle: 'Session interrupted',
-  trialResumableSubtitle: 'You signed out, but your free trial may still be running. Continue it, buy a subscription in the FatVPN Telegram bot, or enter your key.',
+  trialResumableSubtitle: 'You signed out, but your free trial may still be running. Continue it, enter your key, or connect your account in the FatVPN bot.',
   connectWithTelegram: 'Connect with Telegram',
   pairingWaiting: 'Waiting for the bot to confirm…',
   pairingScanHint: 'On another device? Scan this code or open the bot and send:',
@@ -421,10 +423,9 @@ const Strings enStrings = Strings(
   keyNotFound: 'No such key, or it has expired. Check the code in the bot.',
   deepLinkKeyTitle: 'Use this key?',
   deepLinkKeyBody: _enDeepLinkKeyBody,
-  subscriptionExpiredTitle: 'Subscription expired',
-  subscriptionExpiredSubtitle: 'Renew in Telegram to keep using FatVPN — the app reconnects automatically once your subscription is active again.',
-  renewViaTelegram: 'Renew via Telegram',
-  checkAgain: 'I renewed — check again',
+  subscriptionExpiredTitle: 'Access expired',
+  subscriptionExpiredSubtitle: 'Your access has ended. Connect an active key — the app reconnects automatically as soon as the key is valid again.',
+  checkAgain: 'Check again',
   splitTunneling: 'Split tunneling',
   appsBypassVpn: 'Apps that bypass the VPN',
   selectedInList: 'SELECTED IN LIST',
@@ -455,20 +456,20 @@ const Strings enStrings = Strings(
       'Turn on the switch above to pick the only domains and IPs that use the VPN.',
   splitTunnelIncludeEmptyNotice:
       'This list is empty, so everything still goes through the VPN.',
-  notifExpiringSoonTitle: 'Subscription ending soon',
+  notifExpiringSoonTitle: 'Access ending soon',
   notifExpiresInDays: _enNotifExpiresInDays,
   notifExpiresInMinutes: _enNotifExpiresInMinutes,
-  notifExpiredTitle: 'Subscription expired',
-  notifExpiredBody: 'Renew in Telegram to keep using FatVPN.',
+  notifExpiredTitle: 'Access expired',
+  notifExpiredBody: 'Open FatVPN to restore your access.',
 );
 
 String _enNotifExpiresInDays(int n) =>
     'Your access expires in $n day${n == 1 ? '' : 's'}. '
-    'Renew in Telegram to stay connected.';
+    'Open FatVPN to keep your connection.';
 
 String _enNotifExpiresInMinutes(int n) =>
     'Your access expires in $n minute${n == 1 ? '' : 's'}. '
-    'Renew in Telegram to stay connected.';
+    'Open FatVPN to keep your connection.';
 
 String _enExpiresInDays(int n) => 'Expires in $n day${n == 1 ? '' : 's'}';
 String _enExpiresInHours(int n) => 'Expires in $n hour${n == 1 ? '' : 's'}';
@@ -513,7 +514,6 @@ final Strings ruStrings = Strings(
   keyCopied: 'Ключ скопирован',
   connectKey: 'ПОДКЛЮЧИТЬ КЛЮЧ',
   connectKeyHint: 'Есть ключ из бота? Вставьте, чтобы подключиться.',
-  buySubscription: 'Купить через Telegram',
   contactSupport: 'Написать в поддержку',
   logsManagement: 'УПРАВЛЕНИЕ ЛОГАМИ',
   applicationLogs: 'Логи приложения',
@@ -550,13 +550,13 @@ final Strings ruStrings = Strings(
       'Переключились на более быстрый сервер: $location',
   openBotTitle: 'Начните бесплатно',
   openBotSubtitle:
-      'Получите 2 дня бесплатно или сразу введите ключ, если он у вас уже есть. Подписка покупается в Telegram-боте FatVPN.',
-  trialUsedTitle: 'Подключите подписку',
+      'Получите 2 дня бесплатно или сразу введите ключ, если он у вас уже есть.',
+  trialUsedTitle: 'Подключите ключ',
   trialUsedSubtitle:
-      'Ваш бесплатный период закончился. Купите подписку в Telegram-боте FatVPN или введите ключ, если он у вас уже есть.',
+      'Ваш бесплатный период закончился. Введите ключ, если он у вас уже есть, или подключите аккаунт через бота FatVPN.',
   trialResumableTitle: 'Сессия прервана',
   trialResumableSubtitle:
-      'Вы вышли из аккаунта, но пробный период может быть ещё активен. Продолжите его, подключите подписку в Telegram-боте FatVPN или введите ключ.',
+      'Вы вышли из аккаунта, но пробный период может быть ещё активен. Продолжите его, введите ключ или подключите аккаунт через бота FatVPN.',
   connectWithTelegram: 'Подключить через Telegram',
   pairingWaiting: 'Ожидаем подтверждения от бота…',
   pairingScanHint: 'На другом устройстве? Отсканируйте код или откройте бота и отправьте:',
@@ -576,10 +576,9 @@ final Strings ruStrings = Strings(
   keyNotFound: 'Такого ключа нет или он истёк. Проверьте код в боте.',
   deepLinkKeyTitle: 'Использовать этот ключ?',
   deepLinkKeyBody: _ruDeepLinkKeyBody,
-  subscriptionExpiredTitle: 'Подписка истекла',
-  subscriptionExpiredSubtitle: 'Продлите подписку в Telegram, чтобы продолжить пользоваться FatVPN — приложение переподключится автоматически, как только подписка снова станет активной.',
-  renewViaTelegram: 'Продлить через Telegram',
-  checkAgain: 'Я продлил — обновить',
+  subscriptionExpiredTitle: 'Доступ истёк',
+  subscriptionExpiredSubtitle: 'Срок доступа закончился. Подключите активный ключ — приложение переподключится автоматически, как только ключ снова станет действующим.',
+  checkAgain: 'Проверить ещё раз',
   splitTunneling: 'Раздельное туннелирование',
   appsBypassVpn: 'Приложения, которые обходят VPN',
   selectedInList: 'ВЫБРАНО В СПИСКЕ',
@@ -610,13 +609,13 @@ final Strings ruStrings = Strings(
       'Включите переключатель выше, чтобы выбрать домены и IP, которым разрешён VPN.',
   splitTunnelIncludeEmptyNotice:
       'Список пуст, поэтому весь трафик по-прежнему идёт через VPN.',
-  notifExpiringSoonTitle: 'Подписка скоро закончится',
+  notifExpiringSoonTitle: 'Доступ скоро закончится',
   notifExpiresInDays: (n) =>
-      'Доступ истекает через $n ${_ruPluralDays(n)}. Продлите в Telegram, чтобы остаться на связи.',
+      'Доступ истекает через $n ${_ruPluralDays(n)}. Откройте FatVPN, чтобы сохранить подключение.',
   notifExpiresInMinutes: (n) =>
-      'Доступ истекает через $n ${_ruPluralMinutes(n)}. Продлите в Telegram, чтобы остаться на связи.',
-  notifExpiredTitle: 'Подписка истекла',
-  notifExpiredBody: 'Продлите в Telegram, чтобы продолжить пользоваться FatVPN.',
+      'Доступ истекает через $n ${_ruPluralMinutes(n)}. Откройте FatVPN, чтобы сохранить подключение.',
+  notifExpiredTitle: 'Доступ истёк',
+  notifExpiredBody: 'Откройте FatVPN, чтобы восстановить доступ.',
 );
 
 String _ruPluralServers(int n) {
