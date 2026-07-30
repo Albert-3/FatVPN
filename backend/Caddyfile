@@ -5,16 +5,24 @@ api.fatklyuchi.space {
 	# rejects a listing whose policy link 404s — so it lives here rather than on
 	# anything that has to be deployed separately.
 	#
-	# The Russian page is matched first: `handle` blocks are mutually exclusive
-	# and the more specific path has to win, or /privacy/ru would be answered
-	# with the English text.
-	handle /privacy/ru /privacy/ru/ {
+	# Named matchers rather than inline paths: `handle` takes exactly one matcher
+	# token, so `handle /privacy /privacy/` is a config error, and `path` is the
+	# thing that accepts a list. Both variants are listed because a link written
+	# with a trailing slash must not 404.
+	#
+	# The Russian block comes first and that ordering matters: `handle` blocks
+	# are mutually exclusive and evaluated in file order, so /privacy/ru would
+	# otherwise be swallowed by the English one and answered in the wrong
+	# language.
+	@privacy_ru path /privacy/ru /privacy/ru/
+	handle @privacy_ru {
 		root * /srv/legal
 		rewrite * /privacy.ru.html
 		file_server
 	}
 
-	handle /privacy /privacy/ {
+	@privacy path /privacy /privacy/
+	handle @privacy {
 		root * /srv/legal
 		rewrite * /privacy.html
 		file_server
