@@ -66,13 +66,33 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
             // said "no servers on this subscription". The `/api` route serves the
             // same body and is the one the panel's own API surface lives on.
             var response = await GetSubscriptionAsync($"/api/sub/{id}", ct);
-            // Older panels only have the browser route; fall back rather than
-            // strand every user on a 502 if this ever runs against one.
             if (response.StatusCode is System.Net.HttpStatusCode.NotFound
                 or System.Net.HttpStatusCode.MethodNotAllowed)
             {
+                var body = await response.Content.ReadAsStringAsync(ct);
                 response.Dispose();
+
+                // Two different 404s arrive here and they mean opposite things.
+                // "No such subscription" is the panel answering about the key —
+                // deleted, or reissued under a new id while our copy of the
+                // expiry still called it live. Falling through to the browser
+                // route on that one is how a spent key reached the user as
+                // "ApiException(502): config_failed", with nothing said about
+                // their subscription: /sub/{id} sits behind the operator's login
+                // portal and answers 302, which is neither success nor 404.
+                if (SaysNoSuchSubscription(body))
+                {
+                    throw new SubscriptionGoneException(subscriptionId);
+                }
+
+                // The other 404 is "no such route" — an older panel that predates
+                // /api/sub. Fall back rather than strand every user on a 502.
                 response = await GetSubscriptionAsync($"/sub/{id}", ct);
+                if (response.StatusCode is System.Net.HttpStatusCode.NotFound)
+                {
+                    response.Dispose();
+                    throw new SubscriptionGoneException(subscriptionId);
+                }
             }
 
             using (response)
@@ -86,6 +106,21 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
             }
         }, "Fetching subscription config", ct);
     }
+
+    /// <summary>
+    /// Whether a 404 body is the panel saying it has no such subscription, as
+    /// opposed to no such route.
+    /// <para>
+    /// A missing subscription answers <c>{"isFound":false,"statusCode":404,
+    /// "message":"Resource not found"}</c>; a missing route answers
+    /// <c>{"message":"Cannot GET /api/…","error":"Not Found",…}</c>. The
+    /// <c>isFound</c> field is the panel talking about a subscription at all,
+    /// which is the whole distinction — and matching on it rather than on the
+    /// message text keeps this working if the wording is ever localized.
+    /// </para>
+    /// </summary>
+    private static bool SaysNoSuchSubscription(string body) =>
+        body.Contains("\"isFound\"", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// User-Agent sent with a subscription request. Remnawave picks the rendering

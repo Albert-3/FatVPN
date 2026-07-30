@@ -581,6 +581,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (picked != null && mounted) {
         setState(() => _selectedServer = picked);
       }
+    } on ApiException catch (e) {
+      // Same as the power button: a subscription that ended belongs on the renew
+      // screen, not under the button as an error.
+      if (e.statusCode == 402) {
+        widget.auth.notifyExpired();
+        return;
+      }
+      // Surfaced via _vpn.errorMessage in the status section.
     } catch (_) {
       // Surfaced via _vpn.errorMessage in the status section.
     }
@@ -618,6 +626,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           setState(() => _selectedServer = picked);
         }
       }
+    } on ApiException catch (e) {
+      // 402 while connecting means the same as 402 while listing servers: the
+      // subscription is over. Only the listing path acted on it, so a user whose
+      // key ran out between opening the app and pressing connect was left on the
+      // home screen with an error under the button and no mention of their
+      // subscription.
+      if (e.statusCode == 402) {
+        widget.auth.notifyExpired();
+        return;
+      }
+      // Anything else is surfaced via _vpn.errorMessage in the status section.
     } catch (_) {
       // Error is surfaced via _vpn.errorMessage in the status section.
     }

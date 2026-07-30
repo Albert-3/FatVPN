@@ -18,6 +18,26 @@ public sealed class UpstreamExceptionHandler(ILogger<UpstreamExceptionHandler> l
             return false;
         }
 
+        // A subscription the panel no longer has is not an outage. It is the same
+        // condition as a lapsed one, and the app already knows how to answer 402:
+        // it shows the renew screen. Answering 502 sent that user to a home
+        // screen reading "ApiException(502)" with nothing said about their key.
+        if (exception is SubscriptionGoneException gone)
+        {
+            logger.LogWarning("The panel no longer has subscription {SubscriptionId}; answering 402",
+                gone.SubscriptionId);
+
+            httpContext.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+            await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
+            {
+                Status = StatusCodes.Status402PaymentRequired,
+                Title = "Subscription no longer exists",
+                Detail = "This key is not on the panel any more. Renew it in the bot.",
+            }, ct);
+
+            return true;
+        }
+
         logger.LogWarning(exception, "Remnawave call failed while serving {Method} {Path}",
             httpContext.Request.Method, httpContext.Request.Path);
 

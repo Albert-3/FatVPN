@@ -394,14 +394,6 @@ class VpnController extends ChangeNotifier {
     return countries.firstWhere((c) => c.nodes.contains(node));
   }
 
-  /// True for low-level connectivity failures (no signal, airplane mode,
-  /// DNS unreachable, or a request that ran out of time) reaching the BFF — as
-  /// opposed to app/server-level errors, which already carry a user-facing
-  /// message. A timeout belongs here: with the app's traffic inside the tunnel,
-  /// that is what a request through a dying one looks like.
-  bool _isNetworkError(Object e) =>
-      e is SocketException || e is http.ClientException || e is TimeoutException;
-
   /// Endpoint the post-connect probe hits. Google's captive-portal check:
   /// an empty 204, served from everywhere, and designed for exactly this.
   static const _trafficProbeUrl = 'https://www.gstatic.com/generate_204';
@@ -768,11 +760,15 @@ class VpnController extends ChangeNotifier {
       return node;
     } catch (e) {
       _state = VpnConnectionState.error;
+      // Never e.toString(): whatever falls through here is shown under the power
+      // button, and a user whose subscription had run out was reading
+      // "ApiException(502): config_failed" with nothing said about their key.
+      // An unrecognized failure is still a failure to reach the server, which is
+      // both true and something the user can act on.
       _errorMessage = switch (e) {
         SignboxVpnException() => e.message,
-        _NoUsableNodes() => noUsableNodesMessage ?? e.toString(),
-        _ when _isNetworkError(e) => networkErrorMessage,
-        _ => e.toString(),
+        _NoUsableNodes() => noUsableNodesMessage ?? networkErrorMessage,
+        _ => networkErrorMessage,
       };
       log.e('Connect failed', e.toString());
       notifyListeners();

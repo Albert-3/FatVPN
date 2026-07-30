@@ -32,6 +32,45 @@ public class RemnawaveClientTests
     }
 
     [Fact]
+    public async Task GetSubscriptionConfig_a_key_the_panel_does_not_have_is_reported_as_gone()
+    {
+        // The panel answered, and said there is no such subscription. That is an
+        // entitlement that ended, not an outage — reporting it as one put
+        // "ApiException(502): config_failed" on the home screen of a user whose
+        // key had simply run out, with nothing said about their subscription.
+        //
+        // The browser route is deliberately not asked: it sits behind the
+        // operator's login portal and answers 302, which is neither success nor
+        // 404, and that is exactly how this became a 502.
+        var handler = new StubHandler((_, _) => new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent(
+                """{"isFound":false,"statusCode":404,"message":"Resource not found"}"""),
+        });
+        var client = NewClient(handler);
+
+        var error = await Assert.ThrowsAsync<SubscriptionGoneException>(
+            () => client.GetSubscriptionConfigAsync("MFsUvfCH02q_bcAF"));
+
+        Assert.Equal("MFsUvfCH02q_bcAF", error.SubscriptionId);
+        Assert.Equal("/api/sub/MFsUvfCH02q_bcAF", Assert.Single(handler.Paths));
+    }
+
+    [Fact]
+    public async Task GetSubscriptionConfig_an_unreachable_panel_is_still_an_upstream_failure()
+    {
+        // The distinction only works if the other direction holds: a panel that
+        // errors must not be read as "your subscription is over".
+        var handler = new StubHandler((_, _) => new HttpResponseMessage(HttpStatusCode.BadGateway));
+        var client = NewClient(handler);
+
+        var error = await Assert.ThrowsAsync<RemnawaveException>(
+            () => client.GetSubscriptionConfigAsync("MFsUvfCH02q_bcAF"));
+
+        Assert.IsNotType<SubscriptionGoneException>(error);
+    }
+
+    [Fact]
     public async Task GetSubscriptionConfig_falls_back_to_the_browser_route_on_404()
     {
         var handler = new StubHandler((path, _) => path.StartsWith("/api/sub", StringComparison.Ordinal)
