@@ -101,6 +101,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await launchUrl(telegramBotLink(), mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _openPrivacyPolicy() async {
+    // The policy is served in both languages; hand the reader the one the app
+    // is already speaking rather than making them find the switch.
+    final russian =
+        AppLocalizationsScope.of(context).language == AppLanguage.ru;
+    await launchUrl(
+      privacyPolicyLink(russian: russian),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
   /// Exchanges a pasted key for a new session. On success we pop back to Home,
   /// which reloads its server list and auto-connects to the new subscription.
   Future<void> _submitKey(Strings s) async {
@@ -484,6 +495,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: const Icon(Icons.support_agent, size: 18),
                       label: Text(
                         '${s.contactSupport} · @$telegramSupportUsername',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton.icon(
+                      onPressed: _openPrivacyPolicy,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.textSecondary,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.privacy_tip_outlined, size: 18),
+                      label: Text(
+                        s.privacyPolicy,
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,

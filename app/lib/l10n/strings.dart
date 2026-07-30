@@ -29,6 +29,7 @@ class Strings {
     required this.connectKey,
     required this.connectKeyHint,
     required this.contactSupport,
+    required this.privacyPolicy,
     required this.logsManagement,
     required this.applicationLogs,
     required this.shareDiagnostics,
@@ -151,6 +152,10 @@ class Strings {
   final String connectKey;
   final String connectKeyHint;
   final String contactSupport;
+
+  /// Opens the hosted policy. Reachable from inside the app, not just from the
+  /// store listing — see api_config.privacyPolicyLink for why.
+  final String privacyPolicy;
   final String logsManagement;
   final String applicationLogs;
   final String shareDiagnostics;
@@ -366,6 +371,7 @@ const Strings enStrings = Strings(
   connectKey: 'CONNECT A KEY',
   connectKeyHint: 'Have a key from the bot? Paste it to connect.',
   contactSupport: 'Contact support',
+  privacyPolicy: 'Privacy policy',
   logsManagement: 'LOGS MANAGEMENT',
   applicationLogs: 'Application logs',
   shareDiagnostics: 'Share diagnostics with support',
@@ -515,6 +521,7 @@ final Strings ruStrings = Strings(
   connectKey: 'ПОДКЛЮЧИТЬ КЛЮЧ',
   connectKeyHint: 'Есть ключ из бота? Вставьте, чтобы подключиться.',
   contactSupport: 'Написать в поддержку',
+  privacyPolicy: 'Политика конфиденциальности',
   logsManagement: 'УПРАВЛЕНИЕ ЛОГАМИ',
   applicationLogs: 'Логи приложения',
   shareDiagnostics: 'Поделиться диагностикой с поддержкой',

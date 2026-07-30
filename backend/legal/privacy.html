@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — FatVPN</title>
+<!--
+	FILL IN BEFORE PUBLISHING: every [[OPERATOR]], [[CONTACT]] and
+	[[JURISDICTION]] below must carry the real details of whoever runs the
+	service. Both stores require the policy to name the party responsible for
+	the data and to give a working way to reach them; a page with an unfilled
+	placeholder is grounds for rejection on its own.
+
+	Edit together with privacy.ru.html: a divergence between the languages is
+	two different promises to the user.
+-->
+<style>
+	:root { color-scheme: light dark; }
+	* { box-sizing: border-box; }
+	body {
+		margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+		font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+		color: #16181d; background: #fff;
+	}
+	@media (prefers-color-scheme: dark) {
+		body { color: #e6e8ec; background: #101216; }
+		td, th { border-color: #2a2e37 !important; }
+		code { background: #1b1f26 !important; }
+		footer { border-top-color: #2a2e37; }
+		a { color: #7ba7ff; }
+	}
+	h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .35rem; }
+	h2 { font-size: 1.18rem; margin: 2.2rem 0 .6rem; }
+	.meta { color: #6b7280; font-size: .9rem; margin: 0 0 2rem; }
+	.lang { font-size: .9rem; margin: 0 0 1.5rem; }
+	table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .93rem; }
+	th, td { border: 1px solid #d8dbe0; padding: .5rem .6rem; text-align: left; vertical-align: top; }
+	th { font-weight: 600; }
+	.wrap { overflow-x: auto; }
+	code { background: #f1f3f5; padding: .1rem .3rem; border-radius: 4px; font-size: .9em; }
+	ul { padding-left: 1.2rem; }
+	li { margin: .3rem 0; }
+	footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 1px solid #d8dbe0; color: #6b7280; font-size: .9rem; }
+	a { color: #2563eb; }
+</style>
+</head>
+<body>
+
+<h1>FatVPN Privacy Policy</h1>
+<p class="meta">Effective 30 July 2026. Last updated: 30 July 2026.</p>
+<p class="lang"><a href="/privacy/ru">Русская версия</a></p>
+
+<p>FatVPN is a VPN service for mobile devices. This policy describes what data
+the app and its server process, why, and for how long. It is written to be
+checkable: everything below matches what the app's and the server's code
+actually do.</p>
+
+<p><strong>Data controller:</strong> [[OPERATOR]]<br>
+<strong>Data enquiries:</strong> [[CONTACT]]</p>
+
+<h2>1. The short version</h2>
+
+<p><strong>We keep no logs of your activity.</strong> We do not record which
+sites you visit, which apps reach the network, what DNS queries your device
+sends, or anything about the contents of your traffic. We hold no data from
+which your internet activity could be reconstructed — and so there is nothing
+of that kind for us to hand to anyone, including anyone who demands it.</p>
+
+<p><strong>We do not sell or disclose your data to third parties</strong> — not
+for advertising, not for analytics, not for any other purpose. The app contains
+no ad networks, no analytics, no trackers and no third-party data-collecting
+SDKs. The only server the app talks to is our own.</p>
+
+<h2>2. What we do not collect</h2>
+
+<ul>
+	<li>browsing history, destination IP addresses, DNS queries;</li>
+	<li>the contents of your traffic, in any form;</li>
+	<li>the list of installed apps <em>(on Android the split-tunnelling screen
+		needs it — it is read on the device, shown to you, and never sent
+		anywhere)</em>;</li>
+	<li>location, contacts, photos, calendar, microphone, camera;</li>
+	<li>advertising identifiers (IDFA, Android Advertising ID) — the app never
+		asks for them;</li>
+	<li>your name, address, phone number or government ID;</li>
+	<li>payment card details — see section 7.</li>
+</ul>
+
+<h2>3. What we do collect, and why</h2>
+
+<div class="wrap">
+<table>
+	<thead>
+		<tr><th>Data</th><th>Why</th><th>Kept for</th></tr>
+	</thead>
+	<tbody>
+		<tr>
+			<td><strong>An install identifier</strong> — a random value the app
+				creates on first launch. It reaches the server only as a hash with a
+				secret salt; the server never receives the original value and cannot
+				recover it from the hash.</td>
+			<td>To give one free trial per install and no more, and to count how
+				many devices run on one key (the limit is 3).</td>
+			<td>As long as the key or trial it belongs to exists.</td>
+		</tr>
+		<tr>
+			<td><strong>Platform</strong> — the string <code>ios</code> or
+				<code>android</code>.</td>
+			<td>To hand back a configuration your OS can use.</td>
+			<td>With the device record.</td>
+		</tr>
+		<tr>
+			<td><strong>Your key code and its expiry</strong>, plus the subscription
+				identifier in the VPN panel.</td>
+			<td>To know whether you have access, and until when.</td>
+			<td>While the key is valid, plus what accounting requires.</td>
+		</tr>
+		<tr>
+			<td><strong>Your Telegram user ID</strong> — only if you connected
+				through our bot. It is the number Telegram assigns to an account; we
+				receive no name, phone number or username from Telegram.</td>
+			<td>To tie your key to an account, so a renewal or a key change reaches
+				the app.</td>
+			<td>As long as the account exists.</td>
+		</tr>
+		<tr>
+			<td><strong>Session tokens</strong> — stored only as hashes, with the
+				times they were created, rotated and revoked.</td>
+			<td>To keep you signed in without re-entering your key, and to be able
+				to end a session instantly if a key is stolen or revoked.</td>
+			<td>Up to 90 days from the last rotation; deleted immediately on
+				sign-out.</td>
+		</tr>
+		<tr>
+			<td><strong>The IP address of your connection to our server</strong> — in
+				in-memory rate-limit counters and in web-server technical logs.</td>
+			<td>Protection against brute force and automated abuse.</td>
+			<td>Briefly. It is never linked to your internet activity and never used
+				for profiling.</td>
+		</tr>
+		<tr>
+			<td><strong>The volume of traffic</strong> (in bytes), metered by the VPN
+				panel.</td>
+			<td>To enforce plan limits.</td>
+			<td>Within the billing period. No destinations and no contents are
+				stored alongside it.</td>
+		</tr>
+	</tbody>
+</table>
+</div>
+
+<h2>4. What stays on your device only</h2>
+
+<p>This data never leaves your phone on its own:</p>
+<ul>
+	<li>session tokens — in the OS secure store (Keychain on iOS, Keystore on
+		Android);</li>
+	<li>your settings: chosen country, split-tunnelling rules, language;</li>
+	<li>the app's technical log, kept so a failure can be diagnosed. It is sent
+		only when you press "Share diagnostics" yourself, and only where you choose
+		to send it. Keys and credentials are stripped out of it first.</li>
+</ul>
+
+<p>Signing out in the app deletes the tokens, the VPN configuration and the
+stored server choice from the device.</p>
+
+<h2>5. The VPN permission</h2>
+
+<p>To route your traffic through an encrypted tunnel, the app needs permission
+to create a VPN connection: <code>VpnService</code> on Android, a Network
+Extension on iOS. The system asks for your consent separately, and without it
+no tunnel is raised.</p>
+
+<p>That permission technically allows the app to see the traffic passing
+through it. We use it solely to encrypt your traffic and carry it to the server
+you selected. We do not inspect it, record it, modify it, or insert
+advertising into it.</p>
+
+<h2>6. Who we share data with</h2>
+
+<p>Nobody — in the sense of selling, trading, or giving third parties access
+for their own purposes. Data is processed only by the service providers the
+service cannot run without:</p>
+
+<ul>
+	<li><strong>Our hosting provider</strong>, whose servers run our backend and
+		the VPN nodes;</li>
+	<li><strong>Telegram</strong> — if you connect or buy a key through the bot,
+		<a href="https://telegram.org/privacy" rel="noopener">Telegram's own policy</a>
+		applies to you there;</li>
+	<li><strong>Apple and Google</strong> — as app stores. They give us anonymous
+		install statistics; we give them nothing about you.</li>
+</ul>
+
+<p>We will disclose data on a lawful demand from a competent authority — but
+only what exists can be disclosed, and logs of your activity are not among it
+(section 1).</p>
+
+<h2>7. Payment</h2>
+
+<p>Buying and renewing access happens outside the app, in the Telegram bot. The
+app neither contains nor asks for payment details, and we never see or store
+card numbers: they are handled by the payment provider under its own terms. In
+the app you only enter the key you received.</p>
+
+<h2>8. Retention and deletion</h2>
+
+<p>We keep what section 3 lists for as long as your access needs it, and delete
+it once it is no longer needed. At any time you may:</p>
+
+<ul>
+	<li>sign out in the app — session data is wiped from the device
+		immediately;</li>
+	<li>ask us to delete every record associated with you, by writing to
+		[[CONTACT]]. We will act on the request within a reasonable time; after
+		deletion the key stops working.</li>
+</ul>
+
+<h2>9. Your rights</h2>
+
+<p>Depending on where you live, you may have the right to request a copy of
+your data, its correction or deletion, to restrict processing, or to withdraw
+consent. Write to [[CONTACT]] and we will answer. If our answer does not
+satisfy you, you may complain to the data protection authority in
+[[JURISDICTION]].</p>
+
+<h2>10. Children</h2>
+
+<p>The service is not intended for or directed at children, and we do not
+knowingly collect children's data. If you believe a child has given us data,
+write to us and we will delete it.</p>
+
+<h2>11. Security</h2>
+
+<p>The app's connection to our server is protected with TLS. Install
+identifiers and session tokens are stored on the server only as hashes — a
+database in the wrong hands yields neither the original identifiers nor usable
+tokens. No method of transmission is completely secure, but we work from the
+premise that data which does not exist cannot be stolen, and so we do not
+collect what we do not need.</p>
+
+<h2>12. Changes to this policy</h2>
+
+<p>If this policy changes, we will update the date at the top of this page. For
+material changes — a new category of collected data, for instance — we will
+also show a notice in the app before they take effect.</p>
+
+<h2>13. Contact</h2>
+
+<p>Data enquiries and deletion requests: [[CONTACT]].<br>
+Support: <a href="https://t.me/fatvpn_support" rel="noopener">@fatvpn_support</a> on Telegram.</p>
+
+<footer>
+	FatVPN · Privacy Policy · revision of 30 July 2026
+</footer>
+
+</body>
+</html>

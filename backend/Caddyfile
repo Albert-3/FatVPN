@@ -1,3 +1,26 @@
 api.fatklyuchi.space {
-	reverse_proxy bff:5030
+	# The privacy policy, served from the same name as the API because it is the
+	# only name pointed at this host. Both stores require it to sit at a public
+	# URL that stays reachable — Apple opens it during review, and Google Play
+	# rejects a listing whose policy link 404s — so it lives here rather than on
+	# anything that has to be deployed separately.
+	#
+	# The Russian page is matched first: `handle` blocks are mutually exclusive
+	# and the more specific path has to win, or /privacy/ru would be answered
+	# with the English text.
+	handle /privacy/ru /privacy/ru/ {
+		root * /srv/legal
+		rewrite * /privacy.ru.html
+		file_server
+	}
+
+	handle /privacy /privacy/ {
+		root * /srv/legal
+		rewrite * /privacy.html
+		file_server
+	}
+
+	handle {
+		reverse_proxy bff:5030
+	}
 }

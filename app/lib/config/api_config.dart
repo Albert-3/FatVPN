@@ -24,6 +24,14 @@ Uri telegramPairLink(String pairCode) =>
 /// a subscription there and receives a key to paste back into the app.
 Uri telegramBotLink() => Uri.parse('https://t.me/$telegramBotUsername');
 
+/// The privacy policy, served by Caddy beside the API (backend/legal/*.html,
+/// backend/Caddyfile). Reachable from inside the app on purpose, not only from
+/// the store listings: Google Play expects an app that holds the VPN permission
+/// to show the user where its policy is without sending them to Play first, and
+/// Apple's reviewer opens it from wherever it is easiest to find.
+Uri privacyPolicyLink({required bool russian}) =>
+    Uri.parse('$bffBaseUrl/privacy${russian ? '/ru' : ''}');
+
 /// Telegram support handle opened from the settings screen (without `@`).
 const telegramSupportUsername = 'fatvpn_support';
 

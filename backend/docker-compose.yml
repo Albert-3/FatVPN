@@ -58,6 +58,10 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The privacy policy pages Caddy serves at /privacy and /privacy/ru. Bind
+      # mount, not a named volume: they are tracked in git next to this file, so
+      # `git pull` on the server is all it takes to publish a correction.
+      - ./legal:/srv/legal:ro
       # Named volumes rather than bind mounts: /data holds the issued
       # certificate and the ACME account key, and losing those means re-issuing
       # on every deploy — which Let's Encrypt rate-limits.
