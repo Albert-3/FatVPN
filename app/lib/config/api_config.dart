@@ -1,10 +1,11 @@
 /// Base URL of the FatVPN BFF.
-/// Test deployment: public BFF on the bot server over HTTP. Switch to the
-/// HTTPS domain once one is set up (see the project deploy plan). Until then
-/// this host is the one cleartext exception in
-/// `android/app/src/main/res/xml/network_security_config.xml`; both entries go
-/// away together.
-const bffBaseUrl = 'http://87.121.221.229:5030';
+///
+/// HTTPS since 2026-07-30: Caddy terminates TLS in front of the BFF with a
+/// Let's Encrypt certificate. The old `http://87.121.221.229:5030` is still
+/// served — builds already on people's phones point at it — but nothing new
+/// should: a session token and a subscription id travelled in the clear over
+/// every public Wi-Fi the app was used on, and both stores flag it.
+const bffBaseUrl = 'https://api.fatklyuchi.space';
 
 /// URI scheme the Telegram bot uses to deep-link a short token into the app,
 /// e.g. `fatvpn://token/AB12CD34`. Legacy path — kept for the transition.
