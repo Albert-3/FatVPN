@@ -15,8 +15,10 @@
          a session token is not something to clone onto another phone anyway.
          dataExtractionRules covers the Android 12+ device-to-device transfer,
          which allowBackup alone does not. -->
+    <!-- android:label is the launcher name and the name Play shows. It was
+         "fatvpn_app" — the Flutter template's package name, not the product's. -->
     <application
-        android:label="fatvpn_app"
+        android:label="FatVPN"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:networkSecurityConfig="@xml/network_security_config"

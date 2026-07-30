@@ -30,6 +30,7 @@ class Strings {
     required this.connectKeyHint,
     required this.contactSupport,
     required this.privacyPolicy,
+    required this.privacyDisclosure,
     required this.logsManagement,
     required this.applicationLogs,
     required this.shareDiagnostics,
@@ -156,6 +157,12 @@ class Strings {
   /// Opens the hosted policy. Reachable from inside the app, not just from the
   /// store listing — see api_config.privacyPolicyLink for why.
   final String privacyPolicy;
+
+  /// Shown on the onboarding screen, above the buttons that cause the install
+  /// identifier to be sent — Google Play's prominent-disclosure requirement,
+  /// which a link to the policy does not satisfy on its own. If the app ever
+  /// starts sending something else, this sentence is the first thing to fix.
+  final String privacyDisclosure;
   final String logsManagement;
   final String applicationLogs;
   final String shareDiagnostics;
@@ -372,6 +379,10 @@ const Strings enStrings = Strings(
   connectKeyHint: 'Have a key from the bot? Paste it to connect.',
   contactSupport: 'Contact support',
   privacyPolicy: 'Privacy policy',
+  privacyDisclosure:
+      'To give the free trial once per device and to count the devices on a '
+      'key, the app sends an anonymous install identifier. Nothing else about '
+      'your device or your traffic leaves the phone.',
   logsManagement: 'LOGS MANAGEMENT',
   applicationLogs: 'Application logs',
   shareDiagnostics: 'Share diagnostics with support',
@@ -522,6 +533,10 @@ final Strings ruStrings = Strings(
   connectKeyHint: 'Есть ключ из бота? Вставьте, чтобы подключиться.',
   contactSupport: 'Написать в поддержку',
   privacyPolicy: 'Политика конфиденциальности',
+  privacyDisclosure:
+      'Чтобы выдать пробный период один раз на устройство и посчитать '
+      'устройства на ключе, приложение отправляет анонимный идентификатор '
+      'установки. Больше об устройстве и о вашем трафике ничего не уходит.',
   logsManagement: 'УПРАВЛЕНИЕ ЛОГАМИ',
   applicationLogs: 'Логи приложения',
   shareDiagnostics: 'Поделиться диагностикой с поддержкой',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/api_config.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../services/auth_controller.dart';
@@ -407,6 +408,16 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
                             const Divider(color: AppColors.disabled, height: 1),
                             _ManualKeyEntry(auth: auth),
                           ],
+
+                          // Google Play's prominent disclosure: the install
+                          // identifier reaches our server on the trial, on
+                          // pairing and on a pasted key, and all three start on
+                          // this screen — so the notice belongs here, in front
+                          // of the buttons that trigger them, rather than only
+                          // in the policy. Pressing one of those buttons is the
+                          // consent.
+                          const SizedBox(height: 16),
+                          const _PrivacyDisclosure(),
                         ],
                       ),
                     ),
@@ -415,6 +426,55 @@ class _AwaitingAuthScreenState extends State<AwaitingAuthScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The one thing this app sends about the device, said before it is sent.
+///
+/// Google Play requires data collection that isn't obvious from context to be
+/// disclosed by the app itself, in front of the collection — a policy behind a
+/// link does not satisfy it. Kept deliberately small and factual: it names what
+/// leaves the device (an install identifier, nothing else), why it has to
+/// (one trial per device, three devices per key), and links to the rest.
+class _PrivacyDisclosure extends StatelessWidget {
+  const _PrivacyDisclosure();
+
+  @override
+  Widget build(BuildContext context) {
+    final s = S.of(context);
+    return GestureDetector(
+      // The whole line opens the policy, not just the underlined words: a
+      // TapGestureRecognizer on the span would have to be created and disposed
+      // by a StatefulWidget, and an 11pt tap target is a poor one anyway.
+      onTap: () => launchUrl(
+        privacyPolicyLink(
+          russian:
+              AppLocalizationsScope.of(context).language == AppLanguage.ru,
+        ),
+        mode: LaunchMode.externalApplication,
+      ),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: '${s.privacyDisclosure} '),
+            TextSpan(
+              text: s.privacyPolicy,
+              style: const TextStyle(
+                color: AppColors.accent,
+                decoration: TextDecoration.underline,
+                decorationColor: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: AppColors.textSecondary,
+          fontSize: 11,
+          height: 1.35,
         ),
       ),
     );
