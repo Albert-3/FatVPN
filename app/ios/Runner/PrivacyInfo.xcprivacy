@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy manifest for the app bundle. Apple requires one from every bundle
+	that touches a "required reason" API; without it the upload draws an
+	ITMS-91053 notice and, for the categories below, App Review can hold the
+	build. Each extension carries its own — a manifest describes one bundle, not
+	the payload — see PacketTunnel/ and FatVpnWidget/.
+
+	Wired into the target by ios/tool/add_privacy_manifests.rb, not by the
+	checked-in project file: there is no Mac for this project, so every target
+	edit goes through the xcodeproj gem on CI. codemagic.yaml then verifies the
+	file actually landed inside each bundle in the exported .ipa.
+-->
+<plist version="1.0">
+<dict>
+	<!-- No tracking, no ad networks, no data broker. Nothing in the app talks to
+	     a third party at all: the only host it contacts is our own BFF. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<dict>
+			<!-- The per-install device key (TokenStorage.readOrCreateDeviceKey),
+			     sent to our BFF as `attestationToken` on /trial, /auth/token and
+			     /pair/start. It is a random identifier, not an Apple one, but it
+			     identifies the install and the server stores it (hashed) against
+			     the trial and against the key's device slot — so it is Linked,
+			     and it exists purely to make "2 days free, 3 devices per key"
+			     enforceable. It is never used to track across apps or sites. -->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- AppDelegate's fatvpn/widget channel writes the widget snapshot
+			     into UserDefaults(suiteName: group.com.fatvpn.fatvpnApp) and
+			     takes the widget's parked action back out of it
+			     (ios/Shared/FatVpnWidgetSnapshot.swift). CA92.1 covers the
+			     app's own defaults, 1C8F.1 the App Group the tunnel and the
+			     widget share with it. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<dict>
+			<!-- SingboxMmPlugin times how long a connect attempt has been
+			     running (DispatchTime.now().uptimeNanoseconds, which reads the
+			     system's monotonic clock) to time it out. Elapsed time between
+			     events inside the app — nothing absolute is derived from it. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

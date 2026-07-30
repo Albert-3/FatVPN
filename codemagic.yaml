@@ -134,6 +134,12 @@ workflows:
           # the widget about starts and stops that happen without the app.
           # The gem is already installed by the step above.
           ruby app/ios/tool/add_widget_target.rb
+      - name: Attach the privacy manifests
+        script: |
+          # Must follow both target steps: it wires each bundle's
+          # PrivacyInfo.xcprivacy into the target that ships it, and two of the
+          # three targets do not exist until the scripts above have run.
+          ruby app/ios/tool/add_privacy_manifests.rb
       - name: Pod install
         script: |
           cd app/ios
@@ -262,7 +268,7 @@ workflows:
           flutter build ipa --release \
             --build-number="$BUILD_NUMBER" \
             --export-options-plist=/Users/builder/export_options.plist
-      - name: Verify App Group entitlement survived signing
+      - name: Verify App Group entitlement and privacy manifest survived signing
         script: |
           # An App ID without the App Groups capability does not necessarily
           # fail the signature — the entitlement can be stripped instead, and
@@ -306,6 +312,16 @@ workflows:
               echo "Missing App Group entitlement in $BUNDLE" >&2
               exit 1
             }
+            # Apple wants a privacy manifest from every bundle that touches a
+            # required-reason API, and all three of these do. add_privacy_manifests.rb
+            # puts the file reference in the project; only the built bundle can
+            # say whether it was copied. Missing, the upload draws an ITMS-91053
+            # notice against a build number that is already spent.
+            if [ ! -f "$BUNDLE/PrivacyInfo.xcprivacy" ]; then
+              echo "Missing PrivacyInfo.xcprivacy in $BUNDLE" >&2
+              exit 1
+            fi
+            echo "PrivacyInfo.xcprivacy present."
           done
     artifacts:
       - app/build/ios/ipa/*.ipa
@@ -389,6 +405,10 @@ workflows:
         script: |
           # Order matters — see the same step in ios-release.
           ruby app/ios/tool/add_widget_target.rb
+      - name: Attach the privacy manifests
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_privacy_manifests.rb
       # Kept in this workflow only: it is the debug/validation one, and the
       # ~30-60s `-showBuildSettings` pass has no business in the pipeline that
       # publishes to TestFlight.

@@ -6,8 +6,11 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- What the home screen, Settings → VPN and the App Store all show. Both of
+	     these were the Flutter template's mangling of the package name ("Fatvpn
+	     App" / "fatvpn_app") and neither is the product's name. -->
 	<key>CFBundleDisplayName</key>
-	<string>Fatvpn App</string>
+	<string>FatVPN</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +18,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>fatvpn_app</string>
+	<string>FatVPN</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

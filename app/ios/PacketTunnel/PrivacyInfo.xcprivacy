@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy manifest for the Network Extension bundle. See Runner's for why each
+	bundle needs its own and how it gets wired into the target.
+
+	The tunnel collects nothing: it carries the user's traffic to a node and
+	never reports anything back to us. The subscription and the endpoints it
+	connects to arrive from the app through the App Group; the diagnostics it
+	writes stay on the device until the user shares them by hand.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- Reads and patches the widget snapshot in
+			     UserDefaults(suiteName: group.com.fatvpn.fatvpnApp) so a tunnel
+			     the OS raised on its own — on-demand, or a stop from Settings →
+			     VPN — still shows up on the home screen. App Group only. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<dict>
+			<!-- trimStderrIfOversized stats sing-box's stderr to drop it once it
+			     has outgrown any diagnostics report (nothing rotates that file).
+			     Files in our own container and App Group container only. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<!-- The health watchdog and the start path measure elapsed time with
+			     DispatchTime.now().uptimeNanoseconds — the monotonic clock, used
+			     for timeouts and for the "is this tunnel still passing traffic"
+			     probe. Elapsed time between events inside the extension. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

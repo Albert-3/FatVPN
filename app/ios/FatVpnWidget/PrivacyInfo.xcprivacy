@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy manifest for the WidgetKit bundle. See Runner's for why each bundle
+	needs its own and how it gets wired into the target.
+
+	The widget has no network of its own and no NetworkExtension entitlement. It
+	renders the snapshot the app and the tunnel leave in the App Group, and its
+	power button parks a request in the same place for the app to collect.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- The whole of what this bundle does: read the snapshot (state,
+			     location, session clock) out of
+			     UserDefaults(suiteName: group.com.fatvpn.fatvpnApp) and write
+			     the button's pending action back into it. App Group only. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
