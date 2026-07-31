@@ -332,6 +332,7 @@ class AuthController extends ChangeNotifier {
       if (_session?.refreshToken != refreshToken) {
         log.i('Session replaced while a refresh was in flight — '
             'discarding the stale rotation');
+        _discardUnusedSession(fresh);
         return null;
       }
       // Disk before memory. The server has already revoked the token we just
@@ -348,6 +349,7 @@ class AuthController extends ChangeNotifier {
         if (current != null) {
           await _tokenStorage.save(current);
         }
+        _discardUnusedSession(fresh);
         return null;
       }
       _session = fresh;
@@ -791,6 +793,22 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Hands back a session the app minted but is not going to use, because
+  /// something replaced it while it was being fetched. Left alone it would sit
+  /// on the panel for its full 90 days — and a pairing session also holds one
+  /// of the key's three device slots. Best-effort and never awaited: failing to
+  /// tidy up must not disturb the session the user is actually on.
+  void _discardUnusedSession(AuthSession? unused) {
+    final token = unused?.refreshToken;
+    if (token == null || token.isEmpty) return;
+    // Never revoke what the app is running on. The discarded token is always a
+    // freshly-minted one, so this can only differ — but the cost of being wrong
+    // here is signing the user out, which is exactly the bug being fixed.
+    if (token == _session?.refreshToken) return;
+    log.i('Releasing a session that was superseded before it was used');
+    unawaited(_apiClient.logout(token));
+  }
+
   Future<void> _pollOnce() async {
     // Guard against overlapping ticks so a completion is handled exactly once.
     if (_pollInFlight) return;
@@ -810,6 +828,20 @@ class AuthController extends ChangeNotifier {
       _pollFailures = 0;
       switch (status.state) {
         case PairingState.completed:
+          if (!identical(_pairing, pairing)) {
+            // Superseded while this poll was on the wire: the user pasted a
+            // key, took a trial, or started a fresh attempt. The renew screen
+            // offers the key field *and* the Telegram button, so this is a
+            // hand's reach apart — and prod caught it one step short on
+            // 2026-07-31 (code SVPP92D7 still being polled when the key was
+            // pasted 16 s later). Applying this would throw away the session
+            // the user actually ended up with; the mirror of the refresh race
+            // guarded in [_doRefresh].
+            log.i('Pairing attempt superseded before it completed — '
+                'leaving the current session alone');
+            _discardUnusedSession(status.session);
+            return;
+          }
           log.i('Pairing completed — session established');
           _stopPolling();
           _pairing = null;

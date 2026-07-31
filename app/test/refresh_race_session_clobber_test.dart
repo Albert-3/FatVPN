@@ -78,17 +78,28 @@ String _session({
 /// BFF where /auth/refresh answers only when the test lets it, so a response
 /// can be made to land *after* pairing has already replaced the session.
 class _RacingBff {
-  _RacingBff({this.refreshStatus = 200});
+  _RacingBff({this.refreshStatus = 200, bool holdPairStatus = false})
+      : pairGate = Completer<void>() {
+    if (!holdPairStatus) pairGate.complete();
+  }
 
   final int refreshStatus;
   final Completer<void> refreshGate = Completer<void>();
+
+  /// Held open by the mirror-race test, so a completed pairing can be made to
+  /// land *after* a pasted key has already installed a session.
+  final Completer<void> pairGate;
   int refreshCalls = 0;
+  int logouts = 0;
 
   late final MockClient client = MockClient((request) async {
     switch (request.url.path) {
       case '/auth/token':
-        // The starting point: an expired trial the user is stuck on.
-        return http.Response(_session(suffix: 'OLD', lapsed: true), 200);
+        // KEY-OLD is the starting point: an expired trial the user is stuck
+        // on. KEY-PAID is the code they paste from the bot to get out of it.
+        return request.body.contains('KEY-PAID')
+            ? http.Response(_session(suffix: 'PAID', lapsed: false), 200)
+            : http.Response(_session(suffix: 'OLD', lapsed: true), 200);
       case '/auth/refresh':
         refreshCalls++;
         await refreshGate.future;
@@ -107,6 +118,7 @@ class _RacingBff {
         );
       case '/pair/status':
         // The bot has already linked the paid key: completed on the first poll.
+        await pairGate.future;
         return http.Response(
           jsonEncode(<String, Object?>{
             'status': 'completed',
@@ -118,6 +130,7 @@ class _RacingBff {
           200,
         );
       case '/auth/logout':
+        logouts++;
         return http.Response('', 204);
       default:
         return http.Response('unexpected ${request.url}', 404);
@@ -207,6 +220,51 @@ void main() {
     expect(auth.session?.refreshToken, 'RT-NEW');
 
     // Drain the logger's flush timer before the pending-timer check runs.
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  // The mirror: the renew screen carries the Telegram button and the key field
+  // together, so "tap Telegram, give up, paste the key instead" is a hand's
+  // reach. Prod came one step short of it on 2026-07-31 — pair code SVPP92D7
+  // was still being polled when the key was pasted 16 s later; had the bot
+  // completed that code, the poll would have thrown the key session away.
+  testWidgets('a pairing that completes after a key was pasted does not '
+      'replace the pasted session', (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    final bff = _RacingBff(holdPairStatus: true);
+    final (auth, storage) = await signedInOnExpiredTrial(bff);
+    addTearDown(auth.dispose);
+
+    // Telegram first: a code is minted and the poll goes out — and hangs.
+    await auth.startPairing(expiredMessage: 'expired', genericMessage: 'generic');
+    await tester.pump(const Duration(seconds: 3));
+    expect(auth.pairingActive, isTrue, reason: 'setup failed');
+
+    // The user gives up on Telegram and pastes the key from the bot instead.
+    await auth.exchangeShortToken(
+      'KEY-PAID',
+      conflictMessage: 'conflict',
+      deviceLimitMessage: 'device-limit',
+      notFoundMessage: 'not-found',
+      genericMessage: 'generic',
+    );
+    expect(auth.session?.refreshToken, 'RT-PAID', reason: 'setup failed');
+
+    // Only now does the bot's completion come back.
+    bff.pairGate.complete();
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(auth.session?.refreshToken, 'RT-PAID',
+        reason: 'the pairing session arrived after the user had already moved '
+            'on; applying it discards the session they are running on');
+    expect(auth.keyCode, 'KEY-PAID',
+        reason: 'the completed branch clears the pasted key code, which would '
+            'leave Settings showing no active key');
+    expect(storage.stored?.refreshToken, 'RT-PAID');
+    expect(bff.logouts, 1,
+        reason: 'the unused pairing session holds one of the key\'s three '
+            'device slots — hand it back');
+
     await tester.pump(const Duration(seconds: 3));
   });
 }
