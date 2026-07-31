@@ -31,10 +31,19 @@ import UIKit
   /// ios/Shared/FatVpnWidgetSnapshot.swift.
   private func registerWidgetChannel(_ registry: FlutterPluginRegistry) {
     guard let registrar = registry.registrar(forPlugin: "FatVpnWidgetChannel") else { return }
-    let channel = FlutterMethodChannel(
-      name: "fatvpn/widget",
-      binaryMessenger: registrar.messenger()
-    )
+    widgetChannel = AppDelegate.attachWidgetChannel(to: registrar.messenger())
+    observeWidgetActionRequests()
+  }
+
+  /// The native half of the `fatvpn/widget` channel, on whichever engine asks.
+  ///
+  /// Static because two engines need it: the UI engine (above), and the
+  /// headless engine the widget's intent runs `widgetConnectMain` on
+  /// (`FatVpnWidgetAppToggle`) — whose runner publishes snapshots through this
+  /// same channel and would otherwise hit a MissingPluginException. The caller
+  /// keeps the returned channel alive; one nothing references stops delivering.
+  static func attachWidgetChannel(to messenger: FlutterBinaryMessenger) -> FlutterMethodChannel {
+    let channel = FlutterMethodChannel(name: "fatvpn/widget", binaryMessenger: messenger)
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "publish":
@@ -47,10 +56,12 @@ import UIKit
         // "there is a location" and render an empty one.
         FatVpnWidgetSnapshot.write(arguments.filter { !($0.value is NSNull) })
         result(nil)
-      // What the widget's power button asked for, if anything. The button is an
-      // App Intent (iOS 17+): it can bring this app to the front but cannot
-      // hand it a URL, so it leaves the action in the shared App Group and the
-      // app comes and takes it — on launch and on every resume, see
+      // What the widget's power button parked, if anything. Normally the
+      // intent toggles the tunnel itself in this very process
+      // (FatVpnWidgetAppToggle) and parks nothing; an action appears here only
+      // when a screen is unavoidable — no session, lapsed subscription, the
+      // first-ever consent dialog — or from the widget-copy fallback. The app
+      // collects it on launch and on every resume, see
       // AuthController.pollWidgetAction.
       case "takePendingAction":
         result(FatVpnWidgetSnapshot.takePendingAction())
@@ -58,8 +69,7 @@ import UIKit
         result(FlutterMethodNotImplemented)
       }
     }
-    widgetChannel = channel
-    observeWidgetActionRequests()
+    return channel
   }
 
   /// Tells Dart the instant the power button's intent runs, instead of leaving

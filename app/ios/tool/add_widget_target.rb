@@ -72,11 +72,14 @@ end
 add_source_once(runner_target, shared_ref, 'Runner')
 
 # --- The App Intent, in the app as well as in the widget ---------------------
-# `FatVpnTogglePowerIntent` sets openAppWhenRun, which means the system performs
-# it *in the app's process*. An app binary that does not contain the intent type
-# cannot perform it, and the press then does nothing whatsoever — no launch, no
-# error, exactly what a device showed with widgets that rendered perfectly. So
-# the same file is a member of both targets.
+# `FatVpnTogglePowerIntent` must exist in the app's binary, twice over. First,
+# an intent the app's process is asked to perform must be a type that binary
+# contains, or the press does nothing whatsoever — no launch, no error, exactly
+# what a device showed with widgets that rendered perfectly. Second, the app's
+# copy conforms to ForegroundContinuableIntent (unavailable to extensions),
+# which is what routes the intent into the app's process *in the background* —
+# the button toggling the tunnel without the app appearing depends on the
+# app-side membership this block wires.
 #
 # It is gated `@available(iOS 17.0, ...)`, above the app's 13.0 deployment
 # target, and AppIntents.framework is weak-linked below for the same reason: an
@@ -157,6 +160,12 @@ ext_target.build_configurations.each do |config|
   # Extensions may not call the APIs that only a full app can (openURL and
   # friends). Xcode sets this for extension targets it creates; the gem does not.
   config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
+  # FatVpnWidgetIntents.swift compiles differently per target: the widget copy
+  # of the power button's intent is the park-and-open-the-app fallback, the app
+  # copy toggles the tunnel in the background (see that file). This flag is what
+  # tells the two apart — Runner deliberately does not define it.
+  config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
+    '$(inherited) FATVPN_WIDGET_EXTENSION'
   # No Libbox here, unlike PacketTunnel: the widget links nothing but the
   # system's own SwiftUI and WidgetKit, which Swift auto-links from the imports.
 end
