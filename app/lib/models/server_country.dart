@@ -1,3 +1,5 @@
+import '../utils/country_flag.dart';
+
 class ServerNode {
   const ServerNode({
     required this.id,
@@ -75,4 +77,30 @@ class ServerCountry {
   final String flag;
   final int nodeCount;
   final List<ServerNode> nodes;
+
+  /// True for the panel's flagless bucket — the bypass hosts it names
+  /// "🌍 Белые списки #1" / "Авто 🔥 [GRPC]", which front a whitelisted address
+  /// rather than a location (see [unknownCountryCode]).
+  ///
+  /// Those hosts exist for the case where the ordinary nodes are blocked: they
+  /// tunnel a narrow, fronted path, not a general-purpose exit. Latency says
+  /// nothing about that difference — a CDN edge answers a handshake fast from
+  /// anywhere — so anything that ranks by ping has to know which entries are
+  /// not a location at all.
+  bool get isBypassBucket => country == unknownCountryCode;
+}
+
+/// The countries the automatic "best server" mode is allowed to pick from.
+///
+/// Drops the bypass bucket ([ServerCountry.isBypassBucket]): those hosts are a
+/// fallback the user chooses deliberately when nothing else gets through, and
+/// they routinely ping better than a real exit, so left in the pool they win
+/// the automatic pick outright and quietly become everybody's default server.
+///
+/// Falls back to the full list when nothing else is on offer — a subscription
+/// that has only bypass hosts should still connect, because refusing to is
+/// strictly worse for the user than connecting through the one path available.
+List<ServerCountry> autoPickCandidates(List<ServerCountry> countries) {
+  final located = countries.where((c) => !c.isBypassBucket).toList();
+  return located.isEmpty ? countries : located;
 }

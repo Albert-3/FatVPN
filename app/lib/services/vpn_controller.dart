@@ -382,16 +382,22 @@ class VpnController extends ChangeNotifier {
   /// user hasn't explicitly chosen a location yet (still on the default
   /// "Best Server" state) so first launch doesn't force a manual pick.
   ///
+  /// "All countries" excludes the panel's bypass bucket (see
+  /// [autoPickCandidates]): reaching it is a deliberate choice, never an
+  /// automatic one. The filtered list is also what becomes the session's pool,
+  /// so the auto-switch can't drift onto a bypass host later either.
+  ///
   /// Returns the country the chosen node belongs to, so the caller can
   /// reflect the auto-picked location in the UI.
   Future<ServerCountry?> connectToBestOverall(
     List<ServerCountry> countries, {
     required String networkErrorMessage,
   }) async {
-    final allNodes = countries.expand((c) => c.nodes).toList();
+    final candidates = autoPickCandidates(countries);
+    final allNodes = candidates.expand((c) => c.nodes).toList();
     final node = await _connect(allNodes, networkErrorMessage: networkErrorMessage);
     if (node == null) return null;
-    return countries.firstWhere((c) => c.nodes.contains(node));
+    return candidates.firstWhere((c) => c.nodes.contains(node));
   }
 
   /// Endpoint the post-connect probe hits. Google's captive-portal check:

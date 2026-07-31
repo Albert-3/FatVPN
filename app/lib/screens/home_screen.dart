@@ -480,8 +480,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Order for the "Best servers" shortcuts. Built from [autoPickCandidates],
+  /// so the panel's bypass bucket never occupies one of the three tiles: a
+  /// fronted host tends to answer a ping faster than a real exit, which put
+  /// "🌍 Белые списки" at the top of a list the user reads as "the best places
+  /// to be". It stays one tap away in the full location picker.
   List<ServerCountry> _rank(List<ServerCountry> servers) {
-    final ranked = [...servers];
+    final ranked = [...autoPickCandidates(servers)];
     ranked.sort((a, b) {
       final pa = _bestPingByCountry[a.country];
       final pb = _bestPingByCountry[b.country];
