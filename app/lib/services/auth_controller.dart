@@ -322,6 +322,18 @@ class AuthController extends ChangeNotifier {
     }
     try {
       final fresh = await _apiClient.refreshSession(refreshToken);
+      // The session may have been replaced while this call was on the wire —
+      // pairing completed, a key was pasted, a trial started, a sign-out. The
+      // response belongs to the session this call started from, and applying
+      // it would overwrite the replacement with a rotation of the session the
+      // user just left: an expired trial's refresh landing right after
+      // /pair/status delivered the paid session threw that session away and
+      // sent the user back to the renew screen, twice in a row (2026-07-31).
+      if (_session?.refreshToken != refreshToken) {
+        log.i('Session replaced while a refresh was in flight — '
+            'discarding the stale rotation');
+        return null;
+      }
       // Disk before memory. The server has already revoked the token we just
       // presented, so a rotation that lives only in RAM is one process kill
       // away from replaying a revoked token — which reuse detection answers by
@@ -329,6 +341,15 @@ class AuthController extends ChangeNotifier {
       // failure abort the refresh keeps the old token authoritative, and the
       // BFF's grace window covers the immediate retry.
       await _tokenStorage.save(fresh);
+      if (_session?.refreshToken != refreshToken) {
+        // Replaced during the write above, so the disk now holds the abandoned
+        // session's rotation. Put the live session back before walking away.
+        final current = _session;
+        if (current != null) {
+          await _tokenStorage.save(current);
+        }
+        return null;
+      }
       _session = fresh;
       final wasExpired = _subscriptionExpired;
       _subscriptionExpired = fresh.isExpired;
@@ -342,6 +363,11 @@ class AuthController extends ChangeNotifier {
       notifyListeners();
       return fresh.accessToken;
     } on ApiException catch (e) {
+      if (_session?.refreshToken != refreshToken) {
+        // The failure belongs to a session that was replaced mid-flight; a 401
+        // here must not sign the *new* session out.
+        return null;
+      }
       if (e.statusCode == 401) {
         log.w('Refresh rejected (401) — signing out');
         await signOut();
