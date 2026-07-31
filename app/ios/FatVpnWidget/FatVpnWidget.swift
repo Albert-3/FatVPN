@@ -105,28 +105,35 @@ struct FatVpnWidgetEntryView: View {
 
     // MARK: - Home screen
 
-    /// The power button first, the status under it: the button is the reason the
-    /// widget is on the home screen, so it takes the corner the thumb reaches.
+    /// The 2×2 tile: one big button in the middle, everything else caption under
+    /// it. The button is the only thing on this widget anybody presses, so it
+    /// gets the centre and the size — the text is there to answer "is it on?",
+    /// which is a glance, not a read.
+    ///
+    /// Every line scales down rather than truncating: the Russian strings are
+    /// half again as long as the English ones ("Нажмите, чтобы подключиться"),
+    /// and a tile this narrow has no room to lose a word to an ellipsis.
     private var smallBody: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            powerControl(diameter: 46)
-            Spacer(minLength: 0)
-            HStack(spacing: 6) {
-                Circle().fill(accent).frame(width: 8, height: 8)
-                Text(strings.status(for: snapshot))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(FatVpnWidgetPalette.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+        VStack(spacing: 7) {
+            powerControl(diameter: 62)
+            VStack(spacing: 2) {
+                HStack(spacing: 5) {
+                    Circle().fill(accent).frame(width: 7, height: 7)
+                    Text(strings.status(for: snapshot))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(FatVpnWidgetPalette.textPrimary)
+                }
+                Text(locationText)
+                    .font(.system(size: 12))
+                    .foregroundColor(FatVpnWidgetPalette.textSecondary)
+                secondaryLine.font(.system(size: 11))
             }
-            Text(locationText)
-                .font(.system(size: 13))
-                .foregroundColor(FatVpnWidgetPalette.textSecondary)
-                .lineLimit(1)
-            secondaryLine.font(.system(size: 12))
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .multilineTextAlignment(.center)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fatVpnWidgetBackground()
         .widgetURL(smallTileURL)
     }
