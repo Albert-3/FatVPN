@@ -51,6 +51,11 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.fatvpn.fatvpnApp
+      vars:
+        # App Store Connect's numeric app id — not the bundle id. The build
+        # step asks it which build numbers are already spent (see "Build ipa").
+        # Account: Hakob Abgaryan; App Store Connect → App Information → Apple ID.
+        APP_STORE_APP_ID: 6792885157
     scripts:
       - name: Pull Git LFS files (Libbox.xcframework binaries)
         script: |
@@ -256,14 +261,42 @@ workflows:
           # before every attempt, and a forgotten bump cost a full build.
           #
           # The commit count is monotonic on master and needs no bookkeeping,
-          # so it is the build number. Version *name* still comes from pubspec.
+          # so it is the *floor* for the build number — what App Store Connect
+          # already holds decides the rest. Version *name* still comes from
+          # pubspec.
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             # A shallow clone would count a handful of commits and hand App
             # Store Connect a number below what it already has.
             git fetch --unshallow
           fi
           BUILD_NUMBER="$(git rev-list --count HEAD)"
-          echo "Build number: $BUILD_NUMBER (commits on HEAD)"
+          echo "Commits on HEAD: $BUILD_NUMBER"
+          # The commit count covers a run that failed *before* uploading, but
+          # not a rebuild of a commit that already uploaded: the count is the
+          # same and App Store Connect answers 409 ("the bundle version must be
+          # higher than the previously uploaded version: 183") after the whole
+          # build. So ask it what it holds and step over that.
+          #
+          # Both questions, because a build can be in TestFlight, or uploaded
+          # and still processing, and the number is spent either way. A
+          # subcommand this CLI version does not have answers nothing, and an
+          # empty answer leaves the commit count standing — this must never be
+          # the reason a release cannot be built. Credentials come from the
+          # integration's APP_STORE_CONNECT_* variables, as for the profiles.
+          LATEST=0
+          for QUERY in get-latest-testflight-build-number get-latest-app-store-build-number; do
+            ANSWER="$(app-store-connect "$QUERY" "$APP_STORE_APP_ID" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
+            if [ -n "$ANSWER" ]; then
+              echo "App Store Connect ($QUERY): $ANSWER"
+              if [ "$ANSWER" -gt "$LATEST" ]; then LATEST="$ANSWER"; fi
+            else
+              echo "App Store Connect ($QUERY): no answer."
+            fi
+          done
+          if [ "$LATEST" -ge "$BUILD_NUMBER" ]; then
+            BUILD_NUMBER=$((LATEST + 1))
+          fi
+          echo "Build number: $BUILD_NUMBER"
           cd app
           flutter build ipa --release \
             --build-number="$BUILD_NUMBER" \
