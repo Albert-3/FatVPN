@@ -24,9 +24,9 @@ import NetworkExtension
 ///    It surfaces the app only when a screen is unavoidable (no session, lapsed
 ///    subscription, the first-ever VPN consent dialog), by parking the action in
 ///    the App Group and throwing `needsToContinueInForegroundError`.
-///  * **Widget copy** (the fallback, if the system ever runs it anyway): the
-///    behaviour this button shipped with — park the action, open the app
-///    (`openAppWhenRun`), let the app collect it (`pollWidgetAction`).
+///  * **Widget copy** (the fallback, if the system ever runs it anyway): parks
+///    the action for the app to collect (`pollWidgetAction`) on its next launch
+///    or resume. Deliberately *not* `openAppWhenRun: true` — see the property.
 ///
 /// What neither copy does is touch the tunnel *from the widget's process*: that
 /// needs the NetworkExtension entitlement the widget's App ID does not have,
@@ -36,22 +36,28 @@ struct FatVpnTogglePowerIntent: AppIntent {
     static var title: LocalizedStringResource = "Toggle the VPN"
     static var description = IntentDescription("Connects or disconnects FatVPN.")
 
-    #if FATVPN_WIDGET_EXTENSION
-    /// The fallback copy cannot do the work, so the app has to come forward.
-    static var openAppWhenRun: Bool = true
-    #else
-    /// The whole point: the tunnel toggles with no app on screen.
+    /// False in **both** copies, and that is load-bearing. The button lives in
+    /// the widget, so the widget bundle's App Intents metadata is what the
+    /// system reads at the press — and a first build shipped the widget copy
+    /// with `true` as a "safe fallback", which the system took literally: it
+    /// opened the app on every press instead of routing the intent to the
+    /// app's background process (seen on a device 2026-08-01). The proven
+    /// routing recipe keeps the type's metadata identical in both binaries and
+    /// lets the app-only `ForegroundContinuableIntent` conformance make the
+    /// difference; the only sanctioned way to reach the foreground is the
+    /// `needsToContinueInForegroundError` below.
     static var openAppWhenRun: Bool = false
-    #endif
 
     func perform() async throws -> some IntentResult {
         #if FATVPN_WIDGET_EXTENSION
-        // "toggle", not "connect": the widget draws from a snapshot that may be
-        // a moment behind the tunnel, so the app decides which direction this
-        // was — see HomeWidgetAction.toggle on the Dart side.
+        // The quiet fallback, only reached if the system ever runs the widget's
+        // copy despite the routing above. It cannot toggle anything and — with
+        // openAppWhenRun false, see there — cannot open the app either; all it
+        // can do is park the request ("toggle": the app resolves the direction)
+        // for the app's next launch or resume within the action's TTL.
         FatVpnWidgetSnapshot.requestAction("toggle")
-        // The snapshot has not changed yet (the app has not connected), but the
-        // widget should stop looking untouched the instant it is pressed.
+        // The snapshot has not changed, but the widget should not look frozen
+        // at the instant of the press.
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
         #else
