@@ -222,6 +222,14 @@ class AuthController extends ChangeNotifier {
     // A widget tap the platform is holding for us (iOS App Intent — see
     // [pollWidgetAction]). Before the deep link, because on iOS this is the
     // path that actually carries a widget tap.
+    //
+    // Both halves matter: the listener catches a press made while the app is
+    // alive (the intent runs in our own process, *after* the resume callback
+    // has already polled), the poll catches the press that cold-started us.
+    HomeWidgetBridge.instance.onActionAvailable = () {
+      unawaited(pollWidgetAction());
+    };
+    HomeWidgetBridge.instance.listenForActions();
     await pollWidgetAction();
 
     _linkSubscription = _appLinks.uriLinkStream.listen(_handleUri);

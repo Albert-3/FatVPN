@@ -178,11 +178,39 @@ class HomeWidgetBridge {
 
   HomeWidgetSnapshot get snapshot => _snapshot;
 
+  /// Called when the platform says a widget tap is waiting to be collected —
+  /// see [listenForActions].
+  VoidCallback? onActionAvailable;
+
+  bool _listening = false;
+
+  /// Starts listening for the platform pushing a widget tap at us.
+  ///
+  /// The poll ([takePendingAction] on launch and on resume) cannot be the only
+  /// route on iOS: the power button is an App Intent with `openAppWhenRun`, so
+  /// the system performs it *in the app's process* and does so once the app is
+  /// already active — after both polls have run and found the mailbox empty.
+  /// The tap would then be carried out at some later resume, or never. iOS
+  /// pushes this the moment the intent parks its action; the poll stays for the
+  /// cold-start case, where the app is not yet there to be pushed to.
+  void listenForActions() {
+    if (_listening) return;
+    _listening = true;
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'pendingActionAvailable') {
+        onActionAvailable?.call();
+      }
+      return null;
+    });
+  }
+
   @visibleForTesting
   void resetForTest() {
     _snapshot = const HomeWidgetSnapshot();
     _published = null;
     _unsupported = false;
+    _listening = false;
+    onActionAvailable = null;
   }
 
   /// Patches the snapshot and pushes it to the platform when something actually

@@ -123,13 +123,27 @@ struct FatVpnWidgetSnapshot {
         reloadWidgets()
     }
 
-    /// Parks what a widget tap asked for. Called from the widget extension's
-    /// App Intent, which runs in its own process moments before the app is
-    /// brought to the front.
+    /// Posted in-process the moment an action is parked, so the app can collect
+    /// it there and then.
+    ///
+    /// Polling alone is not enough: with `openAppWhenRun` the system performs
+    /// the intent **in the app's process**, and it does so *after* the app is
+    /// already active — i.e. after both places that poll have run (startup and
+    /// `AppLifecycleState.resumed`). The tap would then sit in the App Group
+    /// until the user backgrounded and reopened the app, which is a button that
+    /// does nothing as far as anyone pressing it is concerned. AppDelegate
+    /// listens for this and pushes it down the `fatvpn/widget` channel.
+    static let actionRequestedNotification = Notification.Name("fatvpn.widget.actionRequested")
+
+    /// Parks what a widget tap asked for. Called from the power button's App
+    /// Intent — in the app's process when the app can be opened, in the widget
+    /// extension's otherwise. Either way the mailbox is the shared App Group, so
+    /// the reader does not have to know which one it was.
     static func requestAction(_ action: String) {
         guard let defaults = defaults else { return }
         defaults.set(action, forKey: pendingActionKey)
         defaults.set(Date().timeIntervalSince1970, forKey: pendingActionAtKey)
+        NotificationCenter.default.post(name: actionRequestedNotification, object: nil)
     }
 
     /// Takes the parked action, leaving nothing behind. Called by the app (see

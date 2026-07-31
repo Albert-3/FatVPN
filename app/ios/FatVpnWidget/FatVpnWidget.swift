@@ -72,12 +72,20 @@ struct FatVpnWidgetEntryView: View {
     private var snapshot: FatVpnWidgetSnapshot { entry.snapshot }
     private var strings: FatVpnWidgetStrings { .forLanguage(snapshot.language) }
 
-    /// Green only for a tunnel that is actually up: a connecting or
-    /// disconnecting one is deliberately not green, because "green" on a VPN
-    /// widget is read as "my traffic is protected".
+    /// The status dot. Green only for a tunnel that is actually up: a connecting
+    /// or disconnecting one is deliberately not green, because "green" next to
+    /// the word "Connected" is read as "my traffic is protected".
     private var accent: Color {
         guard snapshot.signedIn else { return FatVpnWidgetPalette.disabled }
         return snapshot.isConnected ? FatVpnWidgetPalette.accent : FatVpnWidgetPalette.textSecondary
+    }
+
+    /// The power button, on the other hand, is always the logo's green — it is a
+    /// button, not a status light, and the state is already said twice beside it
+    /// (the dot and the status line). Grey only when there is no session, where
+    /// it is not a button at all.
+    private var powerTint: Color {
+        snapshot.signedIn ? FatVpnWidgetPalette.accent : FatVpnWidgetPalette.disabled
     }
 
     private var locationText: String {
@@ -97,8 +105,12 @@ struct FatVpnWidgetEntryView: View {
 
     // MARK: - Home screen
 
+    /// The power button first, the status under it: the button is the reason the
+    /// widget is on the home screen, so it takes the corner the thumb reaches.
     private var smallBody: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            powerControl(diameter: 46)
+            Spacer(minLength: 0)
             HStack(spacing: 6) {
                 Circle().fill(accent).frame(width: 8, height: 8)
                 Text(strings.status(for: snapshot))
@@ -111,12 +123,7 @@ struct FatVpnWidgetEntryView: View {
                 .font(.system(size: 13))
                 .foregroundColor(FatVpnWidgetPalette.textSecondary)
                 .lineLimit(1)
-            Spacer(minLength: 0)
-            HStack {
-                powerControl(diameter: 44)
-                Spacer(minLength: 0)
-                secondaryLine.font(.system(size: 12))
-            }
+            secondaryLine.font(.system(size: 12))
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -139,8 +146,10 @@ struct FatVpnWidgetEntryView: View {
         return snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
     }
 
+    /// `.top`, so the button sits at the top of the tile here too rather than
+    /// centred against the text column.
     private var mediumBody: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("FatVPN")
                     .font(.system(size: 13, weight: .semibold))
@@ -163,7 +172,10 @@ struct FatVpnWidgetEntryView: View {
             powerControl(diameter: 62)
         }
         .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        // `.topLeading`, not `.leading`: aligning the row's own contents to the
+        // top is not enough while the row itself is centred in a tile half again
+        // as tall as it is.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .fatVpnWidgetBackground()
         .widgetURL(FatVpnWidgetLink.open)
     }
@@ -217,15 +229,19 @@ struct FatVpnWidgetEntryView: View {
         }
     }
 
+    /// Green either way — filled when the tunnel is up, outlined when it is not,
+    /// so "is it on?" is still answerable at a glance without the button ever
+    /// going grey on a signed-in user.
     private func powerButton(diameter: CGFloat) -> some View {
         ZStack {
-            Circle()
-                .fill(snapshot.isConnected
-                      ? FatVpnWidgetPalette.accent.opacity(0.22)
-                      : FatVpnWidgetPalette.card)
+            Circle().fill(powerTint.opacity(snapshot.isConnected ? 1 : 0.18))
+            Circle().strokeBorder(powerTint.opacity(snapshot.isConnected ? 0 : 0.6),
+                                  lineWidth: 2)
             Image(systemName: "power")
                 .font(.system(size: diameter * 0.42, weight: .bold))
-                .foregroundColor(accent)
+                .foregroundColor(snapshot.isConnected
+                                 ? FatVpnWidgetPalette.background
+                                 : powerTint)
         }
         .frame(width: diameter, height: diameter)
     }

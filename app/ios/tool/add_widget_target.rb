@@ -33,6 +33,15 @@ EXT_BUNDLE_ID = 'com.fatvpn.fatvpnApp.FatVpnWidget'
 DEPLOYMENT_TARGET = '14.0'
 SHARED_GROUP_NAME = 'Shared'
 SHARED_SNAPSHOT_FILE = 'FatVpnWidgetSnapshot.swift'
+# The power button's App Intent. Compiled into the widget *and* into the app —
+# see the comment above `add_source_once(runner_target, intents_ref, ...)`.
+INTENTS_FILE = 'FatVpnWidgetIntents.swift'
+EXT_SWIFT_FILES = [
+  'FatVpnWidgetBundle.swift',
+  'FatVpnWidget.swift',
+  'FatVpnWidgetStrings.swift',
+  INTENTS_FILE,
+].freeze
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
 
@@ -62,6 +71,36 @@ end
 
 add_source_once(runner_target, shared_ref, 'Runner')
 
+# --- The App Intent, in the app as well as in the widget ---------------------
+# `FatVpnTogglePowerIntent` sets openAppWhenRun, which means the system performs
+# it *in the app's process*. An app binary that does not contain the intent type
+# cannot perform it, and the press then does nothing whatsoever — no launch, no
+# error, exactly what a device showed with widgets that rendered perfectly. So
+# the same file is a member of both targets.
+#
+# It is gated `@available(iOS 17.0, ...)`, above the app's 13.0 deployment
+# target, and AppIntents.framework is weak-linked below for the same reason: an
+# older device must be able to launch an app that merely *contains* the type.
+ext_group = project.main_group[EXT_NAME] ||
+            project.main_group.new_group(EXT_NAME, EXT_NAME)
+intents_ref = ext_group.find_file_by_path(INTENTS_FILE) ||
+              ext_group.new_reference(INTENTS_FILE)
+add_source_once(runner_target, intents_ref, 'Runner')
+
+runner_target.build_configurations.each do |config|
+  flags = config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)']
+  flags = [flags] unless flags.is_a?(Array)
+  # WidgetKit as well as AppIntents: Runner has compiled the shared snapshot —
+  # which imports WidgetKit (iOS 14) — since the widgets landed, and hard-linking
+  # it is the same latent launch failure on anything below that.
+  %w[AppIntents WidgetKit].each do |framework|
+    next if flags.each_cons(2).any? { |a, b| a == '-weak_framework' && b == framework }
+
+    flags += ['-weak_framework', framework]
+  end
+  config.build_settings['OTHER_LDFLAGS'] = flags
+end
+
 packet_tunnel_target = project.targets.find { |t| t.name == 'PacketTunnel' }
 if packet_tunnel_target
   add_source_once(packet_tunnel_target, shared_ref, 'PacketTunnel')
@@ -81,15 +120,12 @@ end
 # --- FatVpnWidget: new WidgetKit extension target ----------------------------
 ext_target = project.new_target(:app_extension, EXT_NAME, :ios, DEPLOYMENT_TARGET, nil, :swift)
 
-ext_group = project.main_group.new_group(EXT_NAME, EXT_NAME)
-swift_refs = [
-  'FatVpnWidgetBundle.swift',
-  'FatVpnWidget.swift',
-  'FatVpnWidgetStrings.swift',
-  # The power button's App Intent (iOS 17+). Widget-only: the app never runs it,
-  # it only collects what it parked in the App Group.
-  'FatVpnWidgetIntents.swift',
-].map { |f| ext_group.new_reference(f) }
+# The group and the intent's file reference already exist — they are created
+# above, before the early exit, so that Runner's membership is wired even on a
+# project that already has the extension target.
+swift_refs = EXT_SWIFT_FILES.map do |f|
+  ext_group.find_file_by_path(f) || ext_group.new_reference(f)
+end
 ext_group.new_reference('Info.plist')
 ext_group.new_reference('FatVpnWidget.entitlements')
 
