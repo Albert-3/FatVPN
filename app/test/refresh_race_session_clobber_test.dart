@@ -19,9 +19,13 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:singbox_mm/singbox_mm_platform_interface.dart';
+
+import 'support/fake_vpn_platform.dart';
 
 import 'package:fatvpn_app/models/auth_session.dart';
 import 'package:fatvpn_app/models/pairing.dart';
@@ -139,6 +143,20 @@ class _RacingBff {
 }
 
 void main() {
+  // signOut() takes the tunnel down with the session, which reaches the
+  // plugin's platform interface — without a fake, the sign-out test hangs on a
+  // channel nothing answers.
+  late FakeVpnPlatform vpn;
+
+  setUp(() {
+    // The standalone teardown also reaches flutter_secure_storage directly.
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    vpn = FakeVpnPlatform();
+    SignboxVpnPlatform.instance = vpn;
+  });
+
+  tearDown(() => vpn.dispose());
+
   Future<(AuthController, _MemoryTokenStorage)> signedInOnExpiredTrial(
       _RacingBff bff) async {
     final storage = _MemoryTokenStorage();
@@ -221,6 +239,37 @@ void main() {
 
     // Drain the logger's flush timer before the pending-timer check runs.
     await tester.pump(const Duration(seconds: 3));
+  });
+
+  // The V17 family: a session must not outlive the sign-out that killed it.
+  // `signOut` nulls the session, but a refresh already on the wire came back
+  // and assigned `_session = fresh` regardless — putting the user back inside
+  // the app on a token the sign-out never revoked (logout() was sent for the
+  // *previous* token, which the rotation had already replaced).
+  testWidgets('a refresh landing after sign-out does not resurrect the session',
+      (tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    final bff = _RacingBff();
+    final (auth, storage) = await signedInOnExpiredTrial(bff);
+    addTearDown(auth.dispose);
+
+    final refreshFuture = auth.ensureFreshAccessToken();
+    await tester.pump();
+    expect(bff.refreshCalls, 1, reason: 'setup failed');
+
+    await auth.signOut();
+    expect(auth.isLoggedIn, isFalse, reason: 'setup failed');
+
+    bff.refreshGate.complete();
+    expect(await refreshFuture, isNull);
+    await tester.pump(const Duration(seconds: 3));
+
+    expect(auth.isLoggedIn, isFalse,
+        reason: 'the user signed out; a rotation still in flight must not put '
+            'them back in');
+    expect(storage.stored, isNull,
+        reason: 'a session written back to disk here survives the next cold '
+            'start, which is the sign-out failing outright');
   });
 
   // The mirror: the renew screen carries the Telegram button and the key field
