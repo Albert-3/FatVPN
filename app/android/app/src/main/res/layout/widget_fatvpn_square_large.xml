@@ -44,7 +44,8 @@
         android:id="@+id/widget_power_touch"
         android:layout_width="78dp"
         android:layout_height="78dp"
-        android:layout_gravity="center_horizontal">
+        android:layout_gravity="center_horizontal"
+        android:background="@drawable/widget_power_ripple">
 
         <ImageView
             android:id="@+id/widget_power_bg"

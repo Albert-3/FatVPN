@@ -20,4 +20,9 @@
     <color name="widget_text_primary">#FFFFFFFF</color>
     <color name="widget_text_secondary">#8C9BAC</color>
     <color name="widget_disabled">#3A4A5C</color>
+    <!-- Touch feedback on the power disc (widget_power_ripple). The accent at
+         about a third, which reads on both states of the button: as a lift on
+         the dark card while the tunnel is down, and as a bloom on the solid
+         accent while it is up. -->
+    <color name="widget_ripple">#5534D399</color>
 </resources>

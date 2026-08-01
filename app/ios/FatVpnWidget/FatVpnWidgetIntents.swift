@@ -66,9 +66,14 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
         // can do is park the request ("toggle": the app resolves the direction)
         // for the app's next launch or resume within the action's TTL.
         FatVpnWidgetSnapshot.requestAction("toggle")
-        // The snapshot has not changed, but the widget should not look frozen
-        // at the instant of the press.
-        WidgetCenter.shared.reloadAllTimelines()
+        // Nothing has actually changed yet — the app collects this on its next
+        // launch — but the tile must not redraw to exactly what it showed
+        // before, which is what a dead button looks like. The direction is
+        // resolved from the snapshot this widget is drawing; the app resolves it
+        // again, from the live tunnel, when it performs the action for real.
+        FatVpnWidgetSnapshot.markToggleRequested(
+            FatVpnWidgetSnapshot.read().isConnected ? "disconnecting" : "connecting"
+        )
         return .result()
         #else
         let needsApp = await FatVpnWidgetAppToggle.run()
@@ -131,15 +136,25 @@ enum FatVpnWidgetAppToggle {
         switch manager.connection.status {
         case .connected, .connecting, .reasserting:
             // Stopping is not business logic, so no engine for it: the tunnel's
-            // own stop handler patches the widget snapshot on the way down.
+            // own stop handler patches the widget snapshot on the way down. The
+            // marker covers the gap until it does — a teardown is quick, but not
+            // so quick that the tile should sit on "Connected" through it.
+            FatVpnWidgetSnapshot.markToggleRequested("disconnecting")
             manager.connection.stopVPNTunnel()
             return false
         default:
+            // A second press while the first is still working joins it rather
+            // than re-marking: the tile already says "Connecting…".
             if let running = activeConnect { return await running.value }
+            FatVpnWidgetSnapshot.markToggleRequested("connecting")
             let task = Task { await connectViaEngine() }
             activeConnect = task
             let needsApp = await task.value
             activeConnect = nil
+            // Whatever the verdict, this attempt is over: either the tunnel is
+            // up and speaks for itself, or nothing is connecting any more and
+            // the tile must stop claiming otherwise.
+            FatVpnWidgetSnapshot.clearToggleMarker()
             return needsApp
         }
     }

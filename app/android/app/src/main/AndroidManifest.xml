@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Re-schedule pending reminders after a device reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- The tick under the home-screen widget's power button (WidgetHaptics).
+         Nothing else in the app vibrates. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- No SCHEDULE_EXACT_ALARM: expiry reminders are scheduled inexactly (see
          NotificationService). Asking for it sent the user to a full-screen
          system settings page on first launch, and Google Play reviews it as an

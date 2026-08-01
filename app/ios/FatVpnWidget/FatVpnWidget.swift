@@ -88,6 +88,15 @@ struct FatVpnWidgetEntryView: View {
         snapshot.signedIn ? FatVpnWidgetPalette.accent : FatVpnWidgetPalette.disabled
     }
 
+    /// A tunnel on its way up or down. Drawn differently from both settled
+    /// states: the disc dims, so "I pressed it and something is happening" is
+    /// answerable without reading a word.
+    private var isBusy: Bool {
+        snapshot.state == "connecting" ||
+            snapshot.state == "preparing" ||
+            snapshot.state == "disconnecting"
+    }
+
     private var locationText: String {
         let label = snapshot.locationLabel ?? strings.bestServer
         guard let flag = snapshot.flagEmoji, !flag.isEmpty else { return label }
@@ -122,6 +131,7 @@ struct FatVpnWidgetEntryView: View {
                     Text(strings.status(for: snapshot))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(FatVpnWidgetPalette.textPrimary)
+                        .fatVpnCrossFade()
                 }
                 Text(locationText)
                     .font(.system(size: 12))
@@ -131,6 +141,7 @@ struct FatVpnWidgetEntryView: View {
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             .multilineTextAlignment(.center)
+            .fatVpnInvalidatable()
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -168,6 +179,7 @@ struct FatVpnWidgetEntryView: View {
                         .foregroundColor(FatVpnWidgetPalette.textPrimary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
+                        .fatVpnCrossFade()
                 }
                 Text(locationText)
                     .font(.system(size: 14))
@@ -175,6 +187,7 @@ struct FatVpnWidgetEntryView: View {
                     .lineLimit(1)
                 secondaryLine.font(.system(size: 13))
             }
+            .fatVpnInvalidatable()
             Spacer(minLength: 0)
             powerControl(diameter: 62)
         }
@@ -196,6 +209,12 @@ struct FatVpnWidgetEntryView: View {
             Text(connectedAt, style: .timer)
                 .foregroundColor(FatVpnWidgetPalette.accent)
                 .lineLimit(1)
+        } else if isBusy {
+            // "Tap to connect" under the word "Connecting…" reads as a button
+            // that ignored the tap — which is precisely the impression this
+            // widget has to stop giving. An empty line rather than no line, so
+            // the tile does not resize mid-connect.
+            Text(" ").lineLimit(1)
         } else {
             Text(snapshot.signedIn ? strings.tapToConnect : strings.openApp)
                 .foregroundColor(FatVpnWidgetPalette.textSecondary)
@@ -251,6 +270,15 @@ struct FatVpnWidgetEntryView: View {
                                  : powerTint)
         }
         .frame(width: diameter, height: diameter)
+        // Dimmed while the tunnel is moving in either direction, so the press
+        // has an answer that needs no reading — and marked invalidatable, which
+        // is the one press state WidgetKit offers: the system greys whatever
+        // carries this from the moment the button's intent starts until the
+        // reload that follows it. A custom pressed `ButtonStyle` cannot stand in
+        // for it — a widget's view is archived, and nothing in it has runtime
+        // state to track a finger with.
+        .opacity(isBusy ? 0.5 : 1)
+        .fatVpnInvalidatable()
     }
 }
 
@@ -344,6 +372,35 @@ struct FatVpnWidgetRootView: View {
 }
 
 extension View {
+    /// Marks content the system may grey out while the power button's intent is
+    /// running — WidgetKit's only press state, and the reason a tap feels like
+    /// one before anything has actually changed.
+    ///
+    /// The widget target deploys to iOS 14, four releases below interactive
+    /// widgets, so this is a no-op everywhere the button is not a `Button`
+    /// either.
+    @ViewBuilder
+    func fatVpnInvalidatable() -> some View {
+        if #available(iOSApplicationExtension 17.0, *) {
+            self.invalidatableContent()
+        } else {
+            self
+        }
+    }
+
+    /// Cross-fades a label when its text changes between timeline entries, so
+    /// "Connected" replacing "Connecting…" is a transition rather than a jump
+    /// cut. Nothing animates continuously in a widget — WidgetKit renders
+    /// entries, not frames — but a change *between* two of them does.
+    @ViewBuilder
+    func fatVpnCrossFade() -> some View {
+        if #available(iOSApplicationExtension 16.0, *) {
+            self.contentTransition(.opacity)
+        } else {
+            self
+        }
+    }
+
     /// iOS 17 stopped drawing a widget's own background: a view has to declare
     /// one through `containerBackground`, and without it the widget renders on
     /// the system's default material — light grey under a light wallpaper, with

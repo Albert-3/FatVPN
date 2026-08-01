@@ -86,7 +86,8 @@
         android:id="@+id/widget_power_touch"
         android:layout_width="62dp"
         android:layout_height="62dp"
-        android:layout_marginStart="14dp">
+        android:layout_marginStart="14dp"
+        android:background="@drawable/widget_power_ripple">
 
         <ImageView
             android:id="@+id/widget_power_bg"

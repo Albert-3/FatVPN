@@ -45,6 +45,29 @@ struct FatVpnWidgetSnapshot {
     /// user's *next* launch would toggle their VPN for no visible reason.
     static let pendingActionTTL: TimeInterval = 120
 
+    /// The direction the power button was last pressed in, drawn over the stored
+    /// state until the tunnel has something to say for itself.
+    ///
+    /// A press and the tunnel it acts on are seconds apart: a connect boots a
+    /// Flutter engine, re-checks the entitlement live and pings every candidate
+    /// node before the extension is so much as asked to start, and for all of
+    /// that time the stored state is still the old one. Without this the widget
+    /// answers a press by redrawing exactly what it drew before — which is
+    /// indistinguishable from a button that does nothing, and is what a user
+    /// with a working button reported as one.
+    static let pendingToggleKey = "fatvpn.widget.pendingToggle"
+    static let pendingToggleAtKey = "fatvpn.widget.pendingToggleAt"
+
+    /// How long the overlay may claim a direction on nothing but its own say-so.
+    /// Generous for a connect — the work behind it is two network round trips
+    /// and a ping of every node — and short for a stop, which is one message to
+    /// an extension that is already running. Both are only the backstop: the
+    /// overlay is ignored the moment the real state moves (see
+    /// [applyPendingToggle]) and the connect path clears it the instant its
+    /// attempt ends, so neither window is normally reached.
+    static let connectOptimismWindow: TimeInterval = 100
+    static let stopOptimismWindow: TimeInterval = 8
+
     /// Bumped when the shape changes, so a widget left behind by an older
     /// install renders its fallback instead of misreading fields. Mirrors
     /// `HomeWidgetSnapshot.version` on the Dart side.
@@ -90,7 +113,69 @@ struct FatVpnWidgetSnapshot {
         // guessing at: everything below the current version renders as "no data
         // yet", which the widget already knows how to draw.
         guard snapshot.version == currentVersion else { return .unknown }
-        return snapshot
+        return applyPendingToggle(to: snapshot)
+    }
+
+    /// Lays the press overlay over a stored snapshot, on the same terms the
+    /// Android widget applies to its own markers (`FatVpnWidgetState`): while it
+    /// is still fresh **and** the stored state has not moved on by itself.
+    ///
+    /// Nothing has to clear the marker for this to stay honest. One whose tunnel
+    /// has since spoken is ignored from the next read on, and one whose press
+    /// led nowhere expires — so the worst a lost clear can do is age out, never
+    /// leave the widget claiming a connection that is not there.
+    private static func applyPendingToggle(to snapshot: FatVpnWidgetSnapshot) -> FatVpnWidgetSnapshot {
+        guard let defaults = defaults,
+              let direction = defaults.string(forKey: pendingToggleKey) else {
+            return snapshot
+        }
+        let at = defaults.double(forKey: pendingToggleAtKey)
+        guard at > 0 else { return snapshot }
+        let age = Date().timeIntervalSince1970 - at
+
+        var overlaid = snapshot
+        switch direction {
+        case "connecting":
+            // `error` is deliberately not on this list: it is what the *previous*
+            // session left behind, and a connect still on its way up must not be
+            // drawn from it.
+            let tunnelSpeaksForItself = ["connected", "connecting", "preparing", "disconnecting"]
+                .contains(snapshot.state)
+            guard age < connectOptimismWindow, !tunnelSpeaksForItself else { return snapshot }
+            overlaid.state = "connecting"
+        case "disconnecting":
+            guard age < stopOptimismWindow, snapshot.state != "disconnected" else { return snapshot }
+            overlaid.state = "disconnecting"
+        default:
+            return snapshot
+        }
+        // Neither direction has a running session to count, and the stored start
+        // belongs to one that is on its way out or has not begun.
+        overlaid.connectedAt = nil
+        return overlaid
+    }
+
+    /// Records the direction a press asked for and redraws every widget, so the
+    /// tile answers the tap in the same instant rather than several seconds
+    /// later. Called from the power button's App Intent — see
+    /// `FatVpnTogglePowerIntent`.
+    static func markToggleRequested(_ direction: String) {
+        guard let defaults = defaults else { return }
+        defaults.set(direction, forKey: pendingToggleKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: pendingToggleAtKey)
+        reloadWidgets()
+    }
+
+    /// Drops the overlay the moment the attempt behind it ends — a connect that
+    /// failed, or one the app has to finish on screen. Without this the widget
+    /// would go on saying "Connecting…" for the rest of the window over a
+    /// connect that is no longer happening.
+    static func clearToggleMarker() {
+        guard let defaults = defaults,
+              defaults.object(forKey: pendingToggleKey) != nil else { return }
+        defaults.removeObject(forKey: pendingToggleKey)
+        defaults.removeObject(forKey: pendingToggleAtKey)
+        reloadWidgets()
     }
 
     /// Stores the dictionary the app published, verbatim. Called from the

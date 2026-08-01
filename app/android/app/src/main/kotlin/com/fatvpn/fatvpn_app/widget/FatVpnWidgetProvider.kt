@@ -87,6 +87,11 @@ open class FatVpnWidgetProvider : AppWidgetProvider() {
     }
 
     private fun handleToggle(context: Context) {
+        // Before the branching, and before any of it can fail: every press of
+        // this button is a press, including the one whose only honest answer is
+        // to open the app. See [WidgetHaptics] for what the platform will and
+        // will not actually play from here.
+        WidgetHaptics.tap(context)
         val model = FatVpnWidgetState.read(context)
         if (!model.signedIn) {
             // No usable subscription: the only honest action is to open the app,
