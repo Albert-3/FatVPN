@@ -298,53 +298,9 @@ workflows:
           fi
           echo "Build number: $BUILD_NUMBER"
           cd app
-          # Teed to a file so the next step can read it back. `pipefail` is what
-          # keeps this a build step: a pipeline's exit code is its *last*
-          # command's, so without it `tee` succeeding would hide a failed
-          # `flutter build ipa` and the workflow would sail on to publishing.
-          set -o pipefail
           flutter build ipa --release \
             --build-number="$BUILD_NUMBER" \
-            --export-options-plist=/Users/builder/export_options.plist \
-            2>&1 | tee /tmp/flutter-build-ipa.log
-      - name: App Intents metadata — what the extractor said
-        script: |
-          # Deliberately not a gate: it prints and always exits 0.
-          #
-          # The entitlement check below proves Metadata.appintents is *in* the
-          # bundle, which proves nothing about its contents: when
-          # appintentsmetadataprocessor cannot make sense of a type it warns and
-          # silently leaves that type out, producing a perfectly well-formed
-          # metadata bundle with no intent in it. That is indistinguishable, on
-          # a device, from "the system declined to route the press" — and builds
-          # 196–199 were spent on the second theory without ever reading these
-          # lines. So surface them, on every build, next to the build that
-          # produced them.
-          LOG=/tmp/flutter-build-ipa.log
-          echo "=============================================================="
-          echo "  appintentsmetadataprocessor output"
-          echo "=============================================================="
-          if [ ! -f "$LOG" ]; then
-            echo "No build log at $LOG — the build step did not tee one."
-            exit 0
-          fi
-          # Two passes: the warnings and errors first, because they are the
-          # point, then every mention for context (a run with no diagnostics at
-          # all is itself worth seeing).
-          if grep -inE 'appintentsmetadataprocessor.*(warning|error)|(warning|error).*appintentsmetadataprocessor' "$LOG"; then
-            echo "--------------------------------------------------------------"
-            echo "^ Diagnostics above. A warning naming FatVpnTogglePowerIntent"
-            echo "  (or any protocol conformance on it) means the intent may be"
-            echo "  missing from the shipped metadata — the widget button would"
-            echo "  then be dead on a device with nothing else to show for it."
-          else
-            echo "No appintentsmetadataprocessor warnings or errors."
-          fi
-          echo "--------------------------------------------------------------"
-          echo "Every mention, for context:"
-          grep -in 'appintentsmetadataprocessor' "$LOG" || echo "  (none at all)"
-          echo "=============================================================="
-          exit 0
+            --export-options-plist=/Users/builder/export_options.plist
       - name: Verify App Group entitlement and privacy manifest survived signing
         script: |
           # An App ID without the App Groups capability does not necessarily
@@ -399,6 +355,58 @@ workflows:
               exit 1
             fi
             echo "PrivacyInfo.xcprivacy present."
+          done
+      - name: Verify the widget's toggle intent is in the shipped App Intents metadata
+        script: |
+          # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
+          #
+          # This is the check builds 196–199 needed and did not have. When
+          # appintentsmetadataprocessor cannot make sense of a type it warns and
+          # silently leaves that type out, producing a perfectly well-formed
+          # Metadata.appintents with no intent in it — and on a device that is
+          # indistinguishable from "the system declined to route the press",
+          # which is the theory three builds were spent on.
+          #
+          # The first attempt at this check grepped the build log for the
+          # processor's warnings and reported a reassuring "no warnings" on
+          # build 201. It could not have found any: `flutter build ipa` prints
+          # "Running Xcode build..." and a duration, never xcodebuild's
+          # per-task output, so the string it searched for is never in the log.
+          # A check that cannot fail is worse than no check — this one reads
+          # the artifact instead, where the answer actually is.
+          set -e
+          APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
+          if [ -z "$APP" ]; then
+            echo "No .app under /tmp/ipa-check — the entitlement step did not unpack the .ipa." >&2
+            exit 1
+          fi
+          echo "Every App Intents metadata bundle in the .ipa:"
+          find "$APP" -name 'Metadata.appintents' -type d
+          echo "--------------------------------------------------------------"
+          # Both bundles matter, for different reasons: the system reads the
+          # *widget's* metadata to decide where a press is routed, and the app
+          # must carry the type to be able to perform it. Either one missing is
+          # a dead button.
+          for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
+            META="$BUNDLE/Metadata.appintents"
+            if [ ! -d "$META" ]; then
+              echo "No Metadata.appintents in $BUNDLE — App Intents were not extracted at all." >&2
+              exit 1
+            fi
+            # -a because the extracted metadata is not necessarily text.
+            if ! grep -raq 'FatVpnTogglePowerIntent' "$META"; then
+              echo "FatVpnTogglePowerIntent is absent from $META — the widget button ships dead." >&2
+              exit 1
+            fi
+            echo "$BUNDLE: FatVpnTogglePowerIntent present."
+            # Not a gate: the marker's spelling in the metadata is Apple's
+            # business and has changed between releases. Printed because the
+            # marker is what routes the press into the app's process, and a
+            # build where it silently stopped being recorded is worth seeing.
+            echo -n "  conformance markers recorded: "
+            grep -rao 'AudioPlayback[A-Za-z]*\|LiveActivity[A-Za-z]*\|ForegroundContinuable[A-Za-z]*' "$META" \
+              | sed 's/.*://' | sort -u | tr '\n' ' '
+            echo
           done
     artifacts:
       - app/build/ios/ipa/*.ipa
