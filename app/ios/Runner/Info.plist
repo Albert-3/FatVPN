@@ -40,6 +40,33 @@
 	     crash *was* it delivering). -->
 	<key>FlutterDeepLinkingEnabled</key>
 	<true/>
+	<!-- Declared for the home-screen widget's power button on iOS 18, and for
+	     nothing else — this app plays no audio.
+
+	     The button's intent conforms to AudioPlaybackIntent, which is the marker
+	     that asks the system to perform it in the *app's* process rather than
+	     the widget extension's (the extension can never touch the tunnel: the
+	     NetworkExtension entitlement is not issued to a widget's App ID). Apple
+	     documents no background-mode requirement for that protocol — but every
+	     working example anyone has published has the app's `audio` background
+	     mode switched on, and an app with no UIBackgroundModes at all under this
+	     marker is described nowhere. Build 207 was exactly that app, and the
+	     press did nothing on an iPhone 16 / iOS 18: the app opened, the tunnel
+	     did not move, and the native press trail stayed empty, i.e. perform()
+	     never ran. This is the one documented-adjacent prerequisite that had
+	     never been tried.
+
+	     ⚠️ Two things follow. If iOS 18 still fails with this in place, the
+	     hypothesis is dead and the button should be demoted to the same link
+	     iOS 17 already uses — see powerControl in FatVpnWidget.swift. And
+	     before submitting to the App Store, this key has to be justified or
+	     removed: review asks what a VPN app plays, and "nothing, it is a widget
+	     routing marker" is an answer that needs deciding on deliberately rather
+	     than discovering at submission. See docs/store-compliance.md. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
