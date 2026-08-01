@@ -21,10 +21,11 @@
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>
-			<!-- Reads and patches the widget snapshot in
-			     UserDefaults(suiteName: group.com.fatvpn.fatvpnApp) so a tunnel
-			     the OS raised on its own — on-demand, or a stop from Settings →
-			     VPN — still shows up on the home screen. App Group only. -->
+			<!-- Declared for the App Group defaults this extension shares with
+			     the app (group.com.fatvpn.fatvpnApp). Kept because the linked
+			     Libbox framework carries UserDefaults symbols: an entry that is
+			     declared but unused costs nothing, a missing one draws
+			     ITMS-91053. App Group only. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>

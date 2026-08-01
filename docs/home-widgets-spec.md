@@ -1,6 +1,26 @@
-# Виджеты на домашний экран (Android + iOS)
+# Виджеты на домашний экран (Android)
 
-Статус (2026-07-28): **написано, на устройстве не проверено ничего.**
+> **iOS-виджет удалён (2026-08-01).** По решению заказчика вся iOS-половина
+> вырезана из репозитория: `ios/FatVpnWidget/`, `ios/Shared/FatVpnWidgetSnapshot.swift`,
+> `ios/tool/add_widget_target.rb`, канал `fatvpn/widget` в `AppDelegate.swift`,
+> вызовы снапшота в `PacketTunnelProvider.swift` и все шаги виджета в
+> `codemagic.yaml` (создание таргета, проверка профиля и entitlement для
+> `com.fatvpn.fatvpnApp.FatVpnWidget`, проверка `Metadata.appintents`).
+>
+> Причина — кнопка так и не заработала. На iPhone 11 / iOS 17.6.1 интент
+> кнопки не выполнялся ни под одним маркером (`ForegroundContinuableIntent`,
+> `LiveActivityIntent`, `AudioPlaybackIntent`, сборки 186–199+): след пуст,
+> то есть `perform()` не вызывался ни в процессе приложения, ни в процессе
+> виджета. Разбор причин — в конце этого файла, раздел «Почему iOS-виджет
+> снят». Разделы 4 и части 5–8 ниже описывают уже удалённый код и оставлены
+> как история — **актуален только Android**.
+>
+> Что осталось общего и работает: Dart-мост (`HomeWidgetBridge`), диплинки
+> `fatvpn://widget/...`, headless-точка входа `widgetConnectMain` и
+> `WidgetConnectRunner` — всё это использует Android. На iOS канала больше
+> нет, и мост сам уходит в no-op по `MissingPluginException`.
+
+Статус (2026-07-28, Android): **написано, на устройстве проверено частично.**
 
 Отдельная кнопка вкл/выкл (2026-07-28, вторая итерация): кнопка теперь и
 подключает — на Android без открытия приложения вообще, на iOS 17+ как
@@ -760,3 +780,107 @@ best-effort, скорее всего будет отброшено; ниже 29 
   N дней»; сейчас место в раскладке занято таймером сессии.
 * На iOS < 14 виджета нет вовсе (WidgetKit появился в iOS 14), приложение
   поддерживает 13.0.
+
+## 9. Почему iOS-виджет снят (2026-08-01)
+
+Кнопка не работала на iPhone 11 / iOS 17.6.1 ни под одним маркером. Перед
+удалением разобрали механику по документации Apple и сообщениям разработчиков;
+итог ниже — он же ответ на вопрос «а можно ли было починить».
+
+### Как система выбирает процесс
+
+Единственное нормативное место, где это написано, — статья
+[Adding interactivity to widgets and Live Activities](https://developer.apple.com/documentation/widgetkit/adding-interactivity-to-widgets-and-live-activities):
+
+> By default, the system runs the app intent in the same process as the widget
+> extension. However, if the app intent's `openAppWhenRun` property is true, or
+> if the intent conforms to `AudioPlaybackIntent`, `ForegroundContinuableIntent`,
+> `LiveActivityIntent`, or `PushToTalkTransmissionIntent`, the system performs
+> the app intent in the app's process.
+
+То есть маркеры выбраны правильно и список исчерпывающий: на iOS 17 других
+рычагов нет (`AppIntent.supportedModes`/`IntentModes` появились только в
+iOS 26, а `ForegroundContinuableIntent` там же объявлен deprecated в их пользу).
+
+### Требует ли `AudioPlaybackIntent` фонового режима `audio`
+
+Прямого требования в документации **нет**. [Страница
+`AudioPlaybackIntent`](https://developer.apple.com/documentation/appintents/audioplaybackintent)
+говорит только: «Adopt this protocol to indicate to the system that your App
+Intent plays audio. The system can then avoid dialogue or other experiences that
+might interrupt that audio». Ни `UIBackgroundModes`, ни `AVAudioSession` там не
+упомянуты. Для сравнения, у
+[`LiveActivityIntent`](https://developer.apple.com/documentation/appintents/liveactivityintent)
+фоновый запуск описан явно: «the system launches your app process without
+opening the app, performs the intent, and starts the Live Activity» — и тоже без
+слова про background modes.
+
+Косвенные данные, однако, против нас: в теме
+[Cannot Start Audio Playback from Interactive Widget (iOS 17)](https://developer.apple.com/forums/thread/736445)
+`AudioPlaybackIntent` применяют в приложении, у которого «Audio, AirPlay and
+Picture in Picture» уже включён, и там же отдельно предупреждают, что файл
+интента обязан входить в оба таргета. Приложение без единого
+`UIBackgroundModes` под этим маркером в найденных источниках не описано ни разу
+— то есть «работает без `audio`» никем не подтверждено, и это осталось
+непроверенной гипотезой.
+
+### Запускает ли система выгруженное приложение ради интента
+
+Это ключевая развилка, и ответ на iOS 17 — **скорее нет**. Тема
+[Is it possible for iOS 17 interactive widget always to run AppIntent from main
+target?](https://developer.apple.com/forums/thread/734477) формулирует ровно наш
+случай и осталась без ответа Apple:
+
+> If app is launched in background, built-in main target intent is executed, but
+> if app is closed, then app is not launched in background mode to execute
+> built-in intent.
+
+Подтверждение фонового запуска нашлось только для **iOS 18 и Control Widget**
+([iOS18 AudioPlaybackIntent respond too slow when app not
+launched](https://developer.apple.com/forums/thread/761677)) — там DTS отвечает
+про профилирование времени запуска, то есть приложение действительно
+поднимается. Ни одного подтверждённого примера фонового выполнения интента
+виджета в процессе приложения именно на **17.x** найти не удалось.
+
+Сверху накладывается force-quit: если пользователь смахнул приложение в
+переключателе задач, система ставит флаг, запрещающий фоновый запуск, и
+снимает его только при следующем ручном запуске — ответ Quinn «The Eskimo!» в
+[теме 666149](https://developer.apple.com/forums/thread/666149). Для VPN-виджета
+это фатально: сценарий «смахнул приложение, жму кнопку на виджете» —
+основной.
+
+### Что почти наверняка ломало кнопку помимо этого
+
+* **`.widgetURL` съедает нажатие.** На плитке одновременно стоял
+  `.widgetURL` (тап мимо кнопки открывает приложение) и `Button(intent:)`.
+  Это известный конфликт iOS 17:
+  [«when `.widgetURL` is set, the button/toggle of interactive widget doesn't
+  work»](https://developer.apple.com/forums/thread/731758), и
+  [тема 733102](https://developer.apple.com/forums/thread/733102), где тапы
+  «pass through and open the app» непредсказуемо. Это ровно тот симптом,
+  который наблюдался на сборках 196–197 («открывает приложение, ничего не
+  подключает») и который тогда списали на отказ системы маршрутизировать
+  интент.
+* **Устаревший архив вьюхи.** WidgetKit архивирует SwiftUI-представление;
+  после обновления приложения виджет на экране может остаться от старой сборки
+  и вести себя как раньше — жалобы на «пустые/залипшие виджеты, лечится только
+  перезагрузкой или переустановкой виджета» в
+  [теме 743135](https://developer.apple.com/forums/thread/743135). Ни один из
+  прогонов не начинался со снятия и повторной установки виджета.
+
+### Вердикт
+
+Чинить пришлось бы вслепую и по одному предположению за сборку (Mac для локальной
+проверки нет, каждый цикл — Codemagic + TestFlight), причём даже при удачном
+исходе оставался неустранимый на iOS 17 сценарий force-quit. Поэтому
+iOS-виджет снят целиком, Android-виджет остаётся.
+
+### Если возвращать
+
+Порядок проверки, от дешёвого к дорогому: снять `.widgetURL` с плитки и
+оставить только кнопку; снять и заново поставить виджет на экране; добавить
+`UIBackgroundModes = [audio]` вместе с `AudioPlaybackIntent`; и только потом
+пересматривать саму схему. Полностью нативный путь (поднимать туннель из
+процесса виджета) закрыт: NetworkExtension-entitlement расширению виджета не
+выдаётся, а конфигурация `NETunnelProviderManager` принадлежит бандлу
+приложения.

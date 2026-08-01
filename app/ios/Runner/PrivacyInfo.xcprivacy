@@ -4,8 +4,8 @@
 	Privacy manifest for the app bundle. Apple requires one from every bundle
 	that touches a "required reason" API; without it the upload draws an
 	ITMS-91053 notice and, for the categories below, App Review can hold the
-	build. Each extension carries its own — a manifest describes one bundle, not
-	the payload — see PacketTunnel/ and FatVpnWidget/.
+	build. The extension carries its own — a manifest describes one bundle, not
+	the payload — see PacketTunnel/.
 
 	Wired into the target by ios/tool/add_privacy_manifests.rb, not by the
 	checked-in project file: there is no Mac for this project, so every target
@@ -47,12 +47,9 @@
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>
-			<!-- AppDelegate's fatvpn/widget channel writes the widget snapshot
-			     into UserDefaults(suiteName: group.com.fatvpn.fatvpnApp) and
-			     takes the widget's parked action back out of it
-			     (ios/Shared/FatVpnWidgetSnapshot.swift). CA92.1 covers the
-			     app's own defaults, 1C8F.1 the App Group the tunnel and the
-			     widget share with it. -->
+			<!-- shared_preferences stores the app's own settings in
+			     UserDefaults. CA92.1 covers the app's own defaults, 1C8F.1 the
+			     App Group it shares with the tunnel. -->
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>

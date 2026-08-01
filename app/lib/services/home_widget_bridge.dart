@@ -37,10 +37,10 @@ HomeWidgetAction? homeWidgetActionFromUri(Uri uri) {
   );
 }
 
-/// The same action names as the deep link, arriving the other way round: the
-/// iOS widget's power button is an App Intent, which can open the app but
-/// cannot hand it a URL, so it writes the name into the shared App Group and
-/// the app comes and takes it ([HomeWidgetBridge.takePendingAction]).
+/// The same action names as the deep link, arriving the other way round: a
+/// platform that can wake the app but cannot hand it a URL parks the name
+/// instead, and the app comes and takes it
+/// ([HomeWidgetBridge.takePendingAction]).
 HomeWidgetAction? homeWidgetActionFromName(String action) {
   switch (action) {
     case 'connect':
@@ -154,8 +154,8 @@ class HomeWidgetSnapshot {
       );
 }
 
-/// Publishes [HomeWidgetSnapshot] to the platform so the Android app widget and
-/// the iOS WidgetKit extension can render the session without the app running.
+/// Publishes [HomeWidgetSnapshot] to the platform so the Android app widget can
+/// render the session without the app running.
 ///
 /// A single instance owns the whole snapshot and callers patch the fields they
 /// know about ([update]) — the home screen knows the tunnel, `main` knows the
@@ -178,39 +178,11 @@ class HomeWidgetBridge {
 
   HomeWidgetSnapshot get snapshot => _snapshot;
 
-  /// Called when the platform says a widget tap is waiting to be collected —
-  /// see [listenForActions].
-  VoidCallback? onActionAvailable;
-
-  bool _listening = false;
-
-  /// Starts listening for the platform pushing a widget tap at us.
-  ///
-  /// The poll ([takePendingAction] on launch and on resume) cannot be the only
-  /// route on iOS: the power button is an App Intent with `openAppWhenRun`, so
-  /// the system performs it *in the app's process* and does so once the app is
-  /// already active — after both polls have run and found the mailbox empty.
-  /// The tap would then be carried out at some later resume, or never. iOS
-  /// pushes this the moment the intent parks its action; the poll stays for the
-  /// cold-start case, where the app is not yet there to be pushed to.
-  void listenForActions() {
-    if (_listening) return;
-    _listening = true;
-    channel.setMethodCallHandler((call) async {
-      if (call.method == 'pendingActionAvailable') {
-        onActionAvailable?.call();
-      }
-      return null;
-    });
-  }
-
   @visibleForTesting
   void resetForTest() {
     _snapshot = const HomeWidgetSnapshot();
     _published = null;
     _unsupported = false;
-    _listening = false;
-    onActionAvailable = null;
   }
 
   /// Patches the snapshot and pushes it to the platform when something actually
@@ -262,16 +234,9 @@ class HomeWidgetBridge {
   /// Takes the action a widget tap parked with the platform, leaving nothing
   /// behind. Null when there is none.
   ///
-  /// The pull is what makes the iOS widget's power button work at all. A
-  /// widget extension has no way to run an action itself — it has no
-  /// NetworkExtension entitlement — and an App Intent that opens the app opens
-  /// it *without* a URL, so there is no deep link to parse. It writes the
-  /// action into the shared App Group instead, and the app asks for it on
-  /// launch and on every resume.
-  ///
-  /// It doubles as the belt to the deep link's braces: `fatvpn://` reaching
-  /// Dart on iOS has never actually been tested (the app uses a SceneDelegate),
-  /// and this path does not depend on it.
+  /// The Android widget delivers its taps as `fatvpn://widget/...` links and
+  /// parks nothing, so this answers null there. It stays as the half of the
+  /// contract a platform would use if it could not carry a URL with the tap.
   Future<HomeWidgetAction?> takePendingAction() async {
     if (_unsupported) return null;
     try {
@@ -287,57 +252,6 @@ class HomeWidgetBridge {
     } catch (e) {
       log.w('Could not read the pending widget action: $e');
       return null;
-    }
-  }
-
-  /// Writes into the log why the iOS widget's power button had to open the app,
-  /// when it did.
-  ///
-  /// The button is meant to toggle the tunnel in the background and leave the
-  /// app alone; it surfaces the app only where a screen is unavoidable. But the
-  /// intent that decides this runs in the app's process with **no UI and no
-  /// console anyone can reach from the phone**, so "it opens the app instead of
-  /// connecting" was a report with no way to act on it. The native side leaves a
-  /// short reason in the App Group and this puts it where "Share diagnostics"
-  /// will carry it.
-  ///
-  /// Android has no equivalent and needs none — its widget provider runs in the
-  /// app's own process and logs directly.
-  Future<void> reportHandOverReason() async {
-    if (_unsupported) return;
-    try {
-      final reason = await channel.invokeMethod<String>('takeHandOverReason');
-      if (reason == null || reason.isEmpty) return;
-      log.w('Widget press had to open the app: $reason');
-    } on MissingPluginException {
-      // Android, and any iOS build older than this one. Nothing to report, and
-      // deliberately not [_unsupported]: publishing works regardless.
-    } catch (e) {
-      log.w('Could not read the widget hand-over reason: $e');
-    }
-  }
-
-  /// Drains the native step-by-step trace of the power button's press into the
-  /// log ("Share diagnostics" carries it from there).
-  ///
-  /// The trace is written by Swift into the App Group at the moment each step
-  /// happens (`FatVpnWidgetSnapshot.dropBreadcrumb`), which makes it the one
-  /// record that survives every failure mode this feature has actually shown a
-  /// device: an intent that never ran, a process that died mid-press, an
-  /// engine that never started. An empty trace after a press is itself the
-  /// answer — the button did not fire.
-  Future<void> reportBreadcrumbs() async {
-    if (_unsupported) return;
-    try {
-      final trail = await channel.invokeMethod<List<dynamic>>('takeBreadcrumbs');
-      if (trail == null || trail.isEmpty) return;
-      for (final line in trail) {
-        log.i('Widget trace: $line');
-      }
-    } on MissingPluginException {
-      // Android, and any iOS build older than this one.
-    } catch (e) {
-      log.w('Could not read the widget trace: $e');
     }
   }
 

@@ -4,20 +4,19 @@
 # Adds each bundle's PrivacyInfo.xcprivacy to its target's Resources phase.
 #
 # Apple wants a privacy manifest from every bundle that touches a "required
-# reason" API, and this app ships three of them — the app, the tunnel and the
-# widget — each using a different set (see the manifests themselves). A manifest
-# describes the bundle it sits in, so one file at the top would cover nothing.
+# reason" API, and this app ships two of them — the app and the tunnel — each
+# using a different set (see the manifests themselves). A manifest describes the
+# bundle it sits in, so one file at the top would cover nothing.
 #
-# Why a script rather than the checked-in project file: two of the three targets
-# do not exist in Runner.xcodeproj at all. There is no Mac for this project
-# (only Codemagic's cloud CI), so PacketTunnel and FatVpnWidget are created on
-# every build by add_packet_tunnel_target.rb and add_widget_target.rb, and
-# anything of theirs has to be wired in the same way. Runner's manifest is done
-# here too rather than by hand in the .pbxproj: same gem, same review, one place
-# to look.
+# Why a script rather than the checked-in project file: one of the two targets
+# does not exist in Runner.xcodeproj at all. There is no Mac for this project
+# (only Codemagic's cloud CI), so PacketTunnel is created on every build by
+# add_packet_tunnel_target.rb, and anything of its has to be wired in the same
+# way. Runner's manifest is done here too rather than by hand in the .pbxproj:
+# same gem, same review, one place to look.
 #
-# MUST run after both of those scripts — the targets it attaches to are their
-# output. It raises instead of warning when one is missing: a manifest that
+# MUST run after that script — the target it attaches to is its output. It
+# raises instead of warning when one is missing: a manifest that
 # quietly fails to ship is invisible until App Store Connect emails about it,
 # days later, on a build number that cannot be reused.
 #
@@ -36,13 +35,12 @@ IOS_DIR = File.expand_path('..', __dir__)
 PROJECT_PATH = File.join(IOS_DIR, 'Runner.xcodeproj')
 MANIFEST = 'PrivacyInfo.xcprivacy'
 
-# target name => the group (and directory) its manifest lives in. Both extension
-# groups are created by the scripts that create the targets, with the group name
+# target name => the group (and directory) its manifest lives in. The extension
+# group is created by the script that creates the target, with the group name
 # equal to the target name; Runner's comes with the Flutter template.
 TARGETS = {
   'Runner' => 'Runner',
   'PacketTunnel' => 'PacketTunnel',
-  'FatVpnWidget' => 'FatVpnWidget',
 }.freeze
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
@@ -51,7 +49,7 @@ TARGETS.each do |target_name, group_name|
   target = project.targets.find { |t| t.name == target_name }
   unless target
     raise "[add_privacy_manifests] Target '#{target_name}' not found. This script " \
-          'runs after add_packet_tunnel_target.rb and add_widget_target.rb — check ' \
+          'runs after add_packet_tunnel_target.rb — check ' \
           'the step order in codemagic.yaml.'
   end
 

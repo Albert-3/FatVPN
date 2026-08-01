@@ -132,18 +132,11 @@ workflows:
           # this line only guarantees a matching version is present to activate.
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
-      - name: Add FatVpnWidget (WidgetKit) target
-        script: |
-          # Must follow the PacketTunnel step: this script also adds the shared
-          # widget-snapshot file to that target, which is how the tunnel tells
-          # the widget about starts and stops that happen without the app.
-          # The gem is already installed by the step above.
-          ruby app/ios/tool/add_widget_target.rb
       - name: Attach the privacy manifests
         script: |
-          # Must follow both target steps: it wires each bundle's
-          # PrivacyInfo.xcprivacy into the target that ships it, and two of the
-          # three targets do not exist until the scripts above have run.
+          # Must follow the target step: it wires each bundle's
+          # PrivacyInfo.xcprivacy into the target that ships it, and PacketTunnel
+          # does not exist until the script above has run.
           ruby app/ios/tool/add_privacy_manifests.rb
       - name: Pod install
         script: |
@@ -153,16 +146,14 @@ workflows:
         script: |
           set -e
           # The integration fetches signing files once, before any of these
-          # scripts run, searching by the bundle id in `ios_signing`. It brought
-          # Runner's and PacketTunnel's profiles and not the widget's — twice,
-          # the second time (build 145) with the widget's profile sitting ACTIVE
-          # in the portal for half an hour and the step below printing exactly
-          # which two arrived. So the search, not the portal, is what excludes
-          # this identifier.
+          # scripts run, searching by the bundle id in `ios_signing`. That search
+          # has been shown to skip an extension's profile even with that profile
+          # sitting ACTIVE in the portal (builds 143-145), so the search, not the
+          # portal, is what excludes an identifier.
           #
           # Stop searching by bundle id then: this team's App Store profiles are
-          # the three we need, so take all of them. No filter to get wrong, and
-          # a fourth extension later needs no change here.
+          # the ones we need, so take all of them. No filter to get wrong, and
+          # another extension later needs no change here.
           #
           # `profiles list` touches no certificates — which is what killed the
           # earlier attempt (`fetch-signing-files` fetches certificates too and
@@ -189,7 +180,7 @@ workflows:
           # App ID matches that target's bundle id, and says nothing at all when
           # it does not. The target is then left on automatic signing with no
           # team, and the build dies in the archive step with
-          #   Signing for "FatVpnWidget" requires a development team
+          #   Signing for "<target>" requires a development team
           # (build 142) — a message that names neither the missing App ID nor
           # the portal page that fixes it.
           #
@@ -208,8 +199,7 @@ workflows:
                  "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision
           MISSING=""
           for BUNDLE_ID in com.fatvpn.fatvpnApp \
-                           com.fatvpn.fatvpnApp.PacketTunnel \
-                           com.fatvpn.fatvpnApp.FatVpnWidget; do
+                           com.fatvpn.fatvpnApp.PacketTunnel; do
             FOUND=""
             for PROFILE in "$@"; do
               [ -e "$PROFILE" ] || continue
@@ -244,8 +234,8 @@ workflows:
             echo "such profile at all. At developer.apple.com > Certificates," >&2
             echo "Identifiers & Profiles:" >&2
             echo " * Identifiers: an explicit App ID with the App Groups" >&2
-            echo "   capability bound to group.com.fatvpn.fatvpnApp (the widget" >&2
-            echo "   and the tunnel read the shared snapshot through it)." >&2
+            echo "   capability bound to group.com.fatvpn.fatvpnApp (the app" >&2
+            echo "   and the tunnel exchange start options through it)." >&2
             echo " * Profiles: an App Store profile on that App ID, Active." >&2
             echo "   Nothing here creates one — on this account every profile" >&2
             echo "   is made by hand; the integration creates only the" >&2
@@ -326,11 +316,10 @@ workflows:
           mkdir -p /tmp/ipa-check
           unzip -q "$IPA" -d /tmp/ipa-check
           APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
-          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex" "$APP/PlugIns/FatVpnWidget.appex"; do
+          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex"; do
             # A missing appex is the worst outcome here, not a skippable one:
-            # it means add_packet_tunnel_target.rb (or add_widget_target.rb)
-            # stopped embedding its extension and the app ships with no tunnel
-            # — or with a widget that can never read anything — at all.
+            # it means add_packet_tunnel_target.rb stopped embedding its
+            # extension and the app ships with no tunnel at all.
             if [ ! -d "$BUNDLE" ]; then
               echo "Bundle missing from the exported .ipa: $BUNDLE" >&2
               exit 1
@@ -346,7 +335,7 @@ workflows:
               exit 1
             }
             # Apple wants a privacy manifest from every bundle that touches a
-            # required-reason API, and all three of these do. add_privacy_manifests.rb
+            # required-reason API, and both of these do. add_privacy_manifests.rb
             # puts the file reference in the project; only the built bundle can
             # say whether it was copied. Missing, the upload draws an ITMS-91053
             # notice against a build number that is already spent.
@@ -355,58 +344,6 @@ workflows:
               exit 1
             fi
             echo "PrivacyInfo.xcprivacy present."
-          done
-      - name: Verify the widget's toggle intent is in the shipped App Intents metadata
-        script: |
-          # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
-          #
-          # This is the check builds 196–199 needed and did not have. When
-          # appintentsmetadataprocessor cannot make sense of a type it warns and
-          # silently leaves that type out, producing a perfectly well-formed
-          # Metadata.appintents with no intent in it — and on a device that is
-          # indistinguishable from "the system declined to route the press",
-          # which is the theory three builds were spent on.
-          #
-          # The first attempt at this check grepped the build log for the
-          # processor's warnings and reported a reassuring "no warnings" on
-          # build 201. It could not have found any: `flutter build ipa` prints
-          # "Running Xcode build..." and a duration, never xcodebuild's
-          # per-task output, so the string it searched for is never in the log.
-          # A check that cannot fail is worse than no check — this one reads
-          # the artifact instead, where the answer actually is.
-          set -e
-          APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
-          if [ -z "$APP" ]; then
-            echo "No .app under /tmp/ipa-check — the entitlement step did not unpack the .ipa." >&2
-            exit 1
-          fi
-          echo "Every App Intents metadata bundle in the .ipa:"
-          find "$APP" -name 'Metadata.appintents' -type d
-          echo "--------------------------------------------------------------"
-          # Both bundles matter, for different reasons: the system reads the
-          # *widget's* metadata to decide where a press is routed, and the app
-          # must carry the type to be able to perform it. Either one missing is
-          # a dead button.
-          for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
-            META="$BUNDLE/Metadata.appintents"
-            if [ ! -d "$META" ]; then
-              echo "No Metadata.appintents in $BUNDLE — App Intents were not extracted at all." >&2
-              exit 1
-            fi
-            # -a because the extracted metadata is not necessarily text.
-            if ! grep -raq 'FatVpnTogglePowerIntent' "$META"; then
-              echo "FatVpnTogglePowerIntent is absent from $META — the widget button ships dead." >&2
-              exit 1
-            fi
-            echo "$BUNDLE: FatVpnTogglePowerIntent present."
-            # Not a gate: the marker's spelling in the metadata is Apple's
-            # business and has changed between releases. Printed because the
-            # marker is what routes the press into the app's process, and a
-            # build where it silently stopped being recorded is worth seeing.
-            echo -n "  conformance markers recorded: "
-            grep -rao 'AudioPlayback[A-Za-z]*\|LiveActivity[A-Za-z]*\|ForegroundContinuable[A-Za-z]*' "$META" \
-              | sed 's/.*://' | sort -u | tr '\n' ' '
-            echo
           done
     artifacts:
       - app/build/ios/ipa/*.ipa
@@ -486,10 +423,6 @@ workflows:
         script: |
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
-      - name: Add FatVpnWidget (WidgetKit) target
-        script: |
-          # Order matters — see the same step in ios-release.
-          ruby app/ios/tool/add_widget_target.rb
       - name: Attach the privacy manifests
         script: |
           # Order matters — see the same step in ios-release.

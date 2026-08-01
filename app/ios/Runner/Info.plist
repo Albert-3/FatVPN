@@ -34,7 +34,7 @@
 	     (didPushRouteInformation in main.dart), so the null-check crash the
 	     build-197 bundle was full of cannot recur. app_links, which Android
 	     relies on, was proven by the build-199 bundle to deliver nothing on
-	     this scene-based iOS template: the app opened from the widget's URL
+	     this scene-based iOS template: the app opened from a fatvpn:// URL
 	     with no 'Deep link arrived' line. The engine's own channel is the one
 	     path a device has demonstrably carried end-to-end into Dart (the 197
 	     crash *was* it delivering). -->
