@@ -29,17 +29,13 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<!-- The app ships no Live Activity. This is here for the widget's power
-	     button: what routes its press into this process, in the background, is
-	     the LiveActivityIntent conformance on FatVpnTogglePowerIntent, and this
-	     key is the one system-visible declaration that turns on the Live
-	     Activity machinery the routing belongs to. Cheap insurance against the
-	     system declining to hand the intent to an app that says it has nothing
-	     to do with Live Activities — unverified either way, and a build cycle
-	     costs an hour. Its only user-visible effect is a Live Activities toggle
-	     in the app's Settings page. -->
-	<key>NSSupportsLiveActivities</key>
-	<true/>
+	<!-- Flutter's own deep-link handler is off because app_links is the one in
+	     use (AuthController owns fatvpn://). With both on, every fatvpn:// open
+	     was ALSO pushed into the Navigator as a named route the app does not
+	     define, which is a caught-but-logged null-check crash on every widget
+	     tap and deep link (seen in the build-197 support bundle). -->
+	<key>FlutterDeepLinkingEnabled</key>
+	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

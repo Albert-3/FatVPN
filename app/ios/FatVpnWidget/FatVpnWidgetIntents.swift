@@ -13,18 +13,27 @@ import NetworkExtension
 /// the two copies are deliberately different — `FATVPN_WIDGET_EXTENSION` is
 /// defined only for the widget target.
 ///
-/// **What routes the press into the app's process is the `LiveActivityIntent`
+/// **What routes the press into the app's process is the `AudioPlaybackIntent`
 /// conformance** on the declaration below — the marker the system honours by
 /// launching the app in the background (even from cold) and performing the
-/// intent there. It has to be `LiveActivityIntent` (or `AudioPlaybackIntent`)
-/// and it has to be on the copy the *widget* compiles: the system decides where
-/// to run at the press, from the widget bundle's own App Intents metadata.
-/// `ForegroundContinuableIntent` cannot do this job — the protocol is
-/// unavailable to extensions, so its conformance is invisible in exactly the
-/// metadata that is consulted, and a build that relied on it alone was routed
-/// to the widget's copy: the press parked the action and nothing connected
-/// until the app was next opened (device, 2026-08-01). That conformance is
-/// kept, app-side only, purely for `needsToContinueInForegroundError()`.
+/// intent there. It has to be on the copy the *widget* compiles: the system
+/// decides where to run at the press, from the widget bundle's own App Intents
+/// metadata. Semantically it is a lie — nothing here plays audio — but it is
+/// the marker production widgets actually ship for exactly this job, and both
+/// honest alternatives failed **on a device**:
+///
+///  * `ForegroundContinuableIntent` is unavailable to extensions, and a build
+///    relying on it alone ran the widget's copy — parked the action, connected
+///    only when the app was next opened (device, 2026-08-01). It is kept,
+///    app-side only, purely for `needsToContinueInForegroundError()`.
+///  * `LiveActivityIntent` (build 197, iPhone 11 / iOS 17.6.1, 2026-08-01)
+///    produced a **dead button**: the intent ran in neither process — no park,
+///    no background launch — and the tap fell through to the tile's
+///    `widgetURL`, i.e. "opens the app, connects nothing". Not a packaging
+///    defect: the unzipped .ipa had the intent in both bundles'
+///    `Metadata.appintents` (`SessionStarting` marker, `openAppWhenRun` false)
+///    and `NSSupportsLiveActivities` in the app's Info.plist, so the recipe as
+///    documented was in the build and the system still declined it.
 ///
 /// Running in the app's process, in the background, is the entire feature:
 ///
@@ -44,7 +53,7 @@ import NetworkExtension
 /// needs the NetworkExtension entitlement the widget's App ID does not have,
 /// and the VPN configuration belongs to the app's bundle besides.
 @available(iOS 17.0, iOSApplicationExtension 17.0, *)
-struct FatVpnTogglePowerIntent: LiveActivityIntent {
+struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
     static var title: LocalizedStringResource = "Toggle the VPN"
     static var description = IntentDescription("Connects or disconnects FatVPN.")
 
@@ -54,7 +63,7 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
     /// with `true` as a "safe fallback", which the system took literally: it
     /// opened the app on every press instead of running the intent in the
     /// app's background process (seen on a device 2026-08-01). Background
-    /// execution comes from the `LiveActivityIntent` conformance on the
+    /// execution comes from the `AudioPlaybackIntent` conformance on the
     /// declaration (see the type comment); the only sanctioned way to reach
     /// the foreground is the `needsToContinueInForegroundError` below.
     static var openAppWhenRun: Bool = false
@@ -95,17 +104,23 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
     }
 }
 
-/// App-side only (the protocol is unavailable to extensions), and **not** what
-/// routes the intent here — `LiveActivityIntent` on the declaration does that;
-/// this conformance was once believed to and demonstrably did not (device,
-/// 2026-08-01: the press ran the widget's copy). It exists solely to make
+#if !FATVPN_WIDGET_EXTENSION
+
+/// App-side only, and **not** what routes the intent here —
+/// `AudioPlaybackIntent` on the declaration does that; this conformance was
+/// once believed to and demonstrably did not (device, 2026-08-01: the press
+/// ran the widget's copy). It exists solely to make
 /// `needsToContinueInForegroundError()` throwable, the one sanctioned way for
 /// the background run to surface the app when a screen is unavoidable.
+///
+/// Inside the `#if`, not just behind the availability gate: the build-197 .ipa
+/// showed the metadata extractor records conformances regardless of
+/// `@available(iOSApplicationExtension, unavailable)`, so the widget bundle's
+/// metadata was claiming a protocol Apple forbids to extensions. The `#if` is
+/// what actually keeps it out of the appex.
 @available(iOS 17.0, *)
 @available(iOSApplicationExtension, unavailable)
 extension FatVpnTogglePowerIntent: ForegroundContinuableIntent {}
-
-#if !FATVPN_WIDGET_EXTENSION
 
 /// The tick under the power button, as far as iOS permits one.
 ///

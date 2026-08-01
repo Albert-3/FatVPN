@@ -213,7 +213,56 @@ class AppLogger {
       b.writeln(line);
     }
 
+    await _appendPreviousLogs(b);
+
     return b.toString();
+  }
+
+  /// How much of the *other* log files rides along in a support bundle.
+  ///
+  /// Every Flutter engine start opens its own file — including the headless
+  /// engine a widget press launches in the background — so the current
+  /// process's buffer alone can be exactly the half of the story that says
+  /// nothing. That is not hypothetical: the build-197 widget investigation ran
+  /// blind because the bundle carried only the foreground app's log, and a
+  /// background launch (had one happened) would have logged to a file this
+  /// section would have shown.
+  static const _previousFilesInBundle = 2;
+  static const _previousFileTailLines = 150;
+
+  Future<void> _appendPreviousLogs(StringBuffer b) async {
+    final dir = _logDir;
+    if (dir == null) return;
+    try {
+      final current = _currentFile?.path;
+      final files = await dir
+          .list()
+          .where((e) =>
+              e is File && e.path.endsWith('.log') && e.path != current)
+          .cast<File>()
+          .toList();
+      if (files.isEmpty) return;
+      // The timestamped names sort lexically as chronologically; newest first.
+      files.sort((a, b) => b.path.compareTo(a.path));
+      for (final file in files.take(_previousFilesInBundle)) {
+        b.writeln();
+        b.writeln('=== PREVIOUS LOG: ${file.uri.pathSegments.last} ===');
+        try {
+          final lines = await file.readAsLines();
+          final tail = lines.length <= _previousFileTailLines
+              ? lines
+              : lines.sublist(lines.length - _previousFileTailLines);
+          if (tail.length < lines.length) {
+            b.writeln('(… ${lines.length - tail.length} earlier lines omitted)');
+          }
+          tail.forEach(b.writeln);
+        } catch (e) {
+          b.writeln('(unreadable: $e)');
+        }
+      }
+    } catch (_) {
+      // Best-effort: the bundle is still useful with only the live buffer.
+    }
   }
 
   /// Writes the bundle to a temp file and opens the OS share sheet. Awaits only
