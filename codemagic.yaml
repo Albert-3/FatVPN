@@ -132,11 +132,18 @@ workflows:
           # this line only guarantees a matching version is present to activate.
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Must follow the PacketTunnel step: this script also adds the shared
+          # widget store to that target, which is how the tunnel tells the widget
+          # about starts and stops that happen without the app. The gem is
+          # already installed by the step above.
+          ruby app/ios/tool/add_widget_target.rb
       - name: Attach the privacy manifests
         script: |
-          # Must follow the target step: it wires each bundle's
-          # PrivacyInfo.xcprivacy into the target that ships it, and PacketTunnel
-          # does not exist until the script above has run.
+          # Must follow both target steps: it wires each bundle's
+          # PrivacyInfo.xcprivacy into the target that ships it, and two of the
+          # three targets do not exist until the scripts above have run.
           ruby app/ios/tool/add_privacy_manifests.rb
       - name: Pod install
         script: |
@@ -199,7 +206,8 @@ workflows:
                  "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision
           MISSING=""
           for BUNDLE_ID in com.fatvpn.fatvpnApp \
-                           com.fatvpn.fatvpnApp.PacketTunnel; do
+                           com.fatvpn.fatvpnApp.PacketTunnel \
+                           com.fatvpn.fatvpnApp.FatVpnWidget; do
             FOUND=""
             for PROFILE in "$@"; do
               [ -e "$PROFILE" ] || continue
@@ -234,8 +242,8 @@ workflows:
             echo "such profile at all. At developer.apple.com > Certificates," >&2
             echo "Identifiers & Profiles:" >&2
             echo " * Identifiers: an explicit App ID with the App Groups" >&2
-            echo "   capability bound to group.com.fatvpn.fatvpnApp (the app" >&2
-            echo "   and the tunnel exchange start options through it)." >&2
+            echo "   capability bound to group.com.fatvpn.fatvpnApp (the widget" >&2
+            echo "   and the tunnel read the shared snapshot through it)." >&2
             echo " * Profiles: an App Store profile on that App ID, Active." >&2
             echo "   Nothing here creates one — on this account every profile" >&2
             echo "   is made by hand; the integration creates only the" >&2
@@ -316,10 +324,11 @@ workflows:
           mkdir -p /tmp/ipa-check
           unzip -q "$IPA" -d /tmp/ipa-check
           APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
-          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex"; do
+          for BUNDLE in "$APP" "$APP/PlugIns/PacketTunnel.appex" "$APP/PlugIns/FatVpnWidget.appex"; do
             # A missing appex is the worst outcome here, not a skippable one:
-            # it means add_packet_tunnel_target.rb stopped embedding its
-            # extension and the app ships with no tunnel at all.
+            # it means add_packet_tunnel_target.rb (or add_widget_target.rb)
+            # stopped embedding its extension and the app ships with no tunnel
+            # — or with a widget that can never read anything — at all.
             if [ ! -d "$BUNDLE" ]; then
               echo "Bundle missing from the exported .ipa: $BUNDLE" >&2
               exit 1
@@ -335,7 +344,7 @@ workflows:
               exit 1
             }
             # Apple wants a privacy manifest from every bundle that touches a
-            # required-reason API, and both of these do. add_privacy_manifests.rb
+            # required-reason API, and all three of these do. add_privacy_manifests.rb
             # puts the file reference in the project; only the built bundle can
             # say whether it was copied. Missing, the upload draws an ITMS-91053
             # notice against a build number that is already spent.
@@ -344,6 +353,64 @@ workflows:
               exit 1
             fi
             echo "PrivacyInfo.xcprivacy present."
+          done
+      - name: Verify both toggle intents are in the shipped App Intents metadata
+        script: |
+          # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
+          #
+          # When appintentsmetadataprocessor cannot make sense of a type it warns
+          # and silently leaves that type out, producing a perfectly well-formed
+          # Metadata.appintents with no intent in it — and on a device that is
+          # indistinguishable from "the system declined to route the press",
+          # which is the theory three builds were once spent on.
+          #
+          # An earlier version of this check grepped the *build log* for those
+          # warnings and reported a reassuring "none found". It could not have
+          # found any: `flutter build ipa` prints "Running Xcode build..." and a
+          # duration, never xcodebuild's per-task output. A check that cannot
+          # fail is worse than no check — this one reads the artifact, where the
+          # answer actually is.
+          set -e
+          APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
+          if [ -z "$APP" ]; then
+            echo "No .app under /tmp/ipa-check — the entitlement step did not unpack the .ipa." >&2
+            exit 1
+          fi
+          echo "Every App Intents metadata bundle in the .ipa:"
+          find "$APP" -name 'Metadata.appintents' -type d
+          echo "--------------------------------------------------------------"
+          # Both bundles matter, for different reasons: the system reads the
+          # *widget's* metadata to decide where a press is routed, and the app
+          # must carry the type to be able to perform it. Either one missing is a
+          # dead button.
+          #
+          # Both intents matter too, and this is the check the version split
+          # needs: FatVpnTogglePowerIntent serves iOS 18 in the background,
+          # FatVpnOpenAppAndTogglePowerIntent serves 17.x by opening the app. A
+          # build that dropped one would work on exactly half the devices, and
+          # the half it failed on is the one that reports nothing at all.
+          for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
+            META="$BUNDLE/Metadata.appintents"
+            if [ ! -d "$META" ]; then
+              echo "No Metadata.appintents in $BUNDLE — App Intents were not extracted at all." >&2
+              exit 1
+            fi
+            for INTENT in FatVpnTogglePowerIntent FatVpnOpenAppAndTogglePowerIntent; do
+              # -a because the extracted metadata is not necessarily text.
+              if ! grep -raq "$INTENT" "$META"; then
+                echo "$INTENT is absent from $META — that half of the button ships dead." >&2
+                exit 1
+              fi
+              echo "$BUNDLE: $INTENT present."
+            done
+            # Not a gate: the marker's spelling in the metadata is Apple's
+            # business and has changed between releases. Printed because the
+            # marker is what routes a press into the app's process, and a build
+            # where it silently stopped being recorded is worth seeing.
+            echo -n "  conformance markers recorded: "
+            grep -rao 'AudioPlayback[A-Za-z]*\|LiveActivity[A-Za-z]*\|ForegroundContinuable[A-Za-z]*' "$META" \
+              | sed 's/.*://' | sort -u | tr '\n' ' '
+            echo
           done
     artifacts:
       - app/build/ios/ipa/*.ipa
@@ -423,6 +490,10 @@ workflows:
         script: |
           gem install xcodeproj -v 1.27.0 --no-document
           ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_widget_target.rb
       - name: Attach the privacy manifests
         script: |
           # Order matters — see the same step in ios-release.

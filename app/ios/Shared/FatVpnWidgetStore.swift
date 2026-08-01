@@ -1,0 +1,297 @@
+import Foundation
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
+
+/// What the home-screen widget draws, and the only channel it has to the rest
+/// of the app.
+///
+/// Compiled into three targets — Runner, PacketTunnel and FatVpnWidget — because
+/// a widget extension cannot ask the tunnel anything: reading `NEVPNStatus`
+/// needs the NetworkExtension entitlement, which is never issued to a widget's
+/// App ID. So the two sides that do know the state write it down here instead:
+///
+///  * the app, on every state change its UI sees (`HomeWidgetBridge` → the
+///    `fatvpn/widget` channel), together with what only it knows — the chosen
+///    location, the language, whether there is a session at all;
+///  * the packet-tunnel extension, when the tunnel comes up or goes down
+///    *without* the app, which on iOS is the normal case (on-demand start, a
+///    stop from Settings → VPN).
+///
+/// The store is the shared App Group container. Without that entitlement
+/// `UserDefaults(suiteName:)` returns nil and every read below falls back to
+/// `.empty`, i.e. the widget's "open the app" state — which is why codemagic.yaml
+/// verifies the entitlement survived re-signing rather than trusting the
+/// .entitlements file.
+struct FatVpnWidgetSnapshot: Equatable {
+    /// Bumped when the stored shape changes, so a tile left behind by an older
+    /// install renders its fallback instead of misreading fields. Mirrors
+    /// `HomeWidgetSnapshot.version` on the Dart side.
+    static let currentVersion = 1
+
+    var version = 0
+    var state = "disconnected"
+    /// The language chosen *in the app*, not the phone's — they disagree often
+    /// enough that following the system locale would contradict the app.
+    var language: String?
+    var signedIn = false
+    var locationLabel: String?
+    var flagEmoji: String?
+    var connectedAt: Date?
+
+    /// Green means this and nothing looser. A tunnel that is still connecting
+    /// carries no traffic yet, and "green" beside a status line is read as
+    /// "my traffic is protected".
+    var isConnected: Bool { state == "connected" }
+
+    /// A tunnel moving in either direction. The press overlay produces these
+    /// two as well, so the tile can answer a tap before the tunnel does.
+    var isBusy: Bool {
+        state == "connecting" || state == "preparing" || state == "disconnecting"
+    }
+
+    /// What a widget shows when nothing has ever been published: an install
+    /// nobody has opened, or an App Group that is not actually shared.
+    static let empty = FatVpnWidgetSnapshot()
+}
+
+/// What a press asked for, parked in the App Group for the app to collect.
+///
+/// It has to be a mailbox rather than a URL because of what the button is on
+/// iOS 17+: an App Intent, which may ask the system to open its app but cannot
+/// hand that app a link.
+enum FatVpnWidgetAction: String {
+    case connect
+    case disconnect
+    /// The direction is resolved by whoever performs it, against the live
+    /// tunnel rather than the snapshot the tile happened to be drawing.
+    case toggle
+}
+
+enum FatVpnWidgetStore {
+    static let appGroupID = "group.com.fatvpn.fatvpnApp"
+
+    private static let snapshotKey = "fatvpn.widget.snapshot"
+    private static let actionKey = "fatvpn.widget.action"
+    private static let actionAtKey = "fatvpn.widget.actionAt"
+    private static let pressKey = "fatvpn.widget.press"
+    private static let pressAtKey = "fatvpn.widget.pressAt"
+    private static let trailKey = "fatvpn.widget.trail"
+
+    /// How long a parked action stays worth acting on. The app is expected
+    /// within a second or two — on iOS 17 the same press opens it — so anything
+    /// older is a press whose launch never happened, and carrying it out at the
+    /// user's *next* launch would toggle their VPN for no visible reason.
+    static let actionTTL: TimeInterval = 120
+
+    /// How long the press overlay may claim a direction on nothing but its own
+    /// say-so. Generous for a connect, whose work is two network round trips
+    /// and a ping of every candidate node before the extension is so much as
+    /// asked to start; short for a stop, which is one message to an extension
+    /// that is already running. Both are only a backstop — the overlay is
+    /// ignored the moment the real state moves.
+    static let connectOptimism: TimeInterval = 100
+    static let stopOptimism: TimeInterval = 8
+
+    static let trailLimit = 60
+
+    static var defaults: UserDefaults? { UserDefaults(suiteName: appGroupID) }
+
+    // MARK: - Snapshot
+
+    static func read() -> FatVpnWidgetSnapshot {
+        guard let stored = defaults?.dictionary(forKey: snapshotKey) else {
+            return .empty
+        }
+        var snapshot = FatVpnWidgetSnapshot()
+        snapshot.version = stored["v"] as? Int ?? 0
+        snapshot.state = stored["state"] as? String ?? "disconnected"
+        snapshot.language = stored["lang"] as? String
+        snapshot.signedIn = stored["signedIn"] as? Bool ?? false
+        snapshot.locationLabel = stored["locationLabel"] as? String
+        snapshot.flagEmoji = stored["flagEmoji"] as? String
+        snapshot.connectedAt = date(from: stored["connectedAtMillis"])
+        // A record written by a future (or corrupted) build is not worth
+        // guessing at: anything but the current version renders as "no data
+        // yet", which the tile already knows how to draw.
+        guard snapshot.version == FatVpnWidgetSnapshot.currentVersion else { return .empty }
+        return applyPress(to: snapshot)
+    }
+
+    /// Stores what the app published, verbatim — the payload crossing
+    /// `fatvpn/widget` is already this shape.
+    static func write(_ dictionary: [String: Any]) {
+        defaults?.set(dictionary, forKey: snapshotKey)
+        reloadWidgets()
+    }
+
+    /// Overwrites the tunnel half of the snapshot, leaving what only the app
+    /// knows — location, language, session — untouched.
+    ///
+    /// This is what the packet-tunnel extension calls. It runs when the app is
+    /// not there, so a full rewrite here would blank the location and the
+    /// language for as long as it takes the user to open the app again.
+    static func patchTunnelState(_ state: String, connectedAt: Date?) {
+        guard let defaults else { return }
+        var stored = defaults.dictionary(forKey: snapshotKey) ?? [:]
+        // A record the app has never written carries no version; stamping it
+        // keeps `read()` from discarding what the extension just observed.
+        stored["v"] = FatVpnWidgetSnapshot.currentVersion
+        stored["state"] = state
+        if let connectedAt {
+            stored["connectedAtMillis"] = Int(connectedAt.timeIntervalSince1970 * 1000)
+        } else {
+            stored.removeValue(forKey: "connectedAtMillis")
+        }
+        defaults.set(stored, forKey: snapshotKey)
+        reloadWidgets()
+    }
+
+    // MARK: - The press overlay
+
+    /// Records the direction the power button was pressed in and redraws every
+    /// tile, so the press is answered in the same instant rather than several
+    /// seconds later.
+    ///
+    /// Without this the widget answers a press by redrawing exactly what it
+    /// drew before, which is indistinguishable from a button that does nothing
+    /// — and is what a user with a working button reported as one.
+    static func markPressed(_ direction: String) {
+        guard let defaults else { return }
+        defaults.set(direction, forKey: pressKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: pressAtKey)
+        reloadWidgets()
+    }
+
+    /// Drops the overlay the moment the attempt behind it ends. Without it the
+    /// tile would go on saying "Connecting…" for the rest of the window over a
+    /// connect that is no longer happening.
+    static func clearPress() {
+        guard let defaults, defaults.object(forKey: pressKey) != nil else { return }
+        defaults.removeObject(forKey: pressKey)
+        defaults.removeObject(forKey: pressAtKey)
+        reloadWidgets()
+    }
+
+    /// Lays the press overlay over a stored snapshot, on two conditions: it is
+    /// still fresh, and the stored state has not moved on by itself.
+    ///
+    /// Nothing has to clear the marker for this to stay honest — one whose
+    /// tunnel has since spoken is ignored from the next read on, and one whose
+    /// press led nowhere expires. The worst a lost clear can do is age out; it
+    /// can never leave the tile claiming a connection that is not there.
+    private static func applyPress(to snapshot: FatVpnWidgetSnapshot) -> FatVpnWidgetSnapshot {
+        guard let defaults, let direction = defaults.string(forKey: pressKey) else {
+            return snapshot
+        }
+        let at = defaults.double(forKey: pressAtKey)
+        guard at > 0 else { return snapshot }
+        let age = Date().timeIntervalSince1970 - at
+
+        var overlaid = snapshot
+        switch direction {
+        case "connecting":
+            // `error` is deliberately not on this list: it belongs to the
+            // *previous* session, and a connect still on its way up must not be
+            // drawn from it.
+            let tunnelSpeaksForItself = ["connected", "connecting", "preparing", "disconnecting"]
+                .contains(snapshot.state)
+            guard age < connectOptimism, !tunnelSpeaksForItself else { return snapshot }
+            overlaid.state = "connecting"
+        case "disconnecting":
+            guard age < stopOptimism, snapshot.state != "disconnected" else { return snapshot }
+            overlaid.state = "disconnecting"
+        default:
+            return snapshot
+        }
+        // Neither direction has a running session to count, and the stored
+        // start belongs to one that is on its way out or has not begun.
+        overlaid.connectedAt = nil
+        return overlaid
+    }
+
+    // MARK: - The parked action
+
+    /// Posted in-process the moment an action is parked, so an app that is
+    /// already running collects it there and then.
+    ///
+    /// Polling alone is not enough. The system performs the intent **in the
+    /// app's process**, and on the open-the-app path it does so *after* the app
+    /// is already active — i.e. after both places that poll have run (startup
+    /// and `AppLifecycleState.resumed`). The press would then sit here until the
+    /// user backgrounded and reopened the app, which is a button that does
+    /// nothing as far as anyone pressing it is concerned.
+    static let actionPosted = Notification.Name("fatvpn.widget.actionPosted")
+
+    static func park(_ action: FatVpnWidgetAction) {
+        guard let defaults else { return }
+        defaults.set(action.rawValue, forKey: actionKey)
+        defaults.set(Date().timeIntervalSince1970, forKey: actionAtKey)
+        NotificationCenter.default.post(name: actionPosted, object: nil)
+    }
+
+    /// Takes the parked action, leaving nothing behind.
+    static func takeParkedAction() -> FatVpnWidgetAction? {
+        guard let defaults, let raw = defaults.string(forKey: actionKey) else { return nil }
+        let at = defaults.double(forKey: actionAtKey)
+        defaults.removeObject(forKey: actionKey)
+        defaults.removeObject(forKey: actionAtKey)
+        // Cleared either way: an action too old to act on is also too old to
+        // keep, or it fires at some unrelated launch later on.
+        guard at > 0, Date().timeIntervalSince1970 - at < actionTTL else { return nil }
+        return FatVpnWidgetAction(rawValue: raw)
+    }
+
+    // MARK: - The press trail
+
+    /// A step-by-step trace of the press, written natively the moment each step
+    /// happens and drained into the Dart log on the app's next launch or resume.
+    ///
+    /// This exists because the question that killed three build cycles —
+    /// *did the intent run at all, and in which process?* — had no answer on the
+    /// device: the intent runs with no UI and no console, the Dart log starts
+    /// only once an engine does, and a process that is never launched writes
+    /// nothing anywhere. Each entry costs one `UserDefaults` write and survives
+    /// the writing process dying immediately afterwards.
+    static func trace(_ text: String) {
+        guard let defaults else { return }
+        var trail = defaults.stringArray(forKey: trailKey) ?? []
+        trail.append("\(stamp()) \(text)")
+        if trail.count > trailLimit {
+            trail.removeFirst(trail.count - trailLimit)
+        }
+        defaults.set(trail, forKey: trailKey)
+    }
+
+    /// Read once and cleared, so a trace is reported against exactly one launch.
+    static func takeTrail() -> [String] {
+        guard let defaults,
+              let trail = defaults.stringArray(forKey: trailKey),
+              !trail.isEmpty else { return [] }
+        defaults.removeObject(forKey: trailKey)
+        return trail
+    }
+
+    // MARK: - Plumbing
+
+    static func reloadWidgets() {
+        #if canImport(WidgetKit)
+        if #available(iOS 14.0, *) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        #endif
+    }
+
+    private static let stampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func stamp() -> String { stampFormatter.string(from: Date()) }
+
+    private static func date(from value: Any?) -> Date? {
+        guard let millis = (value as? NSNumber)?.doubleValue, millis > 0 else { return nil }
+        return Date(timeIntervalSince1970: millis / 1000)
+    }
+}

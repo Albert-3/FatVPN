@@ -183,6 +183,8 @@ class HomeWidgetBridge {
     _snapshot = const HomeWidgetSnapshot();
     _published = null;
     _unsupported = false;
+    onActionAvailable = null;
+    channel.setMethodCallHandler(null);
   }
 
   /// Patches the snapshot and pushes it to the platform when something actually
@@ -231,17 +233,73 @@ class HomeWidgetBridge {
         clearExpiresAt: true,
       );
 
+  /// Called when the platform says a widget tap is waiting to be collected —
+  /// see [listenForActions].
+  VoidCallback? onActionAvailable;
+
+  /// Listens for taps the platform parks while this app is already running.
+  ///
+  /// The poll ([takePendingAction] on launch and on resume) cannot be the only
+  /// path on iOS. The power button is an App Intent performed **in this
+  /// process**, and on iOS 17 the system performs it *after* the app it opened
+  /// is already active — i.e. after both polls have run. Without this the press
+  /// would sit in the App Group until the user backgrounded and reopened the
+  /// app, which is a button that does nothing as far as anyone pressing it is
+  /// concerned.
+  void listenForActions() {
+    channel.setMethodCallHandler((call) async {
+      if (call.method != 'actionAvailable') {
+        throw MissingPluginException();
+      }
+      onActionAvailable?.call();
+      return null;
+    });
+  }
+
+  /// Drains the native trace of the last widget press into the app's log.
+  ///
+  /// The press runs with no UI and no console reachable from the device, so
+  /// this is the only record of a press whose process died, or whose intent the
+  /// system never routed anywhere. Read once and cleared natively, so a trace is
+  /// reported against exactly one launch.
+  Future<void> reportPressTrail() async {
+    if (_unsupported) return;
+    try {
+      final trail = await channel.invokeListMethod<String>('takeBreadcrumbs');
+      if (trail == null || trail.isEmpty) return;
+      for (final step in trail) {
+        log.i('Widget press: $step');
+      }
+    } on MissingPluginException {
+      // A platform whose widget leaves no trail (Android writes none — its
+      // press lands in a broadcast receiver that can log for itself).
+    } catch (e) {
+      log.w('Could not read the widget press trail: $e');
+    }
+  }
+
   /// Takes the action a widget tap parked with the platform, leaving nothing
   /// behind. Null when there is none.
   ///
-  /// The Android widget delivers its taps as `fatvpn://widget/...` links and
-  /// parks nothing, so this answers null there. It stays as the half of the
-  /// contract a platform would use if it could not carry a URL with the tap.
+  /// This is how an iOS press arrives: the power button is an App Intent, which
+  /// may ask the system to open its app but cannot hand that app a URL, so the
+  /// request is left in the shared App Group and collected here. The Android
+  /// widget delivers its taps as `fatvpn://widget/...` links and parks nothing,
+  /// so this answers null there.
   Future<HomeWidgetAction?> takePendingAction() async {
     if (_unsupported) return null;
     try {
       final name = await channel.invokeMethod<String>('takePendingAction');
       if (name == null || name.isEmpty) return null;
+      // The press's own haptic, and the only one it gets on iOS 17.
+      //
+      // There the power button opens the app rather than working in the
+      // background, and the native side deliberately stays silent: a widget
+      // extension has no vibromotor at all, and the app's own process has no
+      // usable one until it is actually in front of the user — which is exactly
+      // now. The iOS 18 press never reaches this line: it is served entirely in
+      // the background and buzzes there instead.
+      unawaited(HapticFeedback.mediumImpact());
       return homeWidgetActionFromName(name);
     } on MissingPluginException {
       // An older platform build (or a desktop one) that only knows `publish`.

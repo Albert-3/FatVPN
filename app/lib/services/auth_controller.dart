@@ -219,9 +219,17 @@ class AuthController extends ChangeNotifier {
       unawaited(_refreshNow());
     }
 
-    // A widget tap the platform may be holding for us — see [pollWidgetAction].
-    // Before the deep link, so a parked tap is never overtaken by one arriving
-    // as a URL.
+    // A widget tap the platform is holding for us (the iOS App Intent — see
+    // [pollWidgetAction]). Before the deep link, because on iOS this is the path
+    // that actually carries a widget tap.
+    //
+    // Both halves matter: the listener catches a press made while the app is
+    // alive — the intent runs in our own process, *after* the resume callback
+    // has already polled — and the poll catches the press that cold-started us.
+    HomeWidgetBridge.instance.onActionAvailable = () {
+      unawaited(pollWidgetAction());
+    };
+    HomeWidgetBridge.instance.listenForActions();
     await pollWidgetAction();
 
     _linkSubscription = _appLinks.uriLinkStream.listen(_handleUri);
@@ -233,12 +241,17 @@ class AuthController extends ChangeNotifier {
 
   /// Picks up a widget tap that the platform parked instead of deep-linking.
   ///
-  /// Called on launch and on every resume (`main.dart`), since the app is
-  /// frequently already running when the user taps its widget. The Android
-  /// widget delivers its taps as `fatvpn://widget/...` links and parks nothing,
-  /// so this is a no-op there — it stays as the platform-side half of the
-  /// contract, for a platform that cannot carry a URL.
+  /// On iOS the widget's power button is an App Intent: it can ask the system
+  /// to open the app, but not to open a URL, so the action is left in the shared
+  /// App Group and collected here — on launch, and on every resume
+  /// (`main.dart`), since the app is frequently already running when the user
+  /// taps its widget. The Android widget delivers its taps as
+  /// `fatvpn://widget/...` links and parks nothing, so this is a no-op there.
   Future<void> pollWidgetAction() async {
+    // The native press trace first: it narrates the very launch that is
+    // collecting it, and it is the only record left behind by a press whose
+    // process died or whose intent the system never routed anywhere.
+    await HomeWidgetBridge.instance.reportPressTrail();
     final action = await HomeWidgetBridge.instance.takePendingAction();
     if (action == null) return;
     log.i('Widget action collected from the platform: ${action.name}');

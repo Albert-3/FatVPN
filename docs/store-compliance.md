@@ -85,7 +85,7 @@
 
 | Пункт | Статус |
 |---|---|
-| `PrivacyInfo.xcprivacy` в каждом bundle (app, PacketTunnel) | ✅ коммит `6c34233`; сборка падает, если файл не доехал до `.ipa`. Третий манифест (виджет) удалён вместе с iOS-виджетом 2026-08-01 |
+| `PrivacyInfo.xcprivacy` в каждом bundle (app, PacketTunnel, FatVpnWidget) | ✅ коммит `6c34233`; сборка падает, если файл не доехал до `.ipa`. Манифест виджета вернулся вместе с виджетом 2026-08-01 — он объявляет только App-Group-`UserDefaults` (`1C8F.1`): виджет ничего не собирает и в сеть не ходит |
 | Export compliance | ✅ `ITSAppUsesNonExemptEncryption=false` в `Info.plist`, с обоснованием в комментарии |
 | Имя на домашнем экране | ✅ `FatVPN` (было «Fatvpn App») |
 | Privacy Policy URL | ✅ `https://api.fatklyuchi.space/privacy` — **после деплоя Caddy**, см. §4 |

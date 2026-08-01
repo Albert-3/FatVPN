@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	The App Group is the whole of this extension's access to the rest of the
+	product: the tile is drawn from a snapshot the app and the packet-tunnel
+	extension write there, and a press leaves its request in the same container.
+
+	Deliberately nothing else. NetworkExtension is not here because Apple does
+	not issue it to a widget's App ID — which is why the power button's intent
+	is routed into the app's process instead of touching the tunnel from here.
+
+	If the entitlement is ever stripped at signing, nothing fails loudly:
+	UserDefaults(suiteName:) simply returns nil and the tile shows its "open the
+	app" state forever. codemagic.yaml checks the re-signed .ipa for it rather
+	than trusting this file.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.fatvpn.fatvpnApp</string>
+	</array>
+</dict>
+</plist>

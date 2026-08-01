@@ -175,4 +175,107 @@ void main() {
       expect(calls.length, 2);
     });
   });
+
+  group('a press the platform parked', () {
+    late List<MethodCall> calls;
+    late List<MethodCall> platformCalls;
+
+    setUp(() {
+      calls = [];
+      platformCalls = [];
+      HomeWidgetBridge.instance.resetForTest();
+      // HapticFeedback goes out over SystemChannels.platform, so the buzz is
+      // observable without a device.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        platformCalls.add(call);
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        ..setMockMethodCallHandler(HomeWidgetBridge.channel, null)
+        ..setMockMethodCallHandler(SystemChannels.platform, null);
+      HomeWidgetBridge.instance.resetForTest();
+    });
+
+    void mockPlatform(Future<Object?> Function(MethodCall) reply) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(HomeWidgetBridge.channel, (call) async {
+        calls.add(call);
+        return reply(call);
+      });
+    }
+
+    test('a collected action buzzes, because iOS 17 has no other chance to',
+        () async {
+      // The whole point of the split: on iOS 17 the press opens the app and the
+      // native side stays silent — a widget extension has no vibromotor, and the
+      // app's process has no usable one until it is in front of the user, which
+      // is this moment. If this buzz goes, that press has none at all.
+      mockPlatform((call) async => call.method == 'takePendingAction' ? 'toggle' : null);
+
+      expect(await HomeWidgetBridge.instance.takePendingAction(),
+          HomeWidgetAction.toggle);
+      expect(
+        platformCalls.map((c) => c.arguments),
+        contains('HapticFeedbackType.mediumImpact'),
+      );
+    });
+
+    test('nothing parked, nothing buzzes', () async {
+      // takePendingAction is polled on every resume. A buzz on an empty poll
+      // would have the phone tick each time the user came back to the app.
+      mockPlatform((call) async => null);
+
+      expect(await HomeWidgetBridge.instance.takePendingAction(), isNull);
+      expect(platformCalls, isEmpty);
+    });
+
+    test('the platform can announce a press the app is already running for',
+        () async {
+      // The listener half. The poll alone misses the press made while the app is
+      // alive: on iOS the intent runs in this very process, *after* the resume
+      // callback has already polled.
+      mockPlatform((call) async => null);
+      var announced = 0;
+      HomeWidgetBridge.instance.onActionAvailable = () => announced++;
+      HomeWidgetBridge.instance.listenForActions();
+
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        HomeWidgetBridge.channel.name,
+        HomeWidgetBridge.channel.codec
+            .encodeMethodCall(const MethodCall('actionAvailable')),
+        (_) {},
+      );
+
+      expect(announced, 1);
+    });
+
+    test('the native press trail is drained once', () async {
+      // Read once and cleared natively; this only checks that the app asks, and
+      // asks before it takes the action — the trail narrates the very launch
+      // that is collecting it.
+      mockPlatform((call) async {
+        if (call.method == 'takeBreadcrumbs') return <String>['press → app copy'];
+        return null;
+      });
+
+      await HomeWidgetBridge.instance.reportPressTrail();
+
+      expect(calls.map((c) => c.method), ['takeBreadcrumbs']);
+    });
+
+    test('a platform with no trail to give is not an error', () async {
+      // Android writes none: its press lands in a broadcast receiver that logs
+      // for itself.
+      mockPlatform((call) async => throw MissingPluginException('no trail here'));
+
+      await HomeWidgetBridge.instance.reportPressTrail();
+
+      expect(calls.map((c) => c.method), ['takeBreadcrumbs']);
+    });
+  });
 }
