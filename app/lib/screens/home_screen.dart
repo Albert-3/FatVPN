@@ -84,6 +84,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   HomeWidgetAction? _pendingWidgetAction;
   // Whether this tap has already paid for one more attempt at the server list.
   bool _widgetActionRetried = false;
+  // True when the pending widget action is the tap that launched the app — the
+  // "app was closed" case, which connects to the best server overall instead
+  // of resuming the last pick (see [_connectForWidget]).
+  bool _widgetActionLaunchedApp = false;
 
   bool get _connected => _vpn.isConnected;
 
@@ -108,6 +112,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // the link resolves during `AuthController.start()`, long before this
     // screen exists, so the action is waiting rather than arriving.
     _pendingWidgetAction = widget.auth.consumeWidgetAction();
+    _widgetActionLaunchedApp = _pendingWidgetAction != null;
     // Signing out (by hand, or because the server rejected the refresh) must
     // take the tunnel down with it — see [AuthController.onSessionDropped].
     widget.auth.onSessionDropped = _stopTunnelOnSignOut;
@@ -128,6 +133,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final action = widget.auth.consumeWidgetAction();
     if (action == null) return;
     _pendingWidgetAction = action;
+    _widgetActionLaunchedApp = false;
     // A fresh tap deserves a fresh attempt at the server list, however the
     // last one ended — see [_maybeRunWidgetAction].
     _widgetActionRetried = false;
@@ -170,26 +176,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     switch (action) {
       case HomeWidgetAction.connect:
         if (_isActive) return;
-        await _connectBestForWidget();
+        await _connectForWidget();
       case HomeWidgetAction.disconnect:
         if (_vpn.state == VpnConnectionState.disconnected) return;
         await _vpn.disconnect();
       case HomeWidgetAction.toggle:
         if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
+          unawaited(Haptics.powerToggle());
           await _vpn.disconnect();
           return;
         }
-        await _connectBestForWidget();
+        await _connectForWidget();
     }
   }
 
-  /// A widget-initiated connect always goes to the fastest node overall — the
-  /// in-app country choice is deliberately ignored (user decision, 2026-08-01):
-  /// a widget press means "protect me now", not "resume my last pick". Same
-  /// rule as [WidgetConnectRunner], which serves the paths that bypass this
-  /// screen (Android's background service, the iOS intent when it works). The
-  /// UI flips to "best server" mode so the card shows the country actually
-  /// connected; the stored in-app pick survives for manual use.
+  /// Where a widget-initiated connect goes (user decision, 2026-08-01, refined
+  /// the same day): with the app **closed**, the press means "protect me now"
+  /// — the fastest node overall, the in-app country choice ignored; with the
+  /// app already running, the press continues the last pick, exactly like the
+  /// in-app power button. "Closed" is read off [_widgetActionLaunchedApp]:
+  /// this screen exists because the tap launched the app.
+  Future<void> _connectForWidget() {
+    if (!_widgetActionLaunchedApp) {
+      unawaited(Haptics.powerToggle());
+      return _connectCurrentSelection();
+    }
+    return _connectBestForWidget();
+  }
+
+  /// The cold-start half of [_connectForWidget]: the fastest node overall,
+  /// same rule as [WidgetConnectRunner], which serves the paths that bypass
+  /// this screen (Android's background service, the iOS intent when it
+  /// works). The UI flips to "best server" mode so the card shows the country
+  /// actually connected; the stored in-app pick survives for manual use.
   Future<void> _connectBestForWidget() async {
     final session = widget.auth.session;
     if (session == null || _servers.isEmpty) return;

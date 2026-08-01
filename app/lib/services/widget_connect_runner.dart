@@ -177,8 +177,11 @@ class WidgetConnectRunner {
 
   /// Always the fastest node overall — the in-app country choice is
   /// deliberately ignored here (user decision, 2026-08-01): a widget press
-  /// with the app closed means "protect me now", not "resume my last pick".
-  /// The choice itself stays on disk untouched, for the app's own use.
+  /// with the app **closed** means "protect me now", not "resume my last
+  /// pick" — and this runner exists precisely for the app-is-not-running
+  /// paths. A press that reaches the running app's screen instead honours the
+  /// last pick there ([HomeScreen._connectForWidget]). The choice itself
+  /// stays on disk untouched, for the app's own use.
   Future<ServerCountry?> _connect(
     VpnController vpn,
     List<ServerCountry> servers,
