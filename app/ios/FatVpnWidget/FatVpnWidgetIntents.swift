@@ -75,6 +75,7 @@ struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
         // openAppWhenRun false, see there — cannot open the app either; all it
         // can do is park the request ("toggle": the app resolves the direction)
         // for the app's next launch or resume within the action's TTL.
+        FatVpnWidgetSnapshot.dropBreadcrumb("press → widget copy (fallback)")
         FatVpnWidgetSnapshot.requestAction("toggle")
         // Nothing has actually changed yet — the app collects this on its next
         // launch — but the tile must not redraw to exactly what it showed
@@ -86,10 +87,12 @@ struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
         )
         return .result()
         #else
+        FatVpnWidgetSnapshot.dropBreadcrumb("press → app copy")
         fatVpnWidgetPressFeedback()
         if let reason = await FatVpnWidgetAppToggle.run() {
             // Surfacing the app is the exception, and every time it happens it
             // now says why — see FatVpnWidgetSnapshot.handOverReasonKey.
+            FatVpnWidgetSnapshot.dropBreadcrumb("hand-over (\(reason)) → foreground")
             FatVpnWidgetSnapshot.recordHandOverReason(reason)
             // "connect", not "toggle": the toggle has already been resolved —
             // the tunnel is down and only the app can finish bringing it up.
@@ -99,6 +102,7 @@ struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
             WidgetCenter.shared.reloadAllTimelines()
             throw needsToContinueInForegroundError()
         }
+        FatVpnWidgetSnapshot.dropBreadcrumb("press handled in the background")
         return .result()
         #endif
     }
@@ -185,8 +189,12 @@ enum FatVpnWidgetAppToggle {
         guard let manager = managers.first else {
             // No saved configuration means the OS consent dialog has never been
             // accepted on this install, and that dialog needs a screen.
+            FatVpnWidgetSnapshot.dropBreadcrumb("run: no vpn configuration (asked twice)")
             return "no-vpn-configuration"
         }
+        FatVpnWidgetSnapshot.dropBreadcrumb(
+            "run: configs=\(managers.count) status=\(statusName(manager.connection.status))"
+        )
         switch manager.connection.status {
         case .connected, .connecting, .reasserting:
             // Stopping is not business logic, so no engine for it: the tunnel's
@@ -195,6 +203,7 @@ enum FatVpnWidgetAppToggle {
             // so quick that the tile should sit on "Connected" through it.
             FatVpnWidgetSnapshot.markToggleRequested("disconnecting")
             manager.connection.stopVPNTunnel()
+            FatVpnWidgetSnapshot.dropBreadcrumb("run: stopped the tunnel natively")
             return nil
         default:
             // A second press while the first is still working joins it rather
@@ -213,11 +222,90 @@ enum FatVpnWidgetAppToggle {
         }
     }
 
-    /// Runs the app's own connect path — `widgetConnectMain`, the entrypoint
-    /// Android's `WidgetConnectService` already uses — in a headless Flutter
-    /// engine, and waits for its verdict on the `fatvpn/widget_connect`
-    /// channel.
+    /// Runs the app's own connect path and waits for its verdict.
+    ///
+    /// Preferably on the **main** Flutter engine, over
+    /// `fatvpn/widget_connect_host` (registered in `main()`): the system
+    /// performs this intent by launching the full app, so by the time a
+    /// connect is wanted the app's own engine is already booting in this very
+    /// process — and a second AOT engine racing it is exactly the kind of
+    /// silent failure a background process can least afford. The headless
+    /// engine stays as the fallback for a main engine that never registers
+    /// its handler.
     private static func connectViaEngine() async -> String? {
+        switch await runOnMainEngine() {
+        case .verdict(let outcome):
+            FatVpnWidgetSnapshot.dropBreadcrumb("main engine verdict: \(outcome)")
+            return outcome == "handOverToApp" ? "runner-handed-over" : nil
+        case .timedOut:
+            // Same terms as the headless timeout below: no verdict is not a
+            // reason to raise the app — the tunnel is either on its way up or
+            // the next tap tries again.
+            FatVpnWidgetSnapshot.dropBreadcrumb("main engine: no verdict in time")
+            return nil
+        case .unreachable:
+            FatVpnWidgetSnapshot.dropBreadcrumb("main engine unreachable → headless engine")
+            return await runOnHeadlessEngine()
+        }
+    }
+
+    private enum HostedRun {
+        case verdict(String)
+        case timedOut
+        case unreachable
+    }
+
+    /// Marker the per-attempt timeout resumes the continuation with, so it can
+    /// never be mistaken for a reply.
+    private final class HostedRunTimeout {}
+
+    /// Asks the app engine's Dart side to run the connect, retrying while
+    /// Flutter boots — the intent regularly starts before `main()` has
+    /// registered the handler.
+    private static func runOnMainEngine() async -> HostedRun {
+        for _ in 0..<20 {
+            guard let channel = AppDelegate.widgetConnectHost else {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                continue
+            }
+            let reply: Any? = await withCheckedContinuation { continuation in
+                var resumed = false
+                let resumeOnce: (Any?) -> Void = { value in
+                    guard !resumed else { return }
+                    resumed = true
+                    continuation.resume(returning: value)
+                }
+                channel.invokeMethod("run", arguments: nil) { resumeOnce($0) }
+                Task {
+                    try? await Task.sleep(nanoseconds: verdictTimeout)
+                    resumeOnce(HostedRunTimeout())
+                }
+            }
+            if let unwrapped = reply, unwrapped is HostedRunTimeout { return .timedOut }
+            if let outcome = reply as? String { return .verdict(outcome) }
+            // FlutterMethodNotImplemented, a FlutterError, or an engine still
+            // wiring up: wait for the handler and ask again.
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return .unreachable
+    }
+
+    private static func statusName(_ status: NEVPNStatus) -> String {
+        switch status {
+        case .invalid: return "invalid"
+        case .disconnected: return "disconnected"
+        case .connecting: return "connecting"
+        case .connected: return "connected"
+        case .reasserting: return "reasserting"
+        case .disconnecting: return "disconnecting"
+        @unknown default: return "unknown(\(status.rawValue))"
+        }
+    }
+
+    /// The fallback: `widgetConnectMain` — the entrypoint Android's
+    /// `WidgetConnectService` already uses — in a headless Flutter engine,
+    /// with the verdict arriving on the `fatvpn/widget_connect` channel.
+    private static func runOnHeadlessEngine() async -> String? {
         let engine = FlutterEngine(
             name: "fatvpn-widget-connect",
             project: nil,
@@ -227,6 +315,7 @@ enum FatVpnWidgetAppToggle {
             // Could not even start the engine — the app can. A Dart entrypoint
             // that is not in the release snapshot looks exactly like this, which
             // is why the reason names the engine rather than the tunnel.
+            FatVpnWidgetSnapshot.dropBreadcrumb("headless engine did not start")
             return "engine-did-not-start"
         }
         GeneratedPluginRegistrant.register(with: engine)
@@ -266,6 +355,9 @@ enum FatVpnWidgetAppToggle {
 
         withExtendedLifetime(widgetChannel) {}
         engine.destroyContext()
+        FatVpnWidgetSnapshot.dropBreadcrumb(
+            "headless engine verdict: \(outcome ?? "none in time")"
+        )
         // A verdict that never came is not a reason to raise the app: the
         // tunnel is either on its way up (and the widget follows it via
         // patchTunnelState) or the next tap tries again.

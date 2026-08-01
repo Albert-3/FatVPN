@@ -317,6 +317,30 @@ class HomeWidgetBridge {
     }
   }
 
+  /// Drains the native step-by-step trace of the power button's press into the
+  /// log ("Share diagnostics" carries it from there).
+  ///
+  /// The trace is written by Swift into the App Group at the moment each step
+  /// happens (`FatVpnWidgetSnapshot.dropBreadcrumb`), which makes it the one
+  /// record that survives every failure mode this feature has actually shown a
+  /// device: an intent that never ran, a process that died mid-press, an
+  /// engine that never started. An empty trace after a press is itself the
+  /// answer — the button did not fire.
+  Future<void> reportBreadcrumbs() async {
+    if (_unsupported) return;
+    try {
+      final trail = await channel.invokeMethod<List<dynamic>>('takeBreadcrumbs');
+      if (trail == null || trail.isEmpty) return;
+      for (final line in trail) {
+        log.i('Widget trace: $line');
+      }
+    } on MissingPluginException {
+      // Android, and any iOS build older than this one.
+    } catch (e) {
+      log.w('Could not read the widget trace: $e');
+    }
+  }
+
   /// Sends the current snapshot to the platform, unless it is byte-for-byte
   /// what we sent last time.
   ///

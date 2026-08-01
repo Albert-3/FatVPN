@@ -7,6 +7,13 @@ import UIKit
   /// once nothing references it.
   private var widgetChannel: FlutterMethodChannel?
 
+  /// The widget power button's way of running a connect **on the app's own
+  /// engine** instead of spawning a headless one beside it — see
+  /// `FatVpnWidgetAppToggle.runOnMainEngine`. Static because the caller is a
+  /// static context with no reference to the delegate; nil until the main
+  /// engine is up, which the caller treats as "not yet, retry".
+  static private(set) var widgetConnectHost: FlutterMethodChannel?
+
   /// Observer for the widget power button firing inside *this* process — see
   /// [observeWidgetActionRequests].
   private var widgetActionObserver: NSObjectProtocol?
@@ -32,6 +39,10 @@ import UIKit
   private func registerWidgetChannel(_ registry: FlutterPluginRegistry) {
     guard let registrar = registry.registrar(forPlugin: "FatVpnWidgetChannel") else { return }
     widgetChannel = AppDelegate.attachWidgetChannel(to: registrar.messenger())
+    AppDelegate.widgetConnectHost = FlutterMethodChannel(
+      name: "fatvpn/widget_connect_host",
+      binaryMessenger: registrar.messenger()
+    )
     observeWidgetActionRequests()
   }
 
@@ -70,6 +81,11 @@ import UIKit
       // intent itself runs with no UI and no console the user can reach.
       case "takeHandOverReason":
         result(FatVpnWidgetSnapshot.takeHandOverReason())
+      // The native step-by-step trace of the last press(es), drained into the
+      // Dart log so "Share diagnostics" finally answers "did the intent run,
+      // and in which process" — the question builds 197 and 198 could not.
+      case "takeBreadcrumbs":
+        result(FatVpnWidgetSnapshot.takeBreadcrumbs())
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -81,7 +97,7 @@ import UIKit
   /// it to be noticed at the next poll.
   ///
   /// `FatVpnTogglePowerIntent` runs **in this process** (its
-  /// `LiveActivityIntent` conformance routes it here), and when it parks an
+  /// `AudioPlaybackIntent` conformance routes it here), and when it parks an
   /// action it may do so while the app is already active — after
   /// `AuthController.start()` and after the `resumed` lifecycle callback have
   /// both already looked in the mailbox and found it empty. Push, not poll, is

@@ -256,6 +256,49 @@ struct FatVpnWidgetSnapshot {
         return reason
     }
 
+    /// A step-by-step trace of the power button's press, written natively the
+    /// moment each step happens and drained into the Dart log on the app's next
+    /// launch or resume (`fatvpn/widget` → `takeBreadcrumbs`).
+    ///
+    /// This exists because two investigations in one day (builds 197 and 198)
+    /// died on the same question — *did the intent run at all, and in which
+    /// process?* — and nothing on the device could answer it: the intent runs
+    /// with no UI and no console, the Dart log starts only once an engine does,
+    /// and a process that crashes early or is never launched writes nothing.
+    /// Each entry costs one UserDefaults write and survives everything short of
+    /// the App Group itself — including the writing process dying right after.
+    static let breadcrumbsKey = "fatvpn.widget.breadcrumbs"
+    static let breadcrumbsMax = 60
+
+    static func dropBreadcrumb(_ text: String) {
+        guard let defaults = defaults else { return }
+        var trail = defaults.stringArray(forKey: breadcrumbsKey) ?? []
+        trail.append("\(breadcrumbStamp()) \(text)")
+        if trail.count > breadcrumbsMax {
+            trail.removeFirst(trail.count - breadcrumbsMax)
+        }
+        defaults.set(trail, forKey: breadcrumbsKey)
+    }
+
+    /// Read once and cleared, so a trace is reported against exactly one launch.
+    static func takeBreadcrumbs() -> [String] {
+        guard let defaults = defaults,
+              let trail = defaults.stringArray(forKey: breadcrumbsKey),
+              !trail.isEmpty else { return [] }
+        defaults.removeObject(forKey: breadcrumbsKey)
+        return trail
+    }
+
+    private static let breadcrumbFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func breadcrumbStamp() -> String {
+        breadcrumbFormatter.string(from: Date())
+    }
+
     /// Takes the parked action, leaving nothing behind. Called by the app (see
     /// the `fatvpn/widget` channel in AppDelegate) on launch and on every
     /// resume, since the app is often already running when its widget is

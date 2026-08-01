@@ -247,6 +247,10 @@ class AuthController extends ChangeNotifier {
   /// (`main.dart`), since the app is frequently already running when the user
   /// taps its widget.
   Future<void> pollWidgetAction() async {
+    // The native press trace first: it narrates the very launch that is
+    // collecting it, and it is the only record left behind by a press whose
+    // process died or whose intent never ran at all.
+    await HomeWidgetBridge.instance.reportBreadcrumbs();
     // Before taking the action, because the reason explains the very launch
     // that is collecting it: an action is parked here only when the press could
     // not be carried out in the background.
@@ -543,6 +547,15 @@ class AuthController extends ChangeNotifier {
     if (uri.scheme != deepLinkScheme) {
       return;
     }
+    // Every arrival is logged, key links redacted. Diagnostic, not decoration:
+    // on iOS "the app opened from a URL" vs "the app was launched to perform
+    // the widget's intent" are indistinguishable in the log without this line,
+    // and telling them apart is how the build-197 dead button was found
+    // (Flutter's own deep-link navigator used to betray the URL by crashing;
+    // FlutterDeepLinkingEnabled=false removed that accidental marker).
+    log.i(uri.host == homeWidgetLinkHost
+        ? 'Deep link arrived: $uri'
+        : 'Deep link arrived (key link, redacted)');
     // A widget tap is not a key. Without this branch the code below would take
     // `fatvpn://widget/connect` for a short token and ask the user to accept a
     // "key" named `connect` — every path segment of every fatvpn:// link used

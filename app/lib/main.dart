@@ -35,9 +35,47 @@ void main() {
     return false;
   };
   log.i('App started (${kReleaseMode ? 'release' : 'debug'})');
+  _registerWidgetConnectHost();
   // Lock the app to portrait — the UI is designed for vertical phones only.
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const FatVpnApp());
+}
+
+/// Lets the iOS widget's power button run its connect **on this engine**.
+///
+/// The button's intent is performed in the app's process, which the system
+/// launches whole — so by the time the intent wants a connect, this engine is
+/// already booting right beside it, and spawning a second (headless) engine in
+/// the same background process is a race this process cannot report losing.
+/// The native side (`FatVpnWidgetAppToggle.runOnMainEngine`) calls `run` here
+/// and falls back to the headless `widgetConnectMain` only if this handler
+/// never appears. Registered on Android too, where it simply is never called —
+/// `WidgetConnectService` owns its own engine there by design (the app process
+/// is usually not running at all when an Android widget button is pressed).
+void _registerWidgetConnectHost() {
+  const channel = MethodChannel('fatvpn/widget_connect_host');
+  Future<String>? inFlight;
+  channel.setMethodCallHandler((call) async {
+    if (call.method != 'run') {
+      throw MissingPluginException();
+    }
+    // A second press joins the run already going, exactly as the native side
+    // coalesces — two runners over one tunnel is never what a double-tap means.
+    inFlight ??= () async {
+      log.i('Widget connect: running on the app engine');
+      var outcome = WidgetConnectOutcome.failed;
+      try {
+        outcome = await WidgetConnectRunner().run();
+      } catch (e, stack) {
+        log.e('Widget connect: unhandled failure (app engine)', e, stack);
+      }
+      log.i('Widget connect: ${outcome.name} (app engine)');
+      await AppLogger.instance.flush();
+      return outcome.name;
+    }()
+        .whenComplete(() => inFlight = null);
+    return inFlight;
+  });
 }
 
 /// Second entrypoint of the app: the tunnel being brought up from a tap on the
