@@ -49,11 +49,11 @@ import UIKit
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  /// Every `fatvpn://` open while the process is alive.
-  ///
-  /// Still calls `super`, so Flutter's own deep-link path keeps working for the
-  /// warm case it already handles — the Dart side de-duplicates, and one press
-  /// arriving twice is a far smaller problem than one arriving never.
+  /// ⚠️ Kept, but on this app it never fires: `Info.plist` declares
+  /// `UIApplicationSceneManifest`, and a scene-based app receives URL opens in
+  /// its **scene** delegate instead — see SceneDelegate.swift, which is where
+  /// the links are actually caught. Left in place for the non-scene path
+  /// (and as the note that stops someone re-adding it as a "fix").
   override func application(
     _ app: UIApplication,
     open url: URL,
@@ -63,7 +63,9 @@ import UIKit
     return super.application(app, open: url, options: options)
   }
 
-  private static func rememberLaunchLink(_ url: URL) {
+  /// Records a `fatvpn://` open for Dart to collect. Called from the scene
+  /// delegate, which is the only place iOS actually delivers them here.
+  static func rememberLaunchLink(_ url: URL) {
     guard url.scheme == "fatvpn" else { return }
     pendingLaunchLink = url.absoluteString
     // Nudge an app that is already running, for the same reason the parked
