@@ -521,3 +521,88 @@ workflows:
       - app/build/ios/iphoneos/*.app
       # See ios-release: present only if the framework was rebuilt here.
       - app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework.zip
+
+  ios-simulator:
+    name: iOS build (simulator, for App Preview)
+    instance_type: mac_mini_m2
+    # Same reason as the others: a stale framework is built here.
+    max_build_duration: 120
+    # Exists for one question the phones in this project cannot answer.
+    #
+    # The widget's power button is served by an App Intent on iOS 18 and by a
+    # link below that, because on every device tried the intent's `perform()`
+    # never ran (see docs/home-widgets-spec.md §10). Testing the 18 path needs
+    # an iOS 18 device, and each attempt otherwise costs a TestFlight round
+    # trip. Codemagic's App Preview runs a *simulator* in the browser, where
+    # the iOS version is a dropdown — but it cannot run the .ipa the release
+    # workflow produces, because that is signed for real hardware. This
+    # workflow builds the simulator slice instead and hands it over zipped.
+    #
+    # ⚠️ What this can and cannot answer. WidgetKit and App Intents do run in
+    # the Simulator, so "did perform() run, and in which process" is testable
+    # here — that is the whole point. The tunnel is not: iOS Simulator has no
+    # NetworkExtension packet-tunnel support, so a connect will always fail,
+    # and the widget only draws its button once the app has a session, which
+    # means signing in inside the preview first.
+    environment:
+      flutter: 3.44.4
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Pull Git LFS files (Libbox.xcframework binaries)
+        script: |
+          git lfs install
+          git lfs pull
+      - name: Check the framework carries the Xray bridge
+        script: |
+          # Unlike the other workflows this one does not build the framework on
+          # a miss: the committed xcframework carries a simulator slice, and if
+          # it is ever stale the release workflow is where that gets fixed.
+          bash app/packages/singbox_mm/tool/check_xray_bridge.sh
+      - name: Flutter pub get
+        script: |
+          cd app
+          flutter pub get
+      - name: Add PacketTunnel (Network Extension) target
+        script: |
+          gem install xcodeproj -v 1.27.0 --no-document
+          ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_widget_target.rb
+      - name: Attach the privacy manifests
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_privacy_manifests.rb
+      - name: Pod install
+        script: |
+          cd app/ios
+          pod install
+      - name: Build for the simulator
+        script: |
+          set -e
+          cd app
+          # Debug is the only mode Flutter builds for the iOS simulator, and it
+          # is the one that suits this anyway: the on-disk log the support
+          # bundle reads is written either way, and the press trail with it.
+          flutter build ios --simulator --debug
+      - name: Zip Runner.app for App Preview
+        script: |
+          set -e
+          cd app/build/ios/iphonesimulator
+          # App Preview takes a zipped .app. -y keeps symlinks inside the bundle
+          # rather than storing their targets again — the same reason the
+          # framework zips use it.
+          zip -ryq Runner.app.zip Runner.app
+          # Named here rather than trusted: a widget that never got embedded
+          # would produce a preview where the tile simply does not exist in the
+          # gallery, which reads as "the widget is broken" and is not.
+          echo "Bundles inside the simulator build:"
+          find Runner.app/PlugIns -maxdepth 1 -name '*.appex' -type d
+          if [ ! -d Runner.app/PlugIns/FatVpnWidget.appex ]; then
+            echo "FatVpnWidget.appex is missing — nothing to preview." >&2
+            exit 1
+          fi
+    artifacts:
+      - app/build/ios/iphonesimulator/Runner.app.zip
