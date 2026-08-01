@@ -523,7 +523,7 @@ workflows:
       - app/packages/singbox_mm/ios/Frameworks/Libbox.xcframework.zip
 
   ios-simulator:
-    name: iOS build (simulator, for App Preview)
+    name: iOS simulator smoke test (widget)
     instance_type: mac_mini_m2
     # Same reason as the others: a stale framework is built here.
     max_build_duration: 120
@@ -604,5 +604,108 @@ workflows:
             echo "FatVpnWidget.appex is missing — nothing to preview." >&2
             exit 1
           fi
+      - name: Smoke-test the widget in a simulator
+        script: |
+          set -e
+          # The first automated coverage the widget has ever had, and the reason
+          # this workflow earns its keep without App Preview: the runner has
+          # simulators, and `simctl` can install, launch, list extensions and
+          # open URLs. Three things become testable per build instead of per
+          # TestFlight round trip.
+          #
+          # ⚠️ What it cannot test, so nobody reads more into a green tick than
+          # is there: the App Intent. There is no simctl verb that presses a
+          # widget's button, and that press — on iOS 18 in particular — is the
+          # open question. This checks the plumbing around it.
+          APP="$PWD/app/build/ios/iphonesimulator/Runner.app"
+          BUNDLE_ID=com.fatvpn.fatvpnApp
+
+          # Newest available iOS runtime, and the newest iPhone that can run it.
+          # Chosen rather than pinned: the point is to exercise the highest iOS
+          # the runner offers, which is where the intent path lives.
+          # One line each, deliberately: these live inside a YAML block scalar,
+          # and a heredoc whose body starts at column 0 ends the block instead
+          # of feeding python.
+          RUNTIME="$(xcrun simctl list runtimes -j | python3 -c "import json,sys; rs=[r for r in json.load(sys.stdin)['runtimes'] if r['isAvailable'] and r.get('platform')=='iOS']; rs.sort(key=lambda r:[int(x) for x in r['version'].split('.')]); print(rs[-1]['identifier'] if rs else '')")"
+          DEVTYPE="$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; ds=[d for d in json.load(sys.stdin)['devicetypes'] if 'iPhone' in d['name']]; print(ds[-1]['identifier'] if ds else '')")"
+          if [ -z "$RUNTIME" ] || [ -z "$DEVTYPE" ]; then
+            echo "No iOS simulator runtime or iPhone device type on this runner." >&2
+            exit 1
+          fi
+          echo "Runtime: $RUNTIME"
+          echo "Device:  $DEVTYPE"
+
+          UDID="$(xcrun simctl create fatvpn-widget-test "$DEVTYPE" "$RUNTIME")"
+          cleanup() {
+            xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
+            xcrun simctl delete "$UDID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+
+          xcrun simctl install "$UDID" "$APP"
+
+          # --- 1. It launches, and stays launched -------------------------------
+          # This is the regression gate for build 205, which died on its first
+          # widget-snapshot publish with an ObjC exception (NSNull into
+          # UserDefaults) before any screen appeared. That crash would have been
+          # caught here in a minute instead of by a tester.
+          LAUNCH_OUT="$(xcrun simctl launch "$UDID" "$BUNDLE_ID")"
+          echo "$LAUNCH_OUT"
+          PID="${LAUNCH_OUT##*: }"
+          sleep 12
+          if ! ps -p "$PID" >/dev/null 2>&1; then
+            echo "The app died within 12s of launch on $RUNTIME." >&2
+            echo "This is the crash class build 205 shipped — read the log below." >&2
+            CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
+            [ -n "$CONTAINER" ] && cat "$CONTAINER"/Documents/fatvpn_logs/*.log 2>/dev/null || true
+            exit 1
+          fi
+          echo "App is still running after launch."
+
+          # --- 2. The widget extension registered with the system ---------------
+          # "The appex is inside the .app" and "iOS accepted it as a widget" are
+          # different claims. Only the second puts a tile in the gallery, and a
+          # user who cannot find the widget cannot tell the two apart.
+          echo "Extensions the simulator has registered for this app:"
+          xcrun simctl spawn "$UDID" pluginkit -mAvvv 2>/dev/null | grep -i fatvpn || true
+          if ! xcrun simctl spawn "$UDID" pluginkit -mAvvv 2>/dev/null | grep -qi FatVpnWidget; then
+            echo "FatVpnWidget did not register with PluginKit — the tile would not appear in the gallery." >&2
+            exit 1
+          fi
+          echo "FatVpnWidget is registered."
+
+          # --- 3. The press URL reaches Dart ------------------------------------
+          # This is the mechanism the iOS 17 button actually uses, end to end:
+          # openurl -> FlutterDeepLinkingEnabled -> didPushRouteInformation ->
+          # AuthController._handleUri. It is confirmed on a device (build 207);
+          # this keeps it confirmed on every build.
+          #
+          # A session is not needed for the *arrival* — the app logs the link and
+          # resolves the action before anything asks whether it can connect.
+          xcrun simctl openurl "$UDID" "fatvpn://widget/toggle"
+          sleep 8
+          CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
+          LOG="$(ls -t "$CONTAINER"/Documents/fatvpn_logs/*.log 2>/dev/null | head -n1 || true)"
+          if [ -z "$LOG" ]; then
+            echo "The app wrote no log file — cannot tell whether the link arrived." >&2
+            exit 1
+          fi
+          echo "--- tail of $LOG ---"
+          tail -n 40 "$LOG"
+          if ! grep -q "Widget action received: toggle" "$LOG"; then
+            echo "" >&2
+            echo "fatvpn://widget/toggle did not reach Dart as a widget action." >&2
+            echo "That is the iOS 17 button's entire mechanism — see powerControl" >&2
+            echo "in FatVpnWidget.swift and docs/home-widgets-spec.md section 10." >&2
+            exit 1
+          fi
+          echo "The press URL reached Dart and resolved to a widget action."
+
+          # Kept as an artifact: a picture of the home screen is the cheapest way
+          # to see that the build is a real app and not a black rectangle.
+          xcrun simctl io "$UDID" screenshot "$PWD/app/build/ios/iphonesimulator/simulator-home.png" || true
     artifacts:
       - app/build/ios/iphonesimulator/Runner.app.zip
+      - app/build/ios/iphonesimulator/simulator-home.png
