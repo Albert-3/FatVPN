@@ -19,12 +19,57 @@ import UIKit
 
   private var actionObserver: NSObjectProtocol?
 
+  /// The `fatvpn://` URL this process was opened with, held until Dart comes to
+  /// take it.
+  ///
+  /// Flutter's own delivery is a race on a cold start, and the widget's press
+  /// loses it. `defaultRouteName` does not carry the URL on iOS, and the push
+  /// through `didPushRouteInformation` happens while the Dart isolate is still
+  /// booting, so nothing is listening yet: a press that started the app arrived
+  /// nowhere. Measured, not assumed — the simulator smoke test opened
+  /// `fatvpn://widget/toggle` against a cold app and the log came back with
+  /// nothing but "App started".
+  ///
+  /// A mailbox removes the race rather than shortening it, exactly as the App
+  /// Group one does for a parked press: the native side always receives the
+  /// URL, and Dart reads it when it is ready (`takeLaunchLink`, polled on
+  /// launch and on every resume).
+  private static var pendingLaunchLink: String?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     observeWidgetActions()
+    // A launch *caused by* a URL carries it here and, on some paths, nowhere
+    // else. Recorded before Flutter starts, which is the whole point.
+    if let url = launchOptions?[.url] as? URL {
+      Self.rememberLaunchLink(url)
+    }
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// Every `fatvpn://` open while the process is alive.
+  ///
+  /// Still calls `super`, so Flutter's own deep-link path keeps working for the
+  /// warm case it already handles — the Dart side de-duplicates, and one press
+  /// arriving twice is a far smaller problem than one arriving never.
+  override func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    Self.rememberLaunchLink(url)
+    return super.application(app, open: url, options: options)
+  }
+
+  private static func rememberLaunchLink(_ url: URL) {
+    guard url.scheme == "fatvpn" else { return }
+    pendingLaunchLink = url.absoluteString
+    // Nudge an app that is already running, for the same reason the parked
+    // action posts one: by the time a warm open arrives, both places that poll
+    // have already run.
+    widgetChannel?.invokeMethod("actionAvailable", arguments: nil)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -72,6 +117,12 @@ import UIKit
         result(nil)
       case "takePendingAction":
         result(FatVpnWidgetStore.takeParkedAction()?.rawValue)
+      case "takeLaunchLink":
+        // Read once and cleared: a URL acted on twice would toggle the tunnel
+        // back to where it started, which looks exactly like a press that did
+        // nothing.
+        result(Self.pendingLaunchLink)
+        Self.pendingLaunchLink = nil
       case "takeBreadcrumbs":
         result(FatVpnWidgetStore.takeTrail())
       default:

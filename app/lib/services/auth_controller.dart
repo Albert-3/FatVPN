@@ -253,6 +253,14 @@ class AuthController extends ChangeNotifier {
     // collecting it, and it is the only record left behind by a press whose
     // process died or whose intent the system never routed anywhere.
     await HomeWidgetBridge.instance.reportPressTrail();
+    // Then the link the platform is holding. This is how a `fatvpn://` URL
+    // arrives when it is what *started* the app — Flutter's own delivery loses
+    // that race, so the native side records the open and we collect it here.
+    // Covers the widget's press and a key link from the bot alike.
+    final launchLink = await HomeWidgetBridge.instance.takeLaunchLink();
+    if (launchLink != null) {
+      await _handleUri(launchLink);
+    }
     final action = await HomeWidgetBridge.instance.takePendingAction();
     if (action == null) return;
     log.i('Widget action collected from the platform: ${action.name}');

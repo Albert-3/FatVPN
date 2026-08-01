@@ -278,6 +278,33 @@ class HomeWidgetBridge {
     }
   }
 
+  /// Takes the `fatvpn://` URL the platform is holding for us, leaving nothing
+  /// behind. Null when there is none.
+  ///
+  /// This is how a link reaches the app when the link is what *started* it.
+  /// Flutter's own delivery is a race there: `defaultRouteName` does not carry
+  /// the URL on iOS, and the push through `didPushRouteInformation` happens
+  /// while the Dart isolate is still booting, with nothing listening yet. The
+  /// simulator smoke test measured it — a cold `fatvpn://widget/toggle` arrived
+  /// nowhere at all.
+  ///
+  /// So the native side records every open and holds it; this reads it on
+  /// launch and on every resume. Android answers null: its widget delivers taps
+  /// through its own intent, and its deep links arrive the ordinary way.
+  Future<Uri?> takeLaunchLink() async {
+    if (_unsupported) return null;
+    try {
+      final raw = await channel.invokeMethod<String>('takeLaunchLink');
+      if (raw == null || raw.isEmpty) return null;
+      return Uri.tryParse(raw);
+    } on MissingPluginException {
+      return null;
+    } catch (e) {
+      log.w('Could not read the launch link: $e');
+      return null;
+    }
+  }
+
   /// Takes the action a widget tap parked with the platform, leaving nothing
   /// behind. Null when there is none.
   ///
