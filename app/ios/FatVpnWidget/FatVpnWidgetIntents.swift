@@ -1,6 +1,7 @@
 import AppIntents
 import WidgetKit
 #if !FATVPN_WIDGET_EXTENSION
+import AudioToolbox
 import Flutter
 import NetworkExtension
 #endif
@@ -76,6 +77,7 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
         )
         return .result()
         #else
+        fatVpnWidgetPressFeedback()
         let needsApp = await FatVpnWidgetAppToggle.run()
         if needsApp {
             // "connect", not "toggle": the toggle has already been resolved —
@@ -102,6 +104,23 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
 extension FatVpnTogglePowerIntent: ForegroundContinuableIntent {}
 
 #if !FATVPN_WIDGET_EXTENSION
+
+/// The tick under the power button, as far as iOS permits one.
+///
+/// ⚠️ Expect nothing from it on most presses, and do not spend a build cycle
+/// chasing it. The widget's own process has no haptics whatsoever, and this
+/// intent runs in the app's process **in the background**, where iOS hands the
+/// vibromotor to nobody: `UIFeedbackGenerator` and CoreHaptics are documented
+/// foreground-only, and this older system-sound route is merely the one call
+/// that is not outright unavailable there. It is one line, it cannot fail
+/// loudly, and it does fire on the press that ends in the foreground (the
+/// hand-over) — so it stays. Android is where a widget press actually buzzes;
+/// see `WidgetHaptics.kt` for the equivalent, and why even there the usage had
+/// to be `HARDWARE_FEEDBACK`.
+@available(iOS 17.0, *)
+private func fatVpnWidgetPressFeedback() {
+    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+}
 
 /// Toggles the tunnel from inside the app's process while nothing is on
 /// screen — the system launches the app in the background to perform the
