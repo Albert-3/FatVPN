@@ -149,20 +149,30 @@ struct FatVpnWidgetEntryView: View {
         .widgetURL(tileURL)
     }
 
-    /// What a tap *outside* the power button does — and, in practice, the tap
-    /// path that actually works on iOS 17.
+    /// What a tap *outside* the power button does — `nil` wherever the button
+    /// is real, and that `nil` is the whole point.
     ///
-    /// The tile's URL used to be a plain "open the app" on iOS 17, on the
-    /// theory that the interactive `Button` owns the toggling. A real device
-    /// (iPhone 11, iOS 17.6.1, builds 196–199) then showed the system never
-    /// performing that button's intent at all — under three different
-    /// conformance markers — with every press falling through to this URL. So
-    /// the URL *is* the toggle whenever a session exists: the worst case is
-    /// the app opening and immediately connecting, which is the promised
-    /// fallback, and if the intent ever does fire on some device, the button
-    /// consumes the tap first and this URL never sees it.
-    private var tileURL: URL {
-        snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
+    /// A `.widgetURL` laid on the tile makes the **entire** widget one tap
+    /// target on iOS 17 and swallows presses that land on a `Button(intent:)`
+    /// inside it (Apple Developer Forums thread 731758). That is what a device
+    /// showed for builds 196–199 (iPhone 11 / iOS 17.6.1): the intent's
+    /// `perform()` ran in neither process while every press opened the app via
+    /// this URL — read at the time as "the system refuses to route the intent"
+    /// and answered by trying three different conformance markers, when the
+    /// URL sitting over the button was enough to explain all of it.
+    ///
+    /// So on 17+ with a session there is no tile URL at all: the button owns
+    /// its own area, and a tap anywhere else falls through to WidgetKit's
+    /// default, which is "open the app" — exactly the promised behaviour, and
+    /// no URL is needed to get it. Without a session there is no button, and
+    /// the tile keeps `open` because the Dart side distinguishes
+    /// `widget/open` from a plain launch. Below 17 nothing changes: there is no
+    /// interactive button to conflict with, so the tile itself is the toggle.
+    private var tileURL: URL? {
+        if #available(iOSApplicationExtension 17.0, *) {
+            return snapshot.signedIn ? nil : FatVpnWidgetLink.open
+        }
+        return snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
     }
 
     /// `.top`, so the button sits at the top of the tile here too rather than
@@ -227,11 +237,13 @@ struct FatVpnWidgetEntryView: View {
     ///
     ///  * **iOS 17+** — a real `Button`, in every family. Its intent runs in
     ///    the app's process, launched in the background, and toggles the tunnel
-    ///    right there (see `FatVpnTogglePowerIntent`); the tile around it stays
-    ///    free to just open the app.
+    ///    right there (see `FatVpnTogglePowerIntent`); the tile around it
+    ///    carries **no** `widgetURL`, or it would eat this button's presses —
+    ///    see [tileURL]. A tap outside the button still opens the app, by
+    ///    WidgetKit's default.
     ///  * **iOS 16 and below** — a `Link` on a medium widget, and nothing at all
     ///    on a small one, where SwiftUI ignores links and the tile's own
-    ///    `widgetURL` is the toggle instead ([smallTileURL]).
+    ///    `widgetURL` is the toggle instead ([tileURL]).
     ///  * **No session** — not a button at all: the tile opens the app, which is
     ///    the only place the user can do anything about that.
     @ViewBuilder

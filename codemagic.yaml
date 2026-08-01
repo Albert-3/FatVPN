@@ -298,9 +298,53 @@ workflows:
           fi
           echo "Build number: $BUILD_NUMBER"
           cd app
+          # Teed to a file so the next step can read it back. `pipefail` is what
+          # keeps this a build step: a pipeline's exit code is its *last*
+          # command's, so without it `tee` succeeding would hide a failed
+          # `flutter build ipa` and the workflow would sail on to publishing.
+          set -o pipefail
           flutter build ipa --release \
             --build-number="$BUILD_NUMBER" \
-            --export-options-plist=/Users/builder/export_options.plist
+            --export-options-plist=/Users/builder/export_options.plist \
+            2>&1 | tee /tmp/flutter-build-ipa.log
+      - name: App Intents metadata — what the extractor said
+        script: |
+          # Deliberately not a gate: it prints and always exits 0.
+          #
+          # The entitlement check below proves Metadata.appintents is *in* the
+          # bundle, which proves nothing about its contents: when
+          # appintentsmetadataprocessor cannot make sense of a type it warns and
+          # silently leaves that type out, producing a perfectly well-formed
+          # metadata bundle with no intent in it. That is indistinguishable, on
+          # a device, from "the system declined to route the press" — and builds
+          # 196–199 were spent on the second theory without ever reading these
+          # lines. So surface them, on every build, next to the build that
+          # produced them.
+          LOG=/tmp/flutter-build-ipa.log
+          echo "=============================================================="
+          echo "  appintentsmetadataprocessor output"
+          echo "=============================================================="
+          if [ ! -f "$LOG" ]; then
+            echo "No build log at $LOG — the build step did not tee one."
+            exit 0
+          fi
+          # Two passes: the warnings and errors first, because they are the
+          # point, then every mention for context (a run with no diagnostics at
+          # all is itself worth seeing).
+          if grep -inE 'appintentsmetadataprocessor.*(warning|error)|(warning|error).*appintentsmetadataprocessor' "$LOG"; then
+            echo "--------------------------------------------------------------"
+            echo "^ Diagnostics above. A warning naming FatVpnTogglePowerIntent"
+            echo "  (or any protocol conformance on it) means the intent may be"
+            echo "  missing from the shipped metadata — the widget button would"
+            echo "  then be dead on a device with nothing else to show for it."
+          else
+            echo "No appintentsmetadataprocessor warnings or errors."
+          fi
+          echo "--------------------------------------------------------------"
+          echo "Every mention, for context:"
+          grep -in 'appintentsmetadataprocessor' "$LOG" || echo "  (none at all)"
+          echo "=============================================================="
+          exit 0
       - name: Verify App Group entitlement and privacy manifest survived signing
         script: |
           # An App ID without the App Groups capability does not necessarily

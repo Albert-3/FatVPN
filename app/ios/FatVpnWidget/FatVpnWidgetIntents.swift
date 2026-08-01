@@ -202,6 +202,7 @@ enum FatVpnWidgetAppToggle {
             // marker covers the gap until it does — a teardown is quick, but not
             // so quick that the tile should sit on "Connected" through it.
             FatVpnWidgetSnapshot.markToggleRequested("disconnecting")
+            await clearOnDemandBeforeStopping(manager)
             manager.connection.stopVPNTunnel()
             FatVpnWidgetSnapshot.dropBreadcrumb("run: stopped the tunnel natively")
             return nil
@@ -219,6 +220,37 @@ enum FatVpnWidgetAppToggle {
             // the tile must stop claiming otherwise.
             FatVpnWidgetSnapshot.clearToggleMarker()
             return reason
+        }
+    }
+
+    /// Takes the on-demand rule off the profile before a stop, exactly as
+    /// `SingboxMmPlugin.stopTunnel` does — set the flag, save, *then* stop.
+    ///
+    /// Without it a widget-initiated disconnect is undone by the system within
+    /// seconds: an on-demand rule (our kill-switch) exists precisely to raise
+    /// the tunnel again whenever it is down, and it does not care who stopped
+    /// it. The user sees the tile go to "Disconnected" and back to
+    /// "Connected" on its own, which reads as the button having done nothing.
+    ///
+    /// Nothing restores the rule here, and that is deliberate: every connect
+    /// goes through Dart → `SingboxMmPlugin.configure`, which writes
+    /// `isOnDemandEnabled` afresh from the current settings. Re-arming it on
+    /// this path would only race that write.
+    private static func clearOnDemandBeforeStopping(_ manager: NETunnelProviderManager) async {
+        guard manager.isOnDemandEnabled else { return }
+        manager.isOnDemandEnabled = false
+        do {
+            try await manager.saveToPreferences()
+            FatVpnWidgetSnapshot.dropBreadcrumb("run: cleared the on-demand rule")
+        } catch {
+            // Stopping anyway — a stop that the system may undo still beats no
+            // stop at all — but the breadcrumb has to say so, or the tunnel
+            // coming back up a moment later looks spontaneous and there is
+            // nothing on the device to read.
+            FatVpnWidgetSnapshot.dropBreadcrumb(
+                "run: could not clear on-demand (\(error.localizedDescription)) — "
+                    + "the system may raise the tunnel again"
+            )
         }
     }
 
