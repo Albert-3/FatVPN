@@ -651,7 +651,26 @@ workflows:
           LAUNCH_OUT="$(xcrun simctl launch "$UDID" "$BUNDLE_ID")"
           echo "$LAUNCH_OUT"
           PID="${LAUNCH_OUT##*: }"
-          sleep 12
+          # Wait for Dart to actually be up, rather than for a fixed number of
+          # seconds. A debug build on a freshly booted CI simulator took 26s to
+          # write its first log line, and the old fixed 12s sleep meant every
+          # check below ran against an app that had not finished starting —
+          # including the URL open, which then tested a race no user has.
+          CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
+          BOOTED=""
+          for _ in $(seq 1 40); do
+            if grep -qs "App started" "$CONTAINER"/Documents/fatvpn_logs/*.log; then
+              BOOTED=1
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$BOOTED" ]; then
+            echo "Dart never logged 'App started' — the app did not finish launching." >&2
+            cat "$CONTAINER"/Documents/fatvpn_logs/*.log 2>/dev/null || true
+            exit 1
+          fi
+          echo "Dart is up."
           if ! ps -p "$PID" >/dev/null 2>&1; then
             echo "The app died within 12s of launch on $RUNTIME." >&2
             echo "This is the crash class build 205 shipped — read the log below." >&2
@@ -687,7 +706,6 @@ workflows:
           # and a fresh process has to boot Flutter, open its log file and flush
           # before any of this is visible. A single short sleep read an empty
           # log and blamed the delivery.
-          CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
           LOG=""
           for _ in $(seq 1 20); do
             sleep 3
@@ -701,6 +719,15 @@ workflows:
           echo "--- tail of $LOG ---"
           tail -n 40 "$LOG"
           if ! grep -q "Widget action received: toggle" "$LOG"; then
+            # Everything the native side said about the link, which separates
+            # "iOS never delivered it" from "Dart never collected it". The App
+            # Group trail may be unavailable in a simulator, so these are read
+            # from the system log instead.
+            echo "" >&2
+            echo "--- native link trace (system log) ---" >&2
+            xcrun simctl spawn "$UDID" log show --last 5m --style compact \
+              --predicate 'eventMessage CONTAINS "[fatvpn]"' 2>/dev/null | tail -n 40 >&2 || true
+            echo "--------------------------------------" >&2
             echo "" >&2
             echo "fatvpn://widget/toggle did not reach Dart as a widget action." >&2
             echo "That is the iOS 17 button's entire mechanism — see powerControl" >&2

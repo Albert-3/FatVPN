@@ -31,15 +31,21 @@ class SceneDelegate: FlutterSceneDelegate {
     willConnectTo session: UISceneSession,
     options connectionOptions: UIScene.ConnectionOptions
   ) {
+    // Traced even when empty, which is the case that matters: it separates
+    // "the scene connected without a URL" from "this callback never ran".
+    FatVpnWidgetStore.trace("scene willConnect, urls=\(connectionOptions.urlContexts.count)")
+    NSLog("[fatvpn] scene willConnect, urls=%d", connectionOptions.urlContexts.count)
     for context in connectionOptions.urlContexts {
-      AppDelegate.rememberLaunchLink(context.url)
+      AppDelegate.rememberLaunchLink(context.url, from: "scene willConnect")
     }
     super.scene(scene, willConnectTo: session, options: connectionOptions)
   }
 
   override func scene(_ scene: UIScene, openURLContexts urlContexts: Set<UIOpenURLContext>) {
+    FatVpnWidgetStore.trace("scene openURLContexts, urls=\(urlContexts.count)")
+    NSLog("[fatvpn] scene openURLContexts, urls=%d", urlContexts.count)
     for context in urlContexts {
-      AppDelegate.rememberLaunchLink(context.url)
+      AppDelegate.rememberLaunchLink(context.url, from: "scene openURLContexts")
     }
     super.scene(scene, openURLContexts: urlContexts)
   }

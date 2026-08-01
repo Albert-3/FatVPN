@@ -65,7 +65,19 @@ import UIKit
 
   /// Records a `fatvpn://` open for Dart to collect. Called from the scene
   /// delegate, which is the only place iOS actually delivers them here.
-  static func rememberLaunchLink(_ url: URL) {
+  ///
+  /// The trace is not decoration. "The link did not reach Dart" has three
+  /// possible causes — iOS never delivered it, this never ran, or Dart never
+  /// collected it — and four builds were spent unable to tell them apart. This
+  /// line, drained into the app's log on the next poll, separates the first two
+  /// from the third.
+  static func rememberLaunchLink(_ url: URL, from source: String = "app delegate") {
+    // Both, deliberately. The App Group trail is what a user's "Share
+    // diagnostics" carries off a real phone, and NSLog is what survives a
+    // simulator where the App Group container may not exist at all — a silent
+    // no-op there would leave CI as blind as the four builds before it.
+    FatVpnWidgetStore.trace("link → \(source): \(url.scheme ?? "?")://\(url.host ?? "?")")
+    NSLog("[fatvpn] link → %@: %@", source, url.absoluteString)
     guard url.scheme == "fatvpn" else { return }
     pendingLaunchLink = url.absoluteString
     // Nudge an app that is already running, for the same reason the parked
