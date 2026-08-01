@@ -205,10 +205,10 @@ struct FatVpnWidgetEntryView: View {
 
     /// The power button as a tap target, by what the OS allows.
     ///
-    ///  * **iOS 17+** — a real `Button`, in every family. It runs in the widget
-    ///    process, parks the request in the App Group and brings the app forward
-    ///    (see `FatVpnTogglePowerIntent`); the tile around it stays free to just
-    ///    open the app.
+    ///  * **iOS 17+** — a real `Button`, in every family. Its intent runs in
+    ///    the app's process, launched in the background, and toggles the tunnel
+    ///    right there (see `FatVpnTogglePowerIntent`); the tile around it stays
+    ///    free to just open the app.
     ///  * **iOS 16 and below** — a `Link` on a medium widget, and nothing at all
     ///    on a small one, where SwiftUI ignores links and the tile's own
     ///    `widgetURL` is the toggle instead ([smallTileURL]).

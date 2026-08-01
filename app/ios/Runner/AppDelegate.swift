@@ -75,11 +75,12 @@ import UIKit
   /// Tells Dart the instant the power button's intent runs, instead of leaving
   /// it to be noticed at the next poll.
   ///
-  /// `FatVpnTogglePowerIntent` sets `openAppWhenRun`, which means the system
-  /// performs it **in this process**, and it does that once the app is already
-  /// active — after `AuthController.start()` and after the `resumed` lifecycle
-  /// callback have both already looked in the mailbox and found it empty. Push,
-  /// not poll, is what makes the press take effect on the press.
+  /// `FatVpnTogglePowerIntent` runs **in this process** (its
+  /// `LiveActivityIntent` conformance routes it here), and when it parks an
+  /// action it may do so while the app is already active — after
+  /// `AuthController.start()` and after the `resumed` lifecycle callback have
+  /// both already looked in the mailbox and found it empty. Push, not poll, is
+  /// what makes the press take effect on the press.
   private func observeWidgetActionRequests() {
     if let observer = widgetActionObserver {
       NotificationCenter.default.removeObserver(observer)

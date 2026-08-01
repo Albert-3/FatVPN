@@ -76,10 +76,11 @@ add_source_once(runner_target, shared_ref, 'Runner')
 # an intent the app's process is asked to perform must be a type that binary
 # contains, or the press does nothing whatsoever — no launch, no error, exactly
 # what a device showed with widgets that rendered perfectly. Second, the app's
-# copy conforms to ForegroundContinuableIntent (unavailable to extensions),
-# which is what routes the intent into the app's process *in the background* —
-# the button toggling the tunnel without the app appearing depends on the
-# app-side membership this block wires.
+# copy is the one that actually toggles the tunnel: the LiveActivityIntent
+# conformance on the type (visible in the widget bundle's metadata, which is
+# what the system reads at the press) routes the intent into the app's process
+# *in the background* — the button toggling the tunnel without the app
+# appearing depends on the app-side membership this block wires.
 #
 # It is gated `@available(iOS 17.0, ...)`, above the app's 13.0 deployment
 # target, and AppIntents.framework is weak-linked below for the same reason: an
