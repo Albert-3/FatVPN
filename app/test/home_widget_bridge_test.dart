@@ -176,6 +176,37 @@ void main() {
     });
   });
 
+  test('the published payload carries nulls, and the platform must survive them',
+      () {
+    // This is a contract test, not a style one. A session with no location
+    // picked and no clock running publishes null for four of its eight fields,
+    // and on iOS those cross the channel as NSNull — which UserDefaults refuses
+    // with an ObjC exception no Swift code can catch. Build 205 died on exactly
+    // that, on its first publish, before a screen appeared; the guard now lives
+    // in FatVpnWidgetStore.plistSafe.
+    //
+    // So: if this ever stops emitting nulls, that guard has lost its reason to
+    // exist and someone should be told, rather than finding out from a crash
+    // report a build later.
+    final map = const HomeWidgetSnapshot(signedIn: true).toMap();
+
+    expect(map['locationLabel'], isNull);
+    expect(map['flagEmoji'], isNull);
+    expect(map['connectedAtMillis'], isNull);
+    expect(map['expiresAtMillis'], isNull);
+    // And the keys are present rather than omitted — which is what makes the
+    // values reach the platform at all.
+    expect(
+      map.keys,
+      containsAll(<String>[
+        'locationLabel',
+        'flagEmoji',
+        'connectedAtMillis',
+        'expiresAtMillis',
+      ]),
+    );
+  });
+
   group('a press the platform parked', () {
     late List<MethodCall> calls;
     late List<MethodCall> platformCalls;

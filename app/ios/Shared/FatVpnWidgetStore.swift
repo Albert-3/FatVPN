@@ -118,11 +118,45 @@ enum FatVpnWidgetStore {
         return applyPress(to: snapshot)
     }
 
-    /// Stores what the app published, verbatim — the payload crossing
-    /// `fatvpn/widget` is already this shape.
+    /// Stores what the app published.
+    ///
+    /// ⚠️ Not verbatim, and that is the whole point of [plistSafe]: the payload
+    /// crossing `fatvpn/widget` carries Dart `null` for every field the session
+    /// does not have yet — no location picked, no clock running, no expiry
+    /// known — and Flutter's codec renders those as `NSNull`. `UserDefaults`
+    /// takes property lists only, and `NSNull` is not one: it raises
+    /// `NSInvalidArgumentException`, which in Swift is an ObjC exception nobody
+    /// can catch, i.e. `SIGABRT`.
+    ///
+    /// That is not a hypothetical. Build 205 died exactly here on an iPhone 11
+    /// (crash 2026-08-01, `FatVpnWidgetStore.write` ← `attachWidgetChannel`),
+    /// on the app's very first publish, before any screen appeared — and the
+    /// same line, unfiltered, was in the implementation this one replaced. It
+    /// was only ever dormant because the removal of the widget took the channel
+    /// with it, so nothing on iOS called this at all.
     static func write(_ dictionary: [String: Any]) {
-        defaults?.set(dictionary, forKey: snapshotKey)
+        defaults?.set(plistSafe(dictionary), forKey: snapshotKey)
         reloadWidgets()
+    }
+
+    /// Drops what `UserDefaults` would abort over, rather than translating it.
+    ///
+    /// A dropped key and a key holding null mean the same thing to every reader
+    /// here — `stored["locationLabel"] as? String` is nil either way, and
+    /// [write] replaces the whole record, so a field that has gone away really
+    /// does go away. Nested containers are walked too: the payload is flat
+    /// today, and a future field that is not would otherwise reintroduce this
+    /// crash somewhere no one is looking.
+    private static func plistSafe(_ value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.compactMapValues { element in
+                element is NSNull ? nil : plistSafe(element)
+            }
+        }
+        if let array = value as? [Any] {
+            return array.filter { !($0 is NSNull) }.map(plistSafe)
+        }
+        return value
     }
 
     /// Overwrites the tunnel half of the snapshot, leaving what only the app
