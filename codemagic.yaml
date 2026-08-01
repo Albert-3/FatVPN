@@ -682,9 +682,18 @@ workflows:
           # A session is not needed for the *arrival* — the app logs the link and
           # resolves the action before anything asks whether it can connect.
           xcrun simctl openurl "$UDID" "fatvpn://widget/toggle"
-          sleep 8
+          # Polled rather than slept once. The URL can *cold-start* the app —
+          # that is what the simulator did on the run that first caught this —
+          # and a fresh process has to boot Flutter, open its log file and flush
+          # before any of this is visible. A single short sleep read an empty
+          # log and blamed the delivery.
           CONTAINER="$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)"
-          LOG="$(ls -t "$CONTAINER"/Documents/fatvpn_logs/*.log 2>/dev/null | head -n1 || true)"
+          LOG=""
+          for _ in $(seq 1 20); do
+            sleep 3
+            LOG="$(ls -t "$CONTAINER"/Documents/fatvpn_logs/*.log 2>/dev/null | head -n1 || true)"
+            [ -n "$LOG" ] && grep -q "Widget action received: toggle" "$LOG" && break
+          done
           if [ -z "$LOG" ]; then
             echo "The app wrote no log file — cannot tell whether the link arrived." >&2
             exit 1

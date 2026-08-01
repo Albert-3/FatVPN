@@ -217,9 +217,39 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     _locale.addListener(_syncNotifications);
     _locale.addListener(_syncHomeWidget);
     _auth.start();
+    _handleLaunchRoute();
     _locale.load();
     _connectionSettings.load();
     _notifications.init().then((_) => _syncNotifications());
+  }
+
+  /// The link the app was *launched by*, which [didPushRouteInformation] never
+  /// sees.
+  ///
+  /// Flutter reports a push into a live app through that callback, but the URL
+  /// that started the process arrives once, as the initial route, and only
+  /// through `defaultRouteName`. Nothing read it — so a widget press worked
+  /// while the app was running and did nothing at all when it was not, which is
+  /// the ordinary state of a VPN app whose widget someone is pressing.
+  ///
+  /// Found by the simulator smoke test in CI, not on a device: the device run
+  /// that confirmed the button (build 207) had the app alive in the background
+  /// the whole time, so it only ever exercised the working half.
+  ///
+  /// A no-op on Android, where `flutter_deeplinking_enabled` is false in the
+  /// manifest and the route stays "/" — its widget delivers taps through its
+  /// own intent instead.
+  void _handleLaunchRoute() {
+    final uri = _deepLinkFromRoute(
+      Uri.parse(WidgetsBinding.instance.platformDispatcher.defaultRouteName),
+    );
+    if (uri == null) return;
+    // Stamped into the same guard the push path uses, so a platform that
+    // delivers the launch URL *both* ways cannot act on it twice.
+    _lastRouteUri = uri;
+    _lastRouteUriAt = DateTime.now();
+    log.i('Deep link (launch route) arrived');
+    unawaited(_auth.handleExternalUri(uri));
   }
 
   void _syncNotifications() {
