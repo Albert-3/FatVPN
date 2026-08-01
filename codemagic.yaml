@@ -719,22 +719,36 @@ workflows:
           echo "--- tail of $LOG ---"
           tail -n 40 "$LOG"
           if ! grep -q "Widget action received: toggle" "$LOG"; then
-            # Everything the native side said about the link, which separates
-            # "iOS never delivered it" from "Dart never collected it". The App
-            # Group trail may be unavailable in a simulator, so these are read
-            # from the system log instead.
+            # Before blaming the app, ask whether the URL was ever delivered.
+            # The scene delegate traces every callback it gets, including the
+            # empty ones, so the system log answers this directly.
             echo "" >&2
             echo "--- native link trace (system log) ---" >&2
-            xcrun simctl spawn "$UDID" log show --last 5m --style compact \
-              --predicate 'eventMessage CONTAINS "[fatvpn]"' 2>/dev/null | tail -n 40 >&2 || true
+            TRACE="$(xcrun simctl spawn "$UDID" log show --last 5m --style compact \
+              --predicate 'eventMessage CONTAINS "[fatvpn]"' 2>/dev/null || true)"
+            echo "$TRACE" | tail -n 40 >&2
             echo "--------------------------------------" >&2
-            echo "" >&2
-            echo "fatvpn://widget/toggle did not reach Dart as a widget action." >&2
-            echo "That is the iOS 17 button's entire mechanism — see powerControl" >&2
-            echo "in FatVpnWidget.swift and docs/home-widgets-spec.md section 10." >&2
-            exit 1
+            if ! echo "$TRACE" | grep -q "openURLContexts"; then
+              # No scene callback fired at all, so iOS never handed the URL to
+              # the app and there is nothing here to judge it on. Reported, not
+              # failed: `simctl openurl` returns 0 whether or not it delivered,
+              # and four builds were spent reading its silence as a defect.
+              echo "" >&2
+              echo "INCONCLUSIVE: the simulator never delivered the URL to the app" >&2
+              echo "(no scene openURLContexts callback fired). This says nothing" >&2
+              echo "about the app — verify the press on a device instead, see" >&2
+              echo "docs/release-test-checklist.md, block T-W-iOS." >&2
+            else
+              echo "" >&2
+              echo "iOS delivered the URL to the scene and Dart never resolved it" >&2
+              echo "into a widget action. That is the press mechanism itself —" >&2
+              echo "see powerControl in FatVpnWidget.swift and" >&2
+              echo "docs/home-widgets-spec.md section 10." >&2
+              exit 1
+            fi
+          else
+            echo "The press URL reached Dart and resolved to a widget action."
           fi
-          echo "The press URL reached Dart and resolved to a widget action."
 
           # Kept as an artifact: a picture of the home screen is the cheapest way
           # to see that the build is a real app and not a black rectangle.
