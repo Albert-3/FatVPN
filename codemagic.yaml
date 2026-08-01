@@ -620,25 +620,22 @@ workflows:
           APP="$PWD/app/build/ios/iphonesimulator/Runner.app"
           BUNDLE_ID=com.fatvpn.fatvpnApp
 
-          # Newest available iOS runtime, and the newest iPhone that can run it.
-          # Chosen rather than pinned: the point is to exercise the highest iOS
-          # the runner offers, which is where the intent path lives.
-          # One line each, deliberately: these live inside a YAML block scalar,
-          # and a heredoc whose body starts at column 0 ends the block instead
-          # of feeding python.
-          RUNTIME="$(xcrun simctl list runtimes -j | python3 -c "import json,sys; rs=[r for r in json.load(sys.stdin)['runtimes'] if r['isAvailable'] and r.get('platform')=='iOS']; rs.sort(key=lambda r:[int(x) for x in r['version'].split('.')]); print(rs[-1]['identifier'] if rs else '')")"
-          DEVTYPE="$(xcrun simctl list devicetypes -j | python3 -c "import json,sys; ds=[d for d in json.load(sys.stdin)['devicetypes'] if 'iPhone' in d['name']]; print(ds[-1]['identifier'] if ds else '')")"
-          if [ -z "$RUNTIME" ] || [ -z "$DEVTYPE" ]; then
-            echo "No iOS simulator runtime or iPhone device type on this runner." >&2
-            exit 1
-          fi
-          echo "Runtime: $RUNTIME"
-          echo "Device:  $DEVTYPE"
+          # Newest iPhone on the newest iOS runtime the runner has. The choice
+          # lives in a script rather than here because the obvious inline
+          # version is wrong in a way that only shows up on CI: device types
+          # are not listed newest-first, so "take the last one" picked an
+          # iPhone 6s Plus and `simctl create` refused it against iOS 26 with a
+          # bare "Incompatible device".
+          PICK="$(python3 app/ios/tool/pick_simulator.py)"
+          UDID="$(echo "$PICK" | cut -f1)"
+          echo "Device:  $(echo "$PICK" | cut -f2)"
+          echo "Runtime: $(echo "$PICK" | cut -f3)"
+          # Printed, not asserted: which iOS this ran on decides which half of
+          # the widget was exercised — 18 and up draws the intent button, below
+          # that a link — and a green tick means little without it.
 
-          UDID="$(xcrun simctl create fatvpn-widget-test "$DEVTYPE" "$RUNTIME")"
           cleanup() {
             xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
-            xcrun simctl delete "$UDID" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           xcrun simctl boot "$UDID"
