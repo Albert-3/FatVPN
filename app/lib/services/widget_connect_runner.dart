@@ -12,7 +12,6 @@ import 'app_logger.dart';
 import 'connection_settings_controller.dart';
 import 'home_widget_bridge.dart';
 import 'locale_controller.dart';
-import 'selected_location_store.dart';
 import 'token_storage.dart';
 import 'vpn_controller.dart';
 
@@ -59,12 +58,10 @@ class WidgetConnectRunner {
   WidgetConnectRunner({
     TokenStorage? tokenStorage,
     ApiClient? apiClient,
-    SelectedLocationStore? selectedLocation,
     ConnectionSettingsController? connectionSettings,
     LocaleController? locale,
     VpnController Function(ConnectionSettingsController, ApiClient)? buildVpn,
   })  : _tokenStorage = tokenStorage ?? TokenStorage(),
-        _selectedLocation = selectedLocation ?? SelectedLocationStore(),
         _connectionSettings =
             connectionSettings ?? ConnectionSettingsController(),
         _locale = locale ?? LocaleController(),
@@ -78,7 +75,6 @@ class WidgetConnectRunner {
   }
 
   final TokenStorage _tokenStorage;
-  final SelectedLocationStore _selectedLocation;
   final ConnectionSettingsController _connectionSettings;
   final LocaleController _locale;
   final VpnController Function(ConnectionSettingsController, ApiClient)
@@ -179,31 +175,15 @@ class WidgetConnectRunner {
         'NOTIFICATION_PERMISSION_DENIED',
       }.contains(code);
 
-  /// The chosen country, or the fastest node overall when the user has never
-  /// picked one — the "first press connects to the best server" rule, and the
-  /// same branch [HomeScreen] takes.
+  /// Always the fastest node overall — the in-app country choice is
+  /// deliberately ignored here (user decision, 2026-08-01): a widget press
+  /// with the app closed means "protect me now", not "resume my last pick".
+  /// The choice itself stays on disk untouched, for the app's own use.
   Future<ServerCountry?> _connect(
     VpnController vpn,
     List<ServerCountry> servers,
     Strings strings,
-  ) async {
-    final code = await _selectedLocation.read();
-    ServerCountry? chosen;
-    if (code != null) {
-      for (final country in servers) {
-        if (country.country == code) {
-          chosen = country;
-          break;
-        }
-      }
-    }
-    if (chosen != null) {
-      await vpn.connectToBestNode(
-        chosen,
-        networkErrorMessage: strings.couldNotReachServer,
-      );
-      return chosen;
-    }
+  ) {
     return vpn.connectToBestOverall(
       servers,
       networkErrorMessage: strings.couldNotReachServer,

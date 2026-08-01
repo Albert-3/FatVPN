@@ -170,12 +170,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     switch (action) {
       case HomeWidgetAction.connect:
         if (_isActive) return;
-        await _connectCurrentSelection();
+        await _connectBestForWidget();
       case HomeWidgetAction.disconnect:
         if (_vpn.state == VpnConnectionState.disconnected) return;
         await _vpn.disconnect();
       case HomeWidgetAction.toggle:
-        await _onPowerButtonTap();
+        if (_vpn.isConnected || _vpn.state == VpnConnectionState.connecting) {
+          await _vpn.disconnect();
+          return;
+        }
+        await _connectBestForWidget();
+    }
+  }
+
+  /// A widget-initiated connect always goes to the fastest node overall — the
+  /// in-app country choice is deliberately ignored (user decision, 2026-08-01):
+  /// a widget press means "protect me now", not "resume my last pick". Same
+  /// rule as [WidgetConnectRunner], which serves the paths that bypass this
+  /// screen (Android's background service, the iOS intent when it works). The
+  /// UI flips to "best server" mode so the card shows the country actually
+  /// connected; the stored in-app pick survives for manual use.
+  Future<void> _connectBestForWidget() async {
+    final session = widget.auth.session;
+    if (session == null || _servers.isEmpty) return;
+    unawaited(Haptics.powerToggle());
+    _vpn.noUsableNodesMessage = S.of(context).noUsableServers;
+    try {
+      final picked = await _vpn.connectToBestOverall(
+        _servers,
+        networkErrorMessage: S.of(context).couldNotReachServer,
+      );
+      if (picked != null && mounted) {
+        setState(() {
+          _serverExplicitlySelected = false;
+          _selectedServer = picked;
+        });
+      }
+    } on ApiException catch (e) {
+      // Same as the power button: a subscription that ended belongs on the
+      // renew screen, not under the button as an error.
+      if (e.statusCode == 402) {
+        widget.auth.notifyExpired();
+        return;
+      }
+    } catch (_) {
+      // Surfaced via _vpn.errorMessage in the status section.
     }
   }
 

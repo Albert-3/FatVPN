@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'config/api_config.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
@@ -136,6 +137,65 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
   // the stored session resolves instantly. Flips true after [_minSplashTime].
   bool _minSplashElapsed = false;
   static const _minSplashTime = Duration(milliseconds: 1400);
+
+  // The engine regularly delivers the same launch URL twice within a second
+  // (both arrivals were visible in the build-197 bundle as the double
+  // null-check crash) — and a toggle carried out twice is a connect
+  // immediately undone.
+  Uri? _lastRouteUri;
+  DateTime? _lastRouteUriAt;
+
+  /// iOS delivery path for `fatvpn://` links: the engine's own deep-link
+  /// channel, claimed here before `WidgetsApp` can push the URL as a named
+  /// route the app does not define (that was the caught null-check crash all
+  /// over the build-197 bundle). This observer is registered before
+  /// `WidgetsApp`'s, so returning true stops the dispatch there.
+  ///
+  /// It has to be this channel because the obvious one is broken: app_links —
+  /// which Android relies on and iOS was assumed to share — was proven by the
+  /// build-199 bundle to deliver nothing on the scene-based iOS template (the
+  /// app opened from the widget's tap URL with no 'Deep link arrived' line),
+  /// while the engine's channel demonstrably carries the URL end-to-end into
+  /// Dart on a device. Android is untouched: `flutter_deeplinking_enabled` is
+  /// false in its manifest, so nothing arrives here.
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) async {
+    final uri = _deepLinkFromRoute(routeInformation.uri);
+    if (uri == null) {
+      return super.didPushRouteInformation(routeInformation);
+    }
+    final now = DateTime.now();
+    final duplicate = _lastRouteUri == uri &&
+        _lastRouteUriAt != null &&
+        now.difference(_lastRouteUriAt!) < const Duration(seconds: 2);
+    _lastRouteUri = uri;
+    _lastRouteUriAt = now;
+    if (duplicate) {
+      log.i('Deep link (route) duplicate ignored');
+      return true;
+    }
+    await _auth.handleExternalUri(uri);
+    return true;
+  }
+
+  /// Recognizes a `fatvpn://` link in whichever shape the engine pushed it —
+  /// the full URL, or stripped down to its path (`widget/toggle`). Which shape
+  /// arrives is undocumented and not worth a build cycle to find out; the
+  /// namespace guard (only `widget/...` and `token/...`) keeps an ordinary
+  /// route push, like the initial "/", out of the deep-link path either way.
+  Uri? _deepLinkFromRoute(Uri uri) {
+    if (uri.scheme == deepLinkScheme) return uri;
+    if (uri.scheme.isNotEmpty) return null;
+    final segments = uri.pathSegments;
+    if (segments.length < 2) return null;
+    const deepLinkHosts = {homeWidgetLinkHost, 'token'};
+    if (!deepLinkHosts.contains(segments.first)) return null;
+    return Uri(
+      scheme: deepLinkScheme,
+      host: segments.first,
+      pathSegments: segments.skip(1),
+    );
+  }
 
   @override
   void initState() {

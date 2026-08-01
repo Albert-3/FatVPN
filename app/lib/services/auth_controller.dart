@@ -543,6 +543,13 @@ class AuthController extends ChangeNotifier {
     return action;
   }
 
+  /// iOS hands `fatvpn://` links here from the engine's deep-link channel
+  /// (`didPushRouteInformation` in main.dart) — app_links never delivers them
+  /// on the scene-based iOS template (proven on a device, build 199), so this
+  /// is the path an iOS link actually takes. Android keeps arriving through
+  /// app_links ([start]).
+  Future<void> handleExternalUri(Uri uri) => _handleUri(uri);
+
   Future<void> _handleUri(Uri uri) async {
     if (uri.scheme != deepLinkScheme) {
       return;

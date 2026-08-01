@@ -308,7 +308,9 @@ void main() {
       expect(vpn.connectedToBestOverall, isTrue);
     });
 
-    test('a country the user picked in the app is honoured', () async {
+    test(
+        'the in-app country choice is ignored — a widget press always takes '
+        'the best server (user decision, 2026-08-01)', () async {
       await _storeSession(expiresIn: const Duration(days: 30));
       await SelectedLocationStore().write('NL');
 
@@ -319,8 +321,9 @@ void main() {
       ).run();
 
       expect(outcome, WidgetConnectOutcome.connected);
-      expect(vpn.connectedToBestOverall, isFalse);
-      expect(vpn.connectedCountry, 'NL');
+      expect(vpn.connectedToBestOverall, isTrue);
+      // The pick itself must survive for the app's own use.
+      expect(await SelectedLocationStore().read(), 'NL');
     });
 
     test('a permission the plugin cannot ask for goes to the app', () async {
@@ -358,14 +361,5 @@ void main() {
       expect(outcome, WidgetConnectOutcome.failed);
     });
 
-    test('a country that is no longer in the subscription falls back to best',
-        () async {
-      await _storeSession(expiresIn: const Duration(days: 30));
-      await SelectedLocationStore().write('FR');
-
-      await _runner(client: _bff(), vpn: vpn, settings: settings).run();
-
-      expect(vpn.connectedToBestOverall, isTrue);
-    });
   });
 }

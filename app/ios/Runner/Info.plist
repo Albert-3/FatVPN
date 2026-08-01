@@ -29,13 +29,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<!-- Flutter's own deep-link handler is off because app_links is the one in
-	     use (AuthController owns fatvpn://). With both on, every fatvpn:// open
-	     was ALSO pushed into the Navigator as a named route the app does not
-	     define, which is a caught-but-logged null-check crash on every widget
-	     tap and deep link (seen in the build-197 support bundle). -->
+	<!-- Deliberately ON, and it is the app's ONE working iOS delivery path for
+	     fatvpn:// links — intercepted in Dart before the Navigator ever sees it
+	     (didPushRouteInformation in main.dart), so the null-check crash the
+	     build-197 bundle was full of cannot recur. app_links, which Android
+	     relies on, was proven by the build-199 bundle to deliver nothing on
+	     this scene-based iOS template: the app opened from the widget's URL
+	     with no 'Deep link arrived' line. The engine's own channel is the one
+	     path a device has demonstrably carried end-to-end into Dart (the 197
+	     crash *was* it delivering). -->
 	<key>FlutterDeepLinkingEnabled</key>
-	<false/>
+	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

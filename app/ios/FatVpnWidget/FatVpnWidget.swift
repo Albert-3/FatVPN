@@ -146,22 +146,23 @@ struct FatVpnWidgetEntryView: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fatVpnWidgetBackground()
-        .widgetURL(smallTileURL)
+        .widgetURL(tileURL)
     }
 
-    /// What a tap *outside* the power button does on a small widget.
+    /// What a tap *outside* the power button does — and, in practice, the tap
+    /// path that actually works on iOS 17.
     ///
-    /// From iOS 17 the button is an interactive `Button`, so the rest of the
-    /// tile is free to do what a status display should: open the app. Below 17
-    /// there are no interactive widgets and SwiftUI ignores `Link` inside a
-    /// small widget, so the whole tile stays the single tap target it has to be
-    /// — one that toggles, because a widget with a power button drawn on it
-    /// that only opens an app is worse than no button at all.
-    private var smallTileURL: URL {
-        if #available(iOSApplicationExtension 17.0, *) {
-            return FatVpnWidgetLink.open
-        }
-        return snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
+    /// The tile's URL used to be a plain "open the app" on iOS 17, on the
+    /// theory that the interactive `Button` owns the toggling. A real device
+    /// (iPhone 11, iOS 17.6.1, builds 196–199) then showed the system never
+    /// performing that button's intent at all — under three different
+    /// conformance markers — with every press falling through to this URL. So
+    /// the URL *is* the toggle whenever a session exists: the worst case is
+    /// the app opening and immediately connecting, which is the promised
+    /// fallback, and if the intent ever does fire on some device, the button
+    /// consumes the tap first and this URL never sees it.
+    private var tileURL: URL {
+        snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
     }
 
     /// `.top`, so the button sits at the top of the tile here too rather than
@@ -197,7 +198,7 @@ struct FatVpnWidgetEntryView: View {
         // as tall as it is.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .fatVpnWidgetBackground()
-        .widgetURL(FatVpnWidgetLink.open)
+        .widgetURL(tileURL)
     }
 
     /// The session clock while connected, the call to action otherwise.
