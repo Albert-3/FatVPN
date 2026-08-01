@@ -231,6 +231,31 @@ struct FatVpnWidgetSnapshot {
         NotificationCenter.default.post(name: actionRequestedNotification, object: nil)
     }
 
+    /// Why the power button's press had to surface the app instead of doing its
+    /// work in the background.
+    ///
+    /// This exists because the alternative is guessing. The press runs in the
+    /// app's process with no UI and no console anyone can reach without a Mac,
+    /// and it opens the app from exactly three places — so when a user reports
+    /// "it opens the app instead of connecting", the useful question is *which
+    /// one*, and nothing on the device could answer it. The app picks this up on
+    /// its next launch and writes it into the log that "Share diagnostics"
+    /// sends, which is a surface the user already has on the phone.
+    static let handOverReasonKey = "fatvpn.widget.handOverReason"
+
+    static func recordHandOverReason(_ reason: String) {
+        defaults?.set(reason, forKey: handOverReasonKey)
+    }
+
+    /// Read once and cleared, so an old reason cannot be re-reported against a
+    /// launch that had nothing to do with it.
+    static func takeHandOverReason() -> String? {
+        guard let defaults = defaults,
+              let reason = defaults.string(forKey: handOverReasonKey) else { return nil }
+        defaults.removeObject(forKey: handOverReasonKey)
+        return reason
+    }
+
     /// Takes the parked action, leaving nothing behind. Called by the app (see
     /// the `fatvpn/widget` channel in AppDelegate) on launch and on every
     /// resume, since the app is often already running when its widget is

@@ -247,6 +247,10 @@ class AuthController extends ChangeNotifier {
   /// (`main.dart`), since the app is frequently already running when the user
   /// taps its widget.
   Future<void> pollWidgetAction() async {
+    // Before taking the action, because the reason explains the very launch
+    // that is collecting it: an action is parked here only when the press could
+    // not be carried out in the background.
+    await HomeWidgetBridge.instance.reportHandOverReason();
     final action = await HomeWidgetBridge.instance.takePendingAction();
     if (action == null) return;
     log.i('Widget action collected from the platform: ${action.name}');

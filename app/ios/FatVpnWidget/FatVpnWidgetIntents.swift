@@ -78,8 +78,10 @@ struct FatVpnTogglePowerIntent: LiveActivityIntent {
         return .result()
         #else
         fatVpnWidgetPressFeedback()
-        let needsApp = await FatVpnWidgetAppToggle.run()
-        if needsApp {
+        if let reason = await FatVpnWidgetAppToggle.run() {
+            // Surfacing the app is the exception, and every time it happens it
+            // now says why — see FatVpnWidgetSnapshot.handOverReasonKey.
+            FatVpnWidgetSnapshot.recordHandOverReason(reason)
             // "connect", not "toggle": the toggle has already been resolved —
             // the tunnel is down and only the app can finish bringing it up.
             // Parked for the app to collect on resume, exactly as the fallback
@@ -126,15 +128,21 @@ private func fatVpnWidgetPressFeedback() {
 /// screen — the system launches the app in the background to perform the
 /// widget's intent, and this is what that intent does there.
 ///
-/// Returns `true` when the app must be brought to the foreground to finish the
-/// job; the caller parks the action and throws the foreground-continuation
-/// error, and the app then does what it always does.
+/// Returns `nil` when the press was carried out here and nothing else is
+/// needed, or a short machine-readable **reason** when the app must be brought
+/// to the foreground to finish the job. The caller records the reason, parks the
+/// action and throws the foreground-continuation error.
+///
+/// The reason is not decoration. This runs with no UI and no console reachable
+/// from the device, and there are exactly three ways out to the foreground — so
+/// "it opens the app instead of connecting" was, until now, a report no one
+/// could act on.
 @available(iOS 17.0, *)
 @MainActor
 enum FatVpnWidgetAppToggle {
     /// Coalesces a double-tap onto the run already in flight instead of
     /// starting a second engine over the first one's tunnel.
-    private static var activeConnect: Task<Bool, Never>?
+    private static var activeConnect: Task<String?, Never>?
 
     /// How long to wait for `widgetConnectMain` to report before giving up on
     /// the *verdict* — not on the tunnel: by then `startVPNTunnel` has been
@@ -142,15 +150,27 @@ enum FatVpnWidgetAppToggle {
     /// is the runner's final snapshot publish.
     private static let verdictTimeout: UInt64 = 60 * 1_000_000_000
 
-    static func run() async -> Bool {
+    static func run() async -> String? {
         // Direction from the live tunnel, not from the snapshot the widget
         // drew — that one may be a redraw behind.
-        let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
+        var managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
+        if managers.isEmpty {
+            // Asked twice before concluding this install has no VPN
+            // configuration. The first read happens in a process the system has
+            // just launched into the background, and concluding "the user has
+            // never consented" from one empty answer there costs the user the
+            // whole feature — the app is opened on a device where connecting in
+            // the background was perfectly possible. The retry is cheap; the
+            // reason below records which read answered.
+            managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
+            if !managers.isEmpty {
+                FatVpnWidgetSnapshot.recordHandOverReason("vpn-config-found-on-retry")
+            }
+        }
         guard let manager = managers.first else {
             // No saved configuration means the OS consent dialog has never been
-            // accepted on this install, and that dialog needs a screen. Decided
-            // here, before spending an engine on a connect that cannot finish.
-            return true
+            // accepted on this install, and that dialog needs a screen.
+            return "no-vpn-configuration"
         }
         switch manager.connection.status {
         case .connected, .connecting, .reasserting:
@@ -160,7 +180,7 @@ enum FatVpnWidgetAppToggle {
             // so quick that the tile should sit on "Connected" through it.
             FatVpnWidgetSnapshot.markToggleRequested("disconnecting")
             manager.connection.stopVPNTunnel()
-            return false
+            return nil
         default:
             // A second press while the first is still working joins it rather
             // than re-marking: the tile already says "Connecting…".
@@ -168,13 +188,13 @@ enum FatVpnWidgetAppToggle {
             FatVpnWidgetSnapshot.markToggleRequested("connecting")
             let task = Task { await connectViaEngine() }
             activeConnect = task
-            let needsApp = await task.value
+            let reason = await task.value
             activeConnect = nil
             // Whatever the verdict, this attempt is over: either the tunnel is
             // up and speaks for itself, or nothing is connecting any more and
             // the tile must stop claiming otherwise.
             FatVpnWidgetSnapshot.clearToggleMarker()
-            return needsApp
+            return reason
         }
     }
 
@@ -182,15 +202,17 @@ enum FatVpnWidgetAppToggle {
     /// Android's `WidgetConnectService` already uses — in a headless Flutter
     /// engine, and waits for its verdict on the `fatvpn/widget_connect`
     /// channel.
-    private static func connectViaEngine() async -> Bool {
+    private static func connectViaEngine() async -> String? {
         let engine = FlutterEngine(
             name: "fatvpn-widget-connect",
             project: nil,
             allowHeadlessExecution: true
         )
         guard engine.run(withEntrypoint: "widgetConnectMain") else {
-            // Could not even start the engine — the app can.
-            return true
+            // Could not even start the engine — the app can. A Dart entrypoint
+            // that is not in the release snapshot looks exactly like this, which
+            // is why the reason names the engine rather than the tunnel.
+            return "engine-did-not-start"
         }
         GeneratedPluginRegistrant.register(with: engine)
         // The runner publishes widget snapshots over fatvpn/widget; this engine
@@ -232,7 +254,13 @@ enum FatVpnWidgetAppToggle {
         // A verdict that never came is not a reason to raise the app: the
         // tunnel is either on its way up (and the widget follows it via
         // patchTunnelState) or the next tap tries again.
-        return outcome == "handOverToApp"
+        guard outcome == "handOverToApp" else { return nil }
+        // The runner's own three reasons — no session, a lapsed subscription,
+        // or the tunnel asking for a permission dialog — all arrive as this one
+        // verdict. Which of them it was is in the app's log, one line above
+        // ("Widget connect: …"), and the runner is where to widen the verdict if
+        // that ever stops being enough.
+        return "runner-handed-over"
     }
 }
 

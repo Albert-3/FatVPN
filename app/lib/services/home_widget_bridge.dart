@@ -290,6 +290,33 @@ class HomeWidgetBridge {
     }
   }
 
+  /// Writes into the log why the iOS widget's power button had to open the app,
+  /// when it did.
+  ///
+  /// The button is meant to toggle the tunnel in the background and leave the
+  /// app alone; it surfaces the app only where a screen is unavoidable. But the
+  /// intent that decides this runs in the app's process with **no UI and no
+  /// console anyone can reach from the phone**, so "it opens the app instead of
+  /// connecting" was a report with no way to act on it. The native side leaves a
+  /// short reason in the App Group and this puts it where "Share diagnostics"
+  /// will carry it.
+  ///
+  /// Android has no equivalent and needs none — its widget provider runs in the
+  /// app's own process and logs directly.
+  Future<void> reportHandOverReason() async {
+    if (_unsupported) return;
+    try {
+      final reason = await channel.invokeMethod<String>('takeHandOverReason');
+      if (reason == null || reason.isEmpty) return;
+      log.w('Widget press had to open the app: $reason');
+    } on MissingPluginException {
+      // Android, and any iOS build older than this one. Nothing to report, and
+      // deliberately not [_unsupported]: publishing works regardless.
+    } catch (e) {
+      log.w('Could not read the widget hand-over reason: $e');
+    }
+  }
+
   /// Sends the current snapshot to the platform, unless it is byte-for-byte
   /// what we sent last time.
   ///

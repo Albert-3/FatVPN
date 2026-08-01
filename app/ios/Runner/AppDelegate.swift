@@ -65,6 +65,11 @@ import UIKit
       // AuthController.pollWidgetAction.
       case "takePendingAction":
         result(FatVpnWidgetSnapshot.takePendingAction())
+      // Why the last press had to surface the app at all. Read once, and only
+      // so Dart can write it into the log that "Share diagnostics" sends — the
+      // intent itself runs with no UI and no console the user can reach.
+      case "takeHandOverReason":
+        result(FatVpnWidgetSnapshot.takeHandOverReason())
       default:
         result(FlutterMethodNotImplemented)
       }
