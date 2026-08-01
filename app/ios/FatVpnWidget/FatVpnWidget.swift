@@ -176,30 +176,32 @@ struct FatVpnWidgetEntryView: View {
         .widgetURL(tileURL)
     }
 
-    /// What a tap *outside* the power button does — and `nil` wherever the
-    /// button is real, which is the whole point.
+    /// What a tap on the tile does, for everything the power control does not
+    /// own.
     ///
-    /// A `.widgetURL` laid on the tile makes the **entire** widget one tap
-    /// target on iOS 17 and swallows presses that land on a `Button(intent:)`
-    /// inside it (Apple Developer Forums thread 731758). That is what a device
-    /// showed for four builds: `perform()` ran in neither process while every
-    /// press opened the app through this URL — read at the time as the system
-    /// refusing to route the intent, and answered by trying three different
-    /// conformance markers, when the URL sitting over the button explained all
-    /// of it.
+    ///  * **iOS 18+** — `nil`, and that matters: a `.widgetURL` makes the whole
+    ///    widget one tap target and is reported to swallow presses that land on
+    ///    a `Button(intent:)` inside it (Apple Developer Forums thread 731758).
+    ///    The button owns its area; a tap anywhere else falls through to
+    ///    WidgetKit's default, which is "open the app" anyway.
+    ///  * **iOS 17 and below** — the toggle, for the whole tile. There is no
+    ///    button on these versions any more (see [powerControl]), so nothing is
+    ///    left for a URL to swallow, and `systemSmall` could not have had a
+    ///    second tap target regardless: WidgetKit gives a small widget exactly
+    ///    one, and it is this.
+    ///  * **No session** — `open`, because the only thing the user can do about
+    ///    that is on a screen. The Dart side tells `widget/open` apart from a
+    ///    plain launch.
     ///
-    /// So on 17+ with a session there is no tile URL at all: the button owns its
-    /// area and a tap anywhere else falls through to WidgetKit's default, which
-    /// is "open the app" — the promised behaviour, with no URL needed to get it.
-    /// With no session there is no button, and the tile keeps `open` because the
-    /// Dart side tells `widget/open` apart from a plain launch. Below 17 nothing
-    /// changes: there is no interactive button to conflict with, so the tile
-    /// itself is the toggle.
+    /// The cost on 17 is real and deliberate: a tap on the status text toggles
+    /// the VPN there too, where the design says it should only open the app.
+    /// That is the price of the button working at all — see [powerControl].
     private var tileURL: URL? {
-        if #available(iOSApplicationExtension 17.0, *) {
-            return snapshot.signedIn ? nil : FatVpnWidgetLink.open
+        guard snapshot.signedIn else { return FatVpnWidgetLink.open }
+        if #available(iOSApplicationExtension 18.0, *) {
+            return nil
         }
-        return snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
+        return FatVpnWidgetLink.toggle
     }
 
     /// The session clock while connected, the call to action otherwise.
@@ -224,27 +226,43 @@ struct FatVpnWidgetEntryView: View {
         }
     }
 
-    /// The power button as a tap target, by what the OS allows — and this is
-    /// where the two intents are chosen between.
+    /// The power control as a tap target, by what the OS actually delivers.
     ///
-    ///  * **iOS 18+** — [FatVpnTogglePowerIntent]. The system launches the app in
-    ///    the background, performs the intent there and nothing appears on
-    ///    screen.
-    ///  * **iOS 17.x** — [FatVpnOpenAppAndTogglePowerIntent]. The same button,
-    ///    but the press opens the app and the toggle happens as it comes up.
-    ///    Not a fallback for a bug: on 17 there is no documented way to launch a
-    ///    terminated app in the background for a widget intent, and a
-    ///    force-quit app is barred from background launch outright — which is
-    ///    the ordinary state of a VPN app whose widget someone is pressing.
-    ///  * **iOS 16 and below** — a `Link` on a medium tile, and nothing at all on
-    ///    a small one, where SwiftUI ignores links and the tile's own
-    ///    `widgetURL` is the toggle instead.
-    ///  * **No session** — not a button at all: the tile opens the app, the only
+    ///  * **iOS 18+** — a real `Button` running [FatVpnTogglePowerIntent]. The
+    ///    system launches the app in the background, performs the intent there,
+    ///    and nothing appears on screen.
+    ///  * **iOS 17 and below** — a link, not a button. The press opens the app
+    ///    and arrives as `fatvpn://widget/toggle`, which the app already routes
+    ///    to the same action an in-app press takes.
+    ///  * **No session** — not a control at all: the tile opens the app, the only
     ///    place the user can do anything about that.
     ///
-    /// The version test is `#available` inside the widget extension, so it is
-    /// the OS of the device drawing the tile that decides — not the SDK, and not
-    /// anything baked in at build time.
+    /// ⚠️ **Why 17 has no button, when interactive widgets are a 17 feature.**
+    /// Because on this device it does not run. A widget App Intent was tried
+    /// under every marker Apple documents — `ForegroundContinuableIntent`,
+    /// `LiveActivityIntent`, `AudioPlaybackIntent` — and then, in build 206,
+    /// under `openAppWhenRun: true` as well, with the tile carrying no
+    /// `widgetURL` that could swallow the press. On an iPhone 11 / iOS 17.6.1
+    /// the native press trail came back **empty every time**: `perform()` ran in
+    /// neither the app's process nor the widget's. The app opened, because that
+    /// is what the system does with a widget tap by default, and nothing else
+    /// happened. Six builds have now said the same thing.
+    ///
+    /// A link is not a workaround for a bug we could fix; it is the mechanism
+    /// that demonstrably works here. `fatvpn://widget/toggle` reaches Dart
+    /// through the engine's own deep-link channel — the one path this app has
+    /// carried end-to-end on a device (see `FlutterDeepLinkingEnabled` and
+    /// `didPushRouteInformation` in main.dart; `app_links` delivers nothing at
+    /// all on this scene-based iOS template).
+    ///
+    /// The `Link` here is for the medium family; on `systemSmall` WidgetKit
+    /// allows exactly one tap target and ignores links, so there the tile's own
+    /// [tileURL] is the toggle. Both end at the same URL, so it does not matter
+    /// which one the system honours.
+    ///
+    /// The version test is `#available` inside the widget extension, so the OS
+    /// of the device drawing the tile decides — not the SDK, and nothing baked
+    /// in at build time.
     @ViewBuilder
     private func powerControl(diameter: CGFloat) -> some View {
         if snapshot.signedIn {
@@ -254,11 +272,6 @@ struct FatVpnWidgetEntryView: View {
                 }
                 // Without `.plain` the system draws its own chrome — a grey
                 // capsule behind a disc that is already a button.
-                .buttonStyle(.plain)
-            } else if #available(iOSApplicationExtension 17.0, *) {
-                Button(intent: FatVpnOpenAppAndTogglePowerIntent()) {
-                    powerButton(diameter: diameter)
-                }
                 .buttonStyle(.plain)
             } else if family == .systemSmall {
                 powerButton(diameter: diameter)

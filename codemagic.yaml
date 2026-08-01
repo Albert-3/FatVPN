@@ -354,7 +354,7 @@ workflows:
             fi
             echo "PrivacyInfo.xcprivacy present."
           done
-      - name: Verify both toggle intents are in the shipped App Intents metadata
+      - name: Verify the toggle intent is in the shipped App Intents metadata
         script: |
           # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
           #
@@ -384,21 +384,21 @@ workflows:
           # must carry the type to be able to perform it. Either one missing is a
           # dead button.
           #
-          # Both intents matter too, and this is the check the version split
-          # needs: FatVpnTogglePowerIntent serves iOS 18 in the background,
-          # FatVpnOpenAppAndTogglePowerIntent serves 17.x by opening the app. A
-          # build that dropped one would work on exactly half the devices, and
-          # the half it failed on is the one that reports nothing at all.
+          # One intent, not two: iOS 17 no longer uses an intent at all — its
+          # power control is a link, because six builds of device evidence say
+          # perform() never runs on that version. FatVpnTogglePowerIntent serves
+          # iOS 18+ only. If a second intent type is ever added back, add it to
+          # the loop below with it.
           for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
             META="$BUNDLE/Metadata.appintents"
             if [ ! -d "$META" ]; then
               echo "No Metadata.appintents in $BUNDLE — App Intents were not extracted at all." >&2
               exit 1
             fi
-            for INTENT in FatVpnTogglePowerIntent FatVpnOpenAppAndTogglePowerIntent; do
+            for INTENT in FatVpnTogglePowerIntent; do
               # -a because the extracted metadata is not necessarily text.
               if ! grep -raq "$INTENT" "$META"; then
-                echo "$INTENT is absent from $META — that half of the button ships dead." >&2
+                echo "$INTENT is absent from $META — the iOS 18 button ships dead." >&2
                 exit 1
               fi
               echo "$BUNDLE: $INTENT present."

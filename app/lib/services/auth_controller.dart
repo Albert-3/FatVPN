@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../config/api_config.dart';
 import '../models/auth_session.dart';
@@ -568,6 +569,22 @@ class AuthController extends ChangeNotifier {
       final action = homeWidgetActionFromUri(uri);
       if (action != null) {
         log.i('Widget action received: ${action.name}');
+        // The press's own haptic, and on iOS the only one it gets.
+        //
+        // This is how an iOS 17 press arrives — the tile's power control is a
+        // link there, because an App Intent does not run on that version (six
+        // builds of device evidence; see `powerControl` in FatVpnWidget.swift).
+        // Nothing native can buzz for it: the widget's process has no
+        // vibromotor at all, and the app's has no usable one until it is in
+        // front of the user, which is this moment.
+        //
+        // iOS only. Android delivers its taps as the same link, but its widget
+        // has already buzzed for itself in the broadcast receiver
+        // (`WidgetHaptics`), and a second buzz here would be felt as one press
+        // registering twice.
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          unawaited(HapticFeedback.mediumImpact());
+        }
         _pendingWidgetAction = action;
         notifyListeners();
       }

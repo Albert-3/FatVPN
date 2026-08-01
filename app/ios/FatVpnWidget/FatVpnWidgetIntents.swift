@@ -1,7 +1,7 @@
 import AppIntents
 import WidgetKit
 
-/// What the power button runs, in the two shapes iOS gives us.
+/// What the power button runs — on iOS 18 and up, and only there.
 ///
 /// ⚠️ This file is compiled into **both** the widget extension and the app
 /// (`ios/tool/add_widget_target.rb` adds it to Runner as well), and the two
@@ -10,45 +10,33 @@ import WidgetKit
 /// App Intents metadata to decide where a press is routed, and the *app* must
 /// carry the type to be able to perform it.
 ///
-/// ## Why there are two intents rather than one
+/// ## Why iOS 17 is not served from here
 ///
 /// Apple documents exactly one list of levers ([Adding interactivity to widgets
 /// and Live Activities]): the system runs an app intent in the widget
 /// extension's process unless `openAppWhenRun` is true, or the intent conforms
 /// to `AudioPlaybackIntent`, `ForegroundContinuableIntent`, `LiveActivityIntent`
 /// or `PushToTalkTransmissionIntent` — in which case it runs in the **app's**
-/// process. That matters because the widget's process can never toggle a
-/// tunnel: `NETunnelProviderManager` belongs to the app's bundle and the
-/// NetworkExtension entitlement is not issued to a widget's App ID.
+/// process. That distinction matters because the widget's process can never
+/// toggle a tunnel: `NETunnelProviderManager` belongs to the app's bundle and
+/// the NetworkExtension entitlement is not issued to a widget's App ID.
 ///
-/// Running in the app's process is not the same as running in the *background*,
-/// and that is where the two versions part company:
+/// On an iPhone 11 / iOS 17.6.1, none of it happens. Every marker in that list
+/// was shipped and tried, and then `openAppWhenRun: true` on top, with the tile
+/// carrying no `widgetURL` that could swallow the press (build 206). The native
+/// press trail — written to the App Group on the first line of `perform()`,
+/// before anything can fail — came back **empty every time**. `perform()` runs
+/// in neither process. The app opens, because that is what the system does with
+/// a widget tap by default, and nothing else happens.
 ///
-///  * **iOS 18 and up** — a background launch for a widget intent is confirmed
-///    behaviour (Apple DTS answered a thread about its *latency*, i.e. the app
-///    does get launched). So the press is served by
-///    [FatVpnTogglePowerIntent] and nothing appears on screen.
-///  * **iOS 17.x** — no confirmed case of the system launching a terminated app
-///    in the background for a widget intent exists, and a force-quit app is
-///    barred from background launch until the user opens it by hand — which is
-///    the main scenario for a VPN widget. Three build cycles were spent proving
-///    this on an iPhone 11 / iOS 17.6.1 under every marker in the list. What
-///    *was* observed to work there is `openAppWhenRun: true`: it opened the app
-///    on every press, reliably. So on 17 the press is served by
-///    [FatVpnOpenAppAndTogglePowerIntent], which is that behaviour on purpose
-///    rather than as a failure — the app opens, and the toggle happens the
-///    instant it does.
-///
-/// The choice is made in the widget's view (`powerControl`), by the OS version
-/// of the device drawing the tile. Neither type is marked `@available(iOS 18)`:
-/// the metadata processor silently drops types it cannot make sense of, and a
-/// dropped type is a dead button with no diagnostic anywhere, so nothing
-/// unusual goes into these declarations.
+/// So on 17 the tile does not use an intent at all: the power control is a link
+/// to `fatvpn://widget/toggle`, which reaches Dart through the engine's own
+/// deep-link channel — the one path this app has carried end-to-end on a device.
+/// See `powerControl` in FatVpnWidget.swift. Six builds went into establishing
+/// that; do not "restore" the intent on 17 without new evidence from a device.
 ///
 /// [Adding interactivity to widgets and Live Activities]:
 /// https://developer.apple.com/documentation/widgetkit/adding-interactivity-to-widgets-and-live-activities
-
-// MARK: - iOS 18+: toggle in the background
 
 /// The press on iOS 18 and up: performed in the app's process with nothing on
 /// screen.
@@ -59,6 +47,11 @@ import WidgetKit
 /// a device and failed: `ForegroundContinuableIntent` is unavailable to
 /// extensions, and `LiveActivityIntent` produced a button whose `perform()` ran
 /// in neither process.
+///
+/// Not marked `@available(iOS 18)` even though nothing below 18 attaches it: the
+/// metadata processor silently drops types it cannot make sense of, and a
+/// dropped type is a dead button with no diagnostic anywhere, so nothing unusual
+/// goes into this declaration. The version gate lives in the view.
 @available(iOS 17.0, iOSApplicationExtension 17.0, *)
 struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
     static var title: LocalizedStringResource = "Toggle the VPN"
@@ -75,10 +68,10 @@ struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         #if FATVPN_WIDGET_EXTENSION
-        try await FatVpnWidgetPress.handle(mayOpenApp: false)
+        try await FatVpnWidgetPress.handle()
         #else
         do {
-            try await FatVpnWidgetPress.handle(mayOpenApp: false)
+            try await FatVpnWidgetPress.handle()
         } catch FatVpnWidgetPressHandOver.needed {
             // The only place this error is turned into Apple's own: the
             // continuation method exists on `ForegroundContinuableIntent`,
@@ -91,45 +84,13 @@ struct FatVpnTogglePowerIntent: AudioPlaybackIntent {
     }
 }
 
-// MARK: - iOS 17.x: open the app, then toggle
-
-/// The press on iOS 17.x: the system opens the app and performs this in the
-/// app's process, and the toggle rides the app's own connect path from there.
-///
-/// This is not a degraded copy of the intent above with the work removed — it is
-/// the only thing that works on 17, and it works by *design* here: the press is
-/// parked in the App Group before the app comes up, and the app collects it on
-/// launch and on every resume (`AuthController.pollWidgetAction`). So the user
-/// sees the app open and the tunnel change state, rather than the app open and
-/// nothing happen, which is what every 17.x build did before.
-@available(iOS 17.0, iOSApplicationExtension 17.0, *)
-struct FatVpnOpenAppAndTogglePowerIntent: AppIntent {
-    static var title: LocalizedStringResource = "Open FatVPN and toggle the VPN"
-    static var description = IntentDescription("Opens FatVPN and connects or disconnects it.")
-
-    /// True on purpose, and only on this type. It is what makes the app appear
-    /// — the single behaviour an iPhone on 17.6.1 was ever observed to produce
-    /// from this button.
-    static var openAppWhenRun: Bool = true
-
-    func perform() async throws -> some IntentResult {
-        try await FatVpnWidgetPress.handle(mayOpenApp: true)
-        return .result()
-    }
-}
-
 // MARK: - The press itself
 
 @available(iOS 17.0, iOSApplicationExtension 17.0, *)
 enum FatVpnWidgetPress {
-    /// - Parameter mayOpenApp: whether the intent that called this has
-    ///   `openAppWhenRun` set, i.e. whether an app is on its way to the screen.
-    ///   It decides two things, and they are the whole difference between the
-    ///   two versions of this button: whether the toggle is performed here or
-    ///   left for the app to collect, and which side owns the haptic.
-    static func handle(mayOpenApp: Bool) async throws {
+    static func handle() async throws {
         // The direction the tile is showing. It may be a redraw behind the
-        // tunnel, which is why every path that performs the toggle for real
+        // tunnel, which is why the path that performs the toggle for real
         // resolves the direction again from the live connection — this one is
         // only for the overlay and the haptic.
         let goingUp = !FatVpnWidgetStore.read().isConnected
@@ -141,35 +102,14 @@ enum FatVpnWidgetPress {
         // The widget's copy. It reaches here only if the system declined to
         // route the press into the app after all; it can toggle nothing, so all
         // it does is leave the request where the app will find it.
-        FatVpnWidgetStore.trace("press → widget copy (mayOpenApp: \(mayOpenApp))")
+        FatVpnWidgetStore.trace("press → widget copy")
         FatVpnWidgetStore.park(.toggle)
         #else
-        FatVpnWidgetStore.trace("press → app copy (mayOpenApp: \(mayOpenApp))")
-
-        if mayOpenApp {
-            // iOS 17. The app is coming to the front anyway, so the toggle is
-            // left to it: `pollWidgetAction` picks this up on the very launch or
-            // resume this press caused, and runs the app's own connect — a live
-            // 402 entitlement check and a fresh config, not whatever the last
-            // session left on disk. `.toggle` rather than a direction, because
-            // by the time the app looks, the tunnel is the authority.
-            //
-            // No haptic on this path, deliberately. The app buzzes for itself
-            // the moment it picks the action up
-            // (`HomeWidgetBridge.takePendingAction`), in the foreground, where a
-            // real `UIImpactFeedbackGenerator` works — and where this process
-            // is not yet. Buzzing from here as well would either double it or,
-            // if the system ran the widget's copy of this file instead of the
-            // app's, be the buzz that never happens. One owner per path.
-            FatVpnWidgetStore.park(.toggle)
-            FatVpnWidgetStore.trace("parked for the app that is opening")
-            return
-        }
-
-        // iOS 18. Nothing is going to appear on screen, so both the buzz and the
-        // work happen here. Fired before the work, not after: a button that
-        // buzzes once the tunnel is up has already spent the seconds in which
-        // the user was wondering whether it registered the tap at all.
+        FatVpnWidgetStore.trace("press → app copy")
+        // Nothing is going to appear on screen, so both the buzz and the work
+        // happen here. Fired before the work, not after: a button that buzzes
+        // once the tunnel is up has already spent the seconds in which the user
+        // was wondering whether it registered the tap at all.
         FatVpnWidgetHaptics.play(goingUp ? .connecting : .disconnecting)
 
         if let reason = await FatVpnWidgetToggle.run() {
