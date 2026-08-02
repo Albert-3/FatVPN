@@ -9,6 +9,7 @@ import '../models/pairing.dart';
 import '../models/server_country.dart';
 import '../utils/country_flag.dart';
 import 'app_logger.dart';
+import 'pinned_http_client.dart';
 import 'vless_config_parser.dart';
 
 /// A request the BFF answered with something other than success.
@@ -35,7 +36,7 @@ class ApiClient {
     this.readAccessToken,
     this.onUnauthorized,
     this.readSessionMintedAt,
-  })  : _httpClient = httpClient ?? http.Client(),
+  })  : _httpClient = httpClient ?? createBffHttpClient(baseUrl: baseUrl),
         _baseUrl = baseUrl ?? bffBaseUrl;
 
   final http.Client _httpClient;

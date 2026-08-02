@@ -49,6 +49,15 @@ class NoNetworkHttpClient implements HttpClient {
   @override
   String? userAgent;
 
+  /// Settable, never called. No TLS happens here, but the app's own client sets
+  /// this on construction (it is where a pinning rejection is written down), and
+  /// a fake that threw on the setter would take out every widget test that boots
+  /// the whole app — with a stack pointing at the certificate code rather than at
+  /// this file.
+  @override
+  bool Function(X509Certificate cert, String host, int port)?
+      badCertificateCallback;
+
   @override
   Future<HttpClientRequest> openUrl(String method, Uri url) async {
     _overrides.requests.add('$method $url');
