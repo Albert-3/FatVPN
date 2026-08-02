@@ -46,6 +46,19 @@ class AppLogger {
   bool _initStarted = false;
   final Completer<void> _ready = Completer<void>();
 
+  /// Whether a [flush] is in flight. `IOSink.flush()` binds the sink for the
+  /// duration — writing into it before the returned future completes throws
+  /// `Bad state: StreamSink is bound to a stream` — so lines written during the
+  /// window are held in [_pendingWrites] and replayed after.
+  ///
+  /// Without this, [e] threw every single time it was given a stack trace: its
+  /// first `_record` starts the error flush, its second (the stack) writes into
+  /// the sink the flush has just bound. That put the throw inside
+  /// `FlutterError.onError`, which meant the framework error being reported was
+  /// itself lost — an error logger that erased errors.
+  bool _flushing = false;
+  final List<String> _pendingWrites = <String>[];
+
   /// Opens (or rotates into) the on-disk log file. Idempotent — call once from
   /// `main`. Never throws: if the platform has no writable documents dir we
   /// fall back to in-memory-only logging.
@@ -92,7 +105,7 @@ class AppLogger {
     final line = '[${DateTime.now().toIso8601String()}] [${level.label}] $message';
     if (_buffer.length >= _maxInMemory) _buffer.removeFirst();
     _buffer.addLast(line);
-    _sink?.writeln(line);
+    _write(line);
     if (kDebugMode) debugPrint(line);
     // An error is often the last thing the process gets to say; anything still
     // sitting in the sink's buffer when it dies is exactly the part worth
@@ -101,6 +114,23 @@ class AppLogger {
       unawaited(flush());
     } else {
       _scheduleFlush();
+    }
+  }
+
+  /// Sends one line to the file sink, or parks it if a [flush] has the sink
+  /// bound. Never throws: the line is in [_buffer] either way, and a logger
+  /// that can throw is a logger that turns a reported error into a crash.
+  void _write(String line) {
+    final sink = _sink;
+    if (sink == null) return;
+    if (_flushing) {
+      _pendingWrites.add(line);
+      return;
+    }
+    try {
+      sink.writeln(line);
+    } catch (_) {
+      // Best-effort: the line is still in the in-memory buffer.
     }
   }
 
@@ -113,10 +143,24 @@ class AppLogger {
   Future<void> flush() async {
     _flushTimer?.cancel();
     _flushTimer = null;
+    final sink = _sink;
+    // Re-entrant calls would each bind the sink; the one already in flight is
+    // writing the same buffer through, so joining it is the same guarantee.
+    if (sink == null || _flushing) return;
+    _flushing = true;
     try {
-      await _sink?.flush();
+      await sink.flush();
     } catch (_) {
       // Best-effort: the lines are still in the in-memory buffer.
+    } finally {
+      _flushing = false;
+      if (_pendingWrites.isNotEmpty) {
+        final parked = List<String>.of(_pendingWrites);
+        _pendingWrites.clear();
+        for (final line in parked) {
+          _write(line);
+        }
+      }
     }
   }
 

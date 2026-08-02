@@ -291,6 +291,13 @@ abstract final class TrackerBlockList {
     // `yandex.ru` and `mail.ru` are in the *bypass* list, and the block rule
     // is emitted ahead of it precisely so these still get caught.
     'an.yandex.ru',
+    // The host Yandex Direct actually serves its blocks from. Its absence was
+    // found on an emulator run (2026-08-02): with protection on, ya.ru still
+    // rendered a Direct banner, because `an.yandex.ru` covers the older
+    // delivery path and this one covers the current one. Missing it made the
+    // switch look inert on the single page a Russian user is most likely to
+    // test it on.
+    'yabs.yandex.ru',
     'awaps.yandex.ru',
     'bs.yandex.ru',
     'adfox.yandex.ru',
