@@ -10,6 +10,25 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Ceiling on how much of a panel answer is read into memory, applied to the
+    /// injected <see cref="HttpClient"/> where the rest of its policy lives
+    /// (<c>Program.cs</c>, next to the timeout).
+    /// <para>
+    /// Every call here buffers the whole body (<c>ReadAsStringAsync</c> /
+    /// <c>ReadFromJsonAsync</c>), and HttpClient's own default ceiling is 2 GB —
+    /// so a panel that is hostile, wedged, or fronted by something that answers
+    /// with a stream (a login portal in front of <c>/sub</c> was exactly that
+    /// kind of surprise) could take the container out of memory with one
+    /// request. 4 MB is two orders of magnitude above the largest real body: a
+    /// base64 subscription is single-digit KB per link.
+    /// </para>
+    /// Going over it surfaces as <see cref="HttpRequestException"/>, which
+    /// <c>CallAsync</c> already translates into <see cref="RemnawaveException"/>
+    /// — i.e. a 502, not a 500.
+    /// </summary>
+    public const long MaxResponseBytes = 4L * 1024 * 1024;
+
     /// <summary>Remnawave short uuids are url-safe base62-ish; anything else is
     /// either a bug or an attempt to steer the request at another panel path.</summary>
     private static bool IsWellFormedSubscriptionId(string value) =>

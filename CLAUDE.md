@@ -35,9 +35,9 @@ dotnet user-secrets set "Remnawave:ApiToken" "<token>"
 
 Manual API testing: `src/FatVpn.Bff.Api/FatVpn.Bff.Api.http` has VS Code REST Client requests for every endpoint.
 
-Tests: `dotnet test tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj` — **149 tests**, all green with Docker up (the Testcontainers ones **skip** without it, so a "0 skipped" run is the only proof the concurrency tests actually ran; last verified 2026-08-02). The app side is **277 Dart tests** (1 skipped) via `flutter test` in `app/`.
+Tests: `dotnet test tests/FatVpn.Bff.Tests/FatVpn.Bff.Tests.csproj` — **151 tests**, all green with Docker up (the Testcontainers ones **skip** without it, so a "0 skipped" run is the only proof the concurrency tests actually ran; last verified 2026-08-02). The app side is **283 Dart tests** (1 skipped) via `flutter test` in `app/`.
 
-⚠️ `Microsoft.OpenApi 2.0.0` carries a known **high-severity advisory** (NU1903, GHSA-v5pm-xwqc-g5wc) — restore prints it on every build. Bump it.
+`Microsoft.OpenApi` is pinned to **2.7.5** by a direct reference in `FatVpn.Bff.Api.csproj`, purely to override the 2.0.0 that `Microsoft.AspNetCore.OpenApi 10.0.9` drags in — that one carries NU1903 / GHSA-v5pm-xwqc-g5wc (high). 2.7.5 is the first patched release on the 2.x line, per the advisory itself: 2.0.1 is still affected, which a restore confirms. Drop the pin once the framework package ships a patched dependency of its own.
 
 - Unit/controller tests run on **SQLite in memory**, not the EF InMemory provider: InMemory ignores
   unique indexes and cannot execute `ExecuteUpdate`, so it could not exercise the atomic

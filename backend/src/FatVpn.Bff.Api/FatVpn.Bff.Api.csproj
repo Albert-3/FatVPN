@@ -10,6 +10,13 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+    <!-- Direct reference only to override the 2.0.0 that Microsoft.AspNetCore.OpenApi
+         pulls in transitively: it carries NU1903 / GHSA-v5pm-xwqc-g5wc (high). Kept on
+         2.7.5 because that is the first patched release on the 2.x line (2.0.1 is
+         still affected — checked against the advisory, not guessed), and staying on
+         2.x keeps the major the OpenApi package was built against. Drop this line
+         once the framework package itself ships a patched dependency. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

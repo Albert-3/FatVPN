@@ -150,6 +150,76 @@ public class RemnawaveClientTests
         Assert.Empty(handler.Paths);
     }
 
+    [Fact]
+    public async Task GetSubscriptionConfig_stops_reading_a_body_that_never_ends()
+    {
+        // Every panel answer is buffered whole into memory, and HttpClient's own
+        // default ceiling is 2 GB — so a wedged or hostile panel (or anything
+        // sitting in front of it that answers with a stream) could take the
+        // container down with one request. The body here declares no length, so
+        // the cap is the only thing that can stop it.
+        var body = new EndlessContent(stopAfter: 64L * 1024 * 1024);
+        var client = NewCappedClient(new StubHandler((_, _) =>
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = body }));
+
+        // RemnawaveException, i.e. a 502 — not an unhandled exception as a 500,
+        // and not an OOM.
+        await Assert.ThrowsAsync<RemnawaveException>(
+            () => client.GetSubscriptionConfigAsync("MFsUvfCH02q_bcAF"));
+        Assert.True(
+            body.Written < 2 * RemnawaveClient.MaxResponseBytes,
+            $"read {body.Written} bytes with a cap of {RemnawaveClient.MaxResponseBytes}");
+    }
+
+    [Fact]
+    public async Task GetSubscriptionConfig_a_real_sized_subscription_still_fits_under_the_cap()
+    {
+        // The other direction: a cap set too low would break every user rather
+        // than a hostile panel. A subscription is single-digit KB per link.
+        var client = NewCappedClient(new StubHandler((_, _) =>
+            Text(string.Join('\n', Enumerable.Repeat(Base64Subscription, 500)))));
+
+        var (content, _) = await client.GetSubscriptionConfigAsync("MFsUvfCH02q_bcAF");
+
+        Assert.Contains(Base64Subscription, content);
+    }
+
+    /// <summary>The client as <c>Program.cs</c> wires it: same response cap.</summary>
+    private static RemnawaveClient NewCappedClient(StubHandler handler) =>
+        new(new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://panel.example"),
+            MaxResponseContentBufferSize = RemnawaveClient.MaxResponseBytes,
+        },
+            TestHelpers.Opt(new RemnawaveOptions { BaseUrl = "https://panel.example", ApiToken = "t" }));
+
+    /// <summary>
+    /// A response body with no <c>Content-Length</c> that keeps producing bytes.
+    /// <paramref name="stopAfter"/> exists so a cap that is not applied fails the
+    /// test instead of hanging the suite.
+    /// </summary>
+    private sealed class EndlessContent(long stopAfter) : HttpContent
+    {
+        public long Written { get; private set; }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            var chunk = new byte[64 * 1024];
+            Array.Fill(chunk, (byte)'v');
+            while (Written < stopAfter)
+            {
+                await stream.WriteAsync(chunk);
+                Written += chunk.Length;
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
     private static HttpResponseMessage Text(string body, string contentType = "text/plain") =>
         new(HttpStatusCode.OK)
         {
