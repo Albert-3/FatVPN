@@ -6,14 +6,13 @@ using Microsoft.Extensions.Options;
 
 namespace FatVpn.Bff.Infrastructure.Remnawave;
 
-public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOptions> options) : IRemnawaveClient
+public sealed class RemnawaveClient : IRemnawaveClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>
     /// Ceiling on how much of a panel answer is read into memory, applied to the
-    /// injected <see cref="HttpClient"/> where the rest of its policy lives
-    /// (<c>Program.cs</c>, next to the timeout).
+    /// injected <see cref="HttpClient"/> by this class's own constructor.
     /// <para>
     /// Every call here buffers the whole body (<c>ReadAsStringAsync</c> /
     /// <c>ReadFromJsonAsync</c>), and HttpClient's own default ceiling is 2 GB —
@@ -28,6 +27,24 @@ public sealed class RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOpt
     /// — i.e. a 502, not a 500.
     /// </summary>
     public const long MaxResponseBytes = 4L * 1024 * 1024;
+
+    private readonly HttpClient httpClient;
+    private readonly IOptions<RemnawaveOptions> options;
+
+    public RemnawaveClient(HttpClient httpClient, IOptions<RemnawaveOptions> options)
+    {
+        // Applied here rather than at the DI callsite, which is where it used to
+        // live: a ceiling that whoever wires the client has to remember is one
+        // rewiring away from being gone, and nothing would go red — the client
+        // behaves identically right up to the day a panel answers with a stream.
+        // Every RemnawaveClient carries it now, including the ones tests build.
+        // Safe in a constructor because HttpClient only freezes this property
+        // once a request has been sent, and a typed client is handed an
+        // HttpClient of its own.
+        httpClient.MaxResponseContentBufferSize = MaxResponseBytes;
+        this.httpClient = httpClient;
+        this.options = options;
+    }
 
     /// <summary>Remnawave short uuids are url-safe base62-ish; anything else is
     /// either a bug or an attempt to steer the request at another panel path.</summary>

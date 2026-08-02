@@ -99,9 +99,9 @@ builder.Services.AddHttpClient<IRemnawaveClient, RemnawaveClient>((sp, client) =
         // Default is 100 s: a hung panel would pin BFF request threads and
         // sockets long enough to take the whole API down with it.
         client.Timeout = TimeSpan.FromSeconds(10);
-        // Bound how much of a panel answer is buffered into memory; the default
-        // is 2 GB. Reasoning and value: RemnawaveClient.MaxResponseBytes.
-        client.MaxResponseContentBufferSize = RemnawaveClient.MaxResponseBytes;
+        // The ceiling on how much of a panel answer is buffered into memory is
+        // deliberately *not* here: RemnawaveClient's constructor applies it, so
+        // it survives any rewiring of this callback. See MaxResponseBytes.
     })
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {

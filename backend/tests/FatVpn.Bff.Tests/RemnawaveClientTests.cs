@@ -159,7 +159,9 @@ public class RemnawaveClientTests
         // container down with one request. The body here declares no length, so
         // the cap is the only thing that can stop it.
         var body = new EndlessContent(stopAfter: 64L * 1024 * 1024);
-        var client = NewCappedClient(new StubHandler((_, _) =>
+        // Plain NewClient, i.e. an HttpClient nobody capped: the cap has to come
+        // from the client's own constructor, not from the wiring around it.
+        var client = NewClient(new StubHandler((_, _) =>
             new HttpResponseMessage(HttpStatusCode.OK) { Content = body }));
 
         // RemnawaveException, i.e. a 502 — not an unhandled exception as a 500,
@@ -176,7 +178,7 @@ public class RemnawaveClientTests
     {
         // The other direction: a cap set too low would break every user rather
         // than a hostile panel. A subscription is single-digit KB per link.
-        var client = NewCappedClient(new StubHandler((_, _) =>
+        var client = NewClient(new StubHandler((_, _) =>
             Text(string.Join('\n', Enumerable.Repeat(Base64Subscription, 500)))));
 
         var (content, _) = await client.GetSubscriptionConfigAsync("MFsUvfCH02q_bcAF");
@@ -184,14 +186,26 @@ public class RemnawaveClientTests
         Assert.Contains(Base64Subscription, content);
     }
 
-    /// <summary>The client as <c>Program.cs</c> wires it: same response cap.</summary>
-    private static RemnawaveClient NewCappedClient(StubHandler handler) =>
-        new(new HttpClient(handler)
+    [Fact]
+    public void Constructing_the_client_caps_the_http_client_it_was_given()
+    {
+        // The cap used to be applied by Program.cs's AddHttpClient callback, and
+        // no test could see whether that callback still did it — the tests set
+        // the property themselves and then checked their own work. It is the
+        // constructor's job now, so this is the whole guarantee in one line: the
+        // container's wiring cannot lose it, because there is nothing left to
+        // wire.
+        var http = new HttpClient(new StubHandler((_, _) => Text(Base64Subscription)))
         {
             BaseAddress = new Uri("https://panel.example"),
-            MaxResponseContentBufferSize = RemnawaveClient.MaxResponseBytes,
-        },
+        };
+
+        _ = new RemnawaveClient(
+            http,
             TestHelpers.Opt(new RemnawaveOptions { BaseUrl = "https://panel.example", ApiToken = "t" }));
+
+        Assert.Equal(RemnawaveClient.MaxResponseBytes, http.MaxResponseContentBufferSize);
+    }
 
     /// <summary>
     /// A response body with no <c>Content-Length</c> that keeps producing bytes.
