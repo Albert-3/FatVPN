@@ -50,6 +50,13 @@ class VpnController extends ChangeNotifier {
   static const _clashApiSecretKey = 'vpn_clash_api_secret';
   String? _clashApiSecret;
 
+  // Where that control API listens, persisted for the same reason as the
+  // secret. Not a constant: a fixed port is a fingerprint — any app on the
+  // phone can knock on it and learn that this VPN is running, without holding
+  // the secret and without any permission beyond INTERNET.
+  static const _clashApiPortKey = 'vpn_clash_api_port';
+  int? _clashApiPort;
+
   // Guards against overlapping runtime-state reconciliation polls (launch +
   // resume can both fire syncFromRuntime in quick succession).
   bool _reconciling = false;
@@ -175,12 +182,16 @@ class VpnController extends ChangeNotifier {
     final stored = await Future.wait([
       _storage.read(key: _sessionStartKey),
       _storage.read(key: _clashApiSecretKey),
+      _storage.read(key: _clashApiPortKey),
     ]);
     final storedStart = stored[0];
     if (storedStart != null) {
       _sessionStartedAt = DateTime.tryParse(storedStart);
     }
     _clashApiSecret = stored[1];
+    // Null on a tunnel started by a build that had no port to store; the probe
+    // falls back to the old constant, which is what that tunnel is listening on.
+    _clashApiPort = int.tryParse(stored[2] ?? '');
     await _vpn.initialize(const SingboxRuntimeOptions(logLevel: 'warn'));
     await _stateSubscription?.cancel();
     _stateSubscription = _vpn.stateStream.listen((state) {
@@ -428,9 +439,14 @@ class VpnController extends ChangeNotifier {
   /// of landing twice in the same cold moment.
   static const _trafficProbeAttempts = 3;
 
-  /// sing-box's local control API (`experimental.clash_api`), on the port
-  /// SingboxFeatureSettings.clashApiPort defaults to.
-  static const _singboxApiBase = 'http://127.0.0.1:16756';
+  /// The port a tunnel raised before this app learned to randomise one is
+  /// listening on — [MiscOptions.clashApiPort]'s own default.
+  static const _legacyClashApiPort = 16756;
+
+  /// sing-box's local control API (`experimental.clash_api`), on whichever port
+  /// the running tunnel was started with.
+  String get _singboxApiBase =>
+      'http://127.0.0.1:${_clashApiPort ?? _legacyClashApiPort}';
 
   /// Confirms the established tunnel actually carries traffic, and flags it when
   /// it doesn't.
@@ -527,6 +543,26 @@ class VpnController extends ChangeNotifier {
       16,
       (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
     ).join();
+  }
+
+  /// A free loopback port for the control API, different at every connect.
+  ///
+  /// Asked of the OS rather than picked at random from a range: a port that
+  /// turns out to be taken makes sing-box fail to start, which would trade a
+  /// fingerprinting hole for a VPN that sometimes refuses to connect. Binding
+  /// and immediately releasing leaves a short window in which something else
+  /// could claim it, so a failure to bind — or a race that loses — falls back
+  /// to the old fixed port rather than dropping the tunnel.
+  static Future<int> _pickClashApiPort() async {
+    try {
+      final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = socket.port;
+      await socket.close();
+      return port;
+    } catch (e) {
+      log.w('Could not reserve a control-API port, using the fixed one: $e');
+      return _legacyClashApiPort;
+    }
   }
 
   /// GET against the tunnel's local control API, carrying the secret the config
@@ -725,15 +761,24 @@ class VpnController extends ChangeNotifier {
       // A new tunnel gets a new control-API secret, so a secret that leaked
       // (a support bundle, a shared log) stops working at the next connect.
       final clashApiSecret = _newClashApiSecret();
+      // …and a new port, so the running VPN stops being something any app can
+      // spot by knocking on a well-known number.
+      final clashApiPort = await _pickClashApiPort();
       // Adopted *before* the connect, not after. `connectManualConfigLink` can
       // throw after the config is already installed and the tunnel started (the
       // second-core fallback does exactly that), and a throw past this point
       // would leave a running tunnel holding the new secret while this field
       // still held the old one: every probe would answer 401, the outbound tag
-      // would read as null, and a dead tunnel would stop being detectable.
+      // would read as null, and a dead tunnel would stop being detectable. The
+      // port has the same problem with a louder failure: probes would go to a
+      // port nothing is listening on.
       _clashApiSecret = clashApiSecret;
+      _clashApiPort = clashApiPort;
       unawaited(
         _storage.write(key: _clashApiSecretKey, value: clashApiSecret),
+      );
+      unawaited(
+        _storage.write(key: _clashApiPortKey, value: '$clashApiPort'),
       );
       // Built fresh here so DNS / network-stack preference edits in Settings
       // take effect on this (re)connect.
@@ -741,6 +786,7 @@ class VpnController extends ChangeNotifier {
         configLink: uri,
         featureSettings: connectionSettings.buildFeatureSettings(
           clashApiSecret: clashApiSecret,
+          clashApiPort: clashApiPort,
         ),
       );
       // The user asked for the VPN to be off while this was still running (see
@@ -1194,6 +1240,7 @@ class VpnController extends ChangeNotifier {
       return;
     }
     _clashApiSecret = null;
+    _clashApiPort = null;
     await _wipePersistedTunnelState(_vpn, _storage);
   }
 
@@ -1233,6 +1280,11 @@ class VpnController extends ChangeNotifier {
       await storage.delete(key: _clashApiSecretKey);
     } catch (e) {
       log.w('Could not delete the stored tunnel API secret: $e');
+    }
+    try {
+      await storage.delete(key: _clashApiPortKey);
+    } catch (e) {
+      log.w('Could not delete the stored tunnel API port: $e');
     }
     try {
       await vpn.clearPersistedState();

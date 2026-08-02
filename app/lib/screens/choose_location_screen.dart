@@ -197,59 +197,67 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
   /// mode after having picked a specific country.
   Widget _buildBestTile(Strings s) {
     final isActive = widget.selectedCountry == null;
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () => Navigator.of(context).pop(const LocationSelection.best()),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(16),
-          border: isActive ? Border.all(color: AppColors.accent, width: 1.5) : null,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            const Icon(Icons.bolt, color: AppColors.accent),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    s.bestServer,
+    // The card is a Material rather than a decorated box: ink is painted on the
+    // nearest Material, so an opaque decoration between the splash and the tap
+    // hides the ripple completely (and ListTile asserts about it outright).
+    return Material(
+      color: AppColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: isActive
+            ? const BorderSide(color: AppColors.accent, width: 1.5)
+            : BorderSide.none,
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => Navigator.of(context).pop(const LocationSelection.best()),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              const Icon(Icons.bolt, color: AppColors.accent),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.bestServer,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      s.bestServerAuto,
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              if (isActive)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    s.activeBadge,
                     style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    s.bestServerAuto,
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            if (isActive)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.accent,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  s.activeBadge,
-                  style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              )
-            else
-              Text(s.select, style: const TextStyle(color: AppColors.accent)),
-          ],
+                )
+              else
+                Text(s.select, style: const TextStyle(color: AppColors.accent)),
+            ],
+          ),
         ),
       ),
     );
@@ -293,76 +301,82 @@ class _ChooseLocationScreenState extends State<ChooseLocationScreen> {
   Widget _buildCountryTile(Strings s, ServerCountry country) {
     final isExpanded = _expandedCountry == country.country;
     final isSelected = widget.selectedCountry == country.country;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      // Material, not a decorated box — see [_buildBestTile].
+      child: Material(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: isSelected ? Border.all(color: AppColors.accent, width: 1.5) : null,
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: country.nodes.isEmpty ? null : () => _toggleExpanded(country),
-            onLongPress: () =>
-                Navigator.of(context).pop(LocationSelection.country(country)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Text(
-                    countryCodeToFlagEmoji(country.flag),
-                    style: const TextStyle(fontSize: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          countryLabel(country.country, s.whitelistLocations),
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          s.serversCount(country.nodeCount),
-                          style: const TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: isSelected
+              ? const BorderSide(color: AppColors.accent, width: 1.5)
+              : BorderSide.none,
+        ),
+        child: Column(
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: country.nodes.isEmpty ? null : () => _toggleExpanded(country),
+              onLongPress: () =>
+                  Navigator.of(context).pop(LocationSelection.country(country)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  children: [
+                    Text(
+                      countryCodeToFlagEmoji(country.flag),
+                      style: const TextStyle(fontSize: 22),
                     ),
-                  ),
-                  TextButton(
-                    onPressed: () =>
-                        Navigator.of(context).pop(LocationSelection.country(country)),
-                    child: Text(s.select, style: const TextStyle(color: AppColors.accent)),
-                  ),
-                  if (country.nodes.isNotEmpty)
-                    Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      color: AppColors.textSecondary,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            countryLabel(country.country, s.whitelistLocations),
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            s.serversCount(country.nodeCount),
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                ],
+                    TextButton(
+                      onPressed: () => Navigator.of(context)
+                          .pop(LocationSelection.country(country)),
+                      child: Text(s.select,
+                          style: const TextStyle(color: AppColors.accent)),
+                    ),
+                    if (country.nodes.isNotEmpty)
+                      Icon(
+                        isExpanded ? Icons.expand_less : Icons.expand_more,
+                        color: AppColors.textSecondary,
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (isExpanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Column(
-                children: [
-                  for (final node in country.nodes) _buildNodeRow(s, node),
-                ],
+            if (isExpanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Column(
+                  children: [
+                    for (final node in country.nodes) _buildNodeRow(s, node),
+                  ],
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

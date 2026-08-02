@@ -21,12 +21,15 @@ class InstalledAppsService {
     return raw.map((m) {
       final map = Map<String, dynamic>.from(m);
       final pkg = map['packageName'] as String;
+      // Zero bytes are not an icon: they would decode to nothing and draw a
+      // hole where the fallback glyph belongs.
+      final icon = map['icon'] as Uint8List?;
       return LaunchableApp(
         name: (map['name'] as String?)?.trim().isNotEmpty == true
             ? map['name'] as String
             : pkg,
         packageName: pkg,
-        icon: map['icon'] as Uint8List?,
+        icon: icon != null && icon.isNotEmpty ? icon : null,
       );
     }).toList();
   }

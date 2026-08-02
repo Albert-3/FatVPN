@@ -646,9 +646,15 @@ class ConnectionSettingsController extends ChangeNotifier {
   /// Built fresh at each connect so preference edits take effect on reconnect.
   ///
   /// [clashApiSecret] gates the tunnel's local control API — see
-  /// [MiscOptions.clashApiSecret]. The caller owns it because it also has to
-  /// present it when probing.
-  SingboxFeatureSettings buildFeatureSettings({String? clashApiSecret}) {
+  /// [MiscOptions.clashApiSecret]. [clashApiPort] says where it listens. The
+  /// caller owns both because it also has to present them when probing, and
+  /// because a fixed port announces a running VPN to every app on the phone
+  /// (`docs/open-bugs.md` 3.4). Omitting the port keeps [MiscOptions]' default,
+  /// which is what the plugin's own tests and callers rely on.
+  SingboxFeatureSettings buildFeatureSettings({
+    String? clashApiSecret,
+    int? clashApiPort,
+  }) {
     final whitelist = _splitTunnelMode == SplitTunnelMode.include;
 
     // Per-app split tunneling (Android): on only when at least one app is
@@ -727,7 +733,12 @@ class ConnectionSettingsController extends ChangeNotifier {
         excludePackages:
             splitApps && !whitelist ? packages.toList() : const <String>[],
       ),
-      misc: MiscOptions(clashApiSecret: clashApiSecret),
+      misc: clashApiPort == null
+          ? MiscOptions(clashApiSecret: clashApiSecret)
+          : MiscOptions(
+              clashApiSecret: clashApiSecret,
+              clashApiPort: clashApiPort,
+            ),
     );
   }
 

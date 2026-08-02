@@ -225,38 +225,48 @@ class _AppTile extends StatelessWidget {
   final bool selected;
   final ValueChanged<bool> onChanged;
 
+  /// Drawn when an app has no icon, and when the bytes it does have refuse to
+  /// decode — an undecodable [Image.memory] otherwise renders nothing at all,
+  /// which reads as "the icons disappeared" rather than as a failure.
+  static const _fallbackIcon =
+      Icon(Icons.android, color: AppColors.textSecondary, size: 36);
+
   @override
   Widget build(BuildContext context) {
     final icon = app.icon;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      // A CheckboxListTile paints its background and ink on the nearest
+      // Material. Inside a decorated box that Material is whatever sits
+      // *behind* the card, so the ripple never shows and the tile asserts.
+      child: Material(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: CheckboxListTile(
-        value: selected,
-        onChanged: (v) => onChanged(v ?? false),
-        activeColor: AppColors.accent,
-        checkColor: AppColors.background,
-        controlAffinity: ListTileControlAffinity.trailing,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        secondary: icon != null
-            // cacheWidth/cacheHeight decode straight to the drawn size: at
-            // 96×96 ARGB_8888 the full-res bitmaps were 36 KB each, and a
-            // 200-app list held 7 MB of them.
-            ? Image.memory(
-                icon,
-                width: 36,
-                height: 36,
-                cacheWidth: 72,
-                cacheHeight: 72,
-                filterQuality: FilterQuality.low,
-              )
-            : const Icon(Icons.android, color: AppColors.textSecondary, size: 36),
-        title: Text(
-          app.name,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+        child: CheckboxListTile(
+          value: selected,
+          onChanged: (v) => onChanged(v ?? false),
+          activeColor: AppColors.accent,
+          checkColor: AppColors.background,
+          controlAffinity: ListTileControlAffinity.trailing,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          secondary: icon == null || icon.isEmpty
+              ? _fallbackIcon
+              // cacheWidth/cacheHeight decode straight to the drawn size: at
+              // 96×96 ARGB_8888 the full-res bitmaps were 36 KB each, and a
+              // 200-app list held 7 MB of them.
+              : Image.memory(
+                  icon,
+                  width: 36,
+                  height: 36,
+                  cacheWidth: 72,
+                  cacheHeight: 72,
+                  filterQuality: FilterQuality.low,
+                  errorBuilder: (context, error, stack) => _fallbackIcon,
+                ),
+          title: Text(
+            app.name,
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+          ),
         ),
       ),
     );

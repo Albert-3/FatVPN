@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.fatvpn.fatvpn_app.widget.FatVpnWidgetChannel
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -97,18 +98,44 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(Intent.ACTION_MAIN, null).addCategory(Intent.CATEGORY_LAUNCHER)
         val seen = HashSet<String>()
         val apps = ArrayList<Map<String, Any?>>()
+        var iconFailures = 0
         for (info in pm.queryIntentActivities(intent, 0)) {
             val pkg = info.activityInfo.packageName
             if (pkg == packageName || !seen.add(pkg)) continue
+            val icon = iconBytesFor(pm, info, pkg)
+            if (icon == null) iconFailures++
             apps.add(
                 mapOf(
                     "name" to info.loadLabel(pm).toString(),
                     "packageName" to pkg,
-                    "icon" to drawableToImageBytes(info.loadIcon(pm)),
+                    "icon" to icon,
                 )
             )
         }
+        // A picker that comes back with names and no pictures has been seen
+        // once and never explained, because every failure below was swallowed.
+        // One line per enumeration is enough to tell "the icons never rendered"
+        // apart from "the bytes never survived the trip to Dart".
+        Log.i(TAG, "launchable apps: ${apps.size}, icons missing: $iconFailures")
         return apps
+    }
+
+    /// The activity's own icon, falling back to the application icon: an
+    /// activity-level icon can fail to load on its own (a stale resource
+    /// reference in a package updated under us), and the app icon is the same
+    /// picture to anyone reading this list.
+    private fun iconBytesFor(
+        pm: android.content.pm.PackageManager,
+        info: android.content.pm.ResolveInfo,
+        pkg: String,
+    ): ByteArray? {
+        drawableToImageBytes(info.loadIcon(pm), pkg)?.let { return it }
+        return try {
+            drawableToImageBytes(pm.getApplicationIcon(pkg), pkg)
+        } catch (e: Exception) {
+            Log.w(TAG, "no application icon for $pkg", e)
+            null
+        }
     }
 
     /// Renders an app icon small enough to travel over the platform channel.
@@ -117,20 +144,34 @@ class MainActivity : FlutterActivity() {
     /// in a single message, and serialising that blocks the UI thread for
     /// hundreds of milliseconds. At quality 80 the same icons are roughly a
     /// fifth of the size and indistinguishable at the 36dp the picker draws.
-    private fun drawableToImageBytes(drawable: Drawable?): ByteArray? {
+    private fun drawableToImageBytes(drawable: Drawable?, pkg: String): ByteArray? {
         if (drawable == null) return null
+        var bmp: Bitmap? = null
         return try {
             // Cap icon size — the picker renders them at 36dp, so full-res
             // adaptive icons (often 288px+) just waste decode/compress time.
-            val bmp = Bitmap.createBitmap(ICON_SIZE_PX, ICON_SIZE_PX, Bitmap.Config.ARGB_8888)
+            bmp = Bitmap.createBitmap(ICON_SIZE_PX, ICON_SIZE_PX, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bmp)
             drawable.setBounds(0, 0, canvas.width, canvas.height)
             drawable.draw(canvas)
             val stream = ByteArrayOutputStream()
-            bmp.compress(webpFormat(), ICON_QUALITY, stream)
-            stream.toByteArray()
+            // compress() answers false rather than throwing when the encoder
+            // refuses the bitmap; an empty byte array reaches Dart as bytes
+            // that decode to nothing, which is worse than no icon at all.
+            if (!bmp.compress(webpFormat(), ICON_QUALITY, stream)) {
+                Log.w(TAG, "icon compress refused for $pkg")
+                return null
+            }
+            val bytes = stream.toByteArray()
+            if (bytes.isEmpty()) null else bytes
         } catch (e: Exception) {
+            Log.w(TAG, "icon render failed for $pkg", e)
             null
+        } finally {
+            // ~200 apps × 96×96 ARGB_8888 is 7 MB of bitmaps allocated in one
+            // tight loop; leaving them to the collector is how the second run
+            // of this method meets memory pressure the first one never did.
+            bmp?.recycle()
         }
     }
 
@@ -143,6 +184,7 @@ class MainActivity : FlutterActivity() {
         }
 
     private companion object {
+        const val TAG = "FatVpnApps"
         const val ICON_SIZE_PX = 96
         const val ICON_QUALITY = 80
     }

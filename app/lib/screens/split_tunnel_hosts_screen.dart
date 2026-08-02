@@ -229,25 +229,29 @@ class _HostBypassEditorState extends State<HostBypassEditor> {
       itemCount: hosts.length,
       itemBuilder: (context, i) {
         final host = hosts[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          // A ListTile paints its background and ink on the nearest Material.
+          // Inside a decorated box that Material is whatever is *behind* the
+          // card, so the ripple is invisible and the tile asserts about it.
+          child: Material(
             color: AppColors.card,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: ListTile(
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14)),
-            leading: const Icon(Icons.public, color: AppColors.textSecondary),
-            title: Text(
-              host,
-              style:
-                  const TextStyle(color: AppColors.textPrimary, fontSize: 15),
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.close, color: AppColors.textSecondary),
-              onPressed: () =>
-                  widget.connectionSettings.removeActiveHost(host),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            child: ListTile(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              leading: const Icon(Icons.public, color: AppColors.textSecondary),
+              title: Text(
+                host,
+                style:
+                    const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close, color: AppColors.textSecondary),
+                onPressed: () =>
+                    widget.connectionSettings.removeActiveHost(host),
+              ),
             ),
           ),
         );

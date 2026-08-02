@@ -46,14 +46,22 @@ const _country = ServerCountry(
   ],
 );
 
-String? _secretOf(String? configJson) {
+Map? _clashApiOf(String? configJson) {
   if (configJson == null) return null;
   final config = jsonDecode(configJson) as Map<String, dynamic>;
   final experimental = config['experimental'];
   if (experimental is! Map) return null;
   final clash = experimental['clash_api'];
-  if (clash is! Map) return null;
-  return clash['secret'] as String?;
+  return clash is Map ? clash : null;
+}
+
+String? _secretOf(String? configJson) =>
+    _clashApiOf(configJson)?['secret'] as String?;
+
+int? _portOf(String? configJson) {
+  final controller = _clashApiOf(configJson)?['external_controller'] as String?;
+  if (controller == null) return null;
+  return int.tryParse(controller.split(':').last);
 }
 
 void main() {
@@ -113,5 +121,37 @@ void main() {
     expect(second, isNot(first),
         reason: 'a secret that leaked (support bundle, shared log) must stop '
             'working at the next connect');
+  });
+
+  // docs/open-bugs.md 3.4. The secret keeps other apps from *reading* the
+  // control API; it does nothing about the port itself, and a port that never
+  // moves is a fingerprint — one connection attempt to 127.0.0.1:16756 tells
+  // any app on the phone that this VPN is running, with no secret and no
+  // permission beyond INTERNET.
+  test('the control API does not listen on a well-known port', () async {
+    await vpn.connectToBestNode(_country, networkErrorMessage: 'network');
+    final port = _portOf(platform.capturedConfig);
+
+    expect(port, isNotNull);
+    expect(port, isNot(16756),
+        reason: 'the port every previous build used is the one to move off');
+    // The ephemeral range: what the OS hands out for port 0, and where a
+    // listener is unremarkable.
+    expect(port, greaterThan(1023));
+    expect(port, lessThanOrEqualTo(65535));
+  });
+
+  test('every start gets a different port', () async {
+    await vpn.connectToBestNode(_country, networkErrorMessage: 'network');
+    final first = _portOf(platform.capturedConfig);
+    await vpn.disconnect();
+    await vpn.connectToBestNode(_country, networkErrorMessage: 'network');
+    final second = _portOf(platform.capturedConfig);
+
+    expect(first, isNotNull);
+    expect(second, isNotNull);
+    expect(second, isNot(first),
+        reason: 'a port fixed for the life of an install is still a '
+            'fingerprint, just a per-install one');
   });
 }
