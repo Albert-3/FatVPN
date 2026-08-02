@@ -28,10 +28,7 @@ class SplitTunnelingScreen extends StatelessWidget {
         body: SafeArea(
           child: Column(
             children: [
-              SplitTunnelHeader(
-                title: s.splitTunneling,
-                connectionSettings: connectionSettings,
-              ),
+              SplitTunnelHeader(title: s.splitTunneling),
               SplitTunnelModeSelector(connectionSettings: connectionSettings),
               TabBar(
                 labelColor: AppColors.textPrimary,

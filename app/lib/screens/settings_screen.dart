@@ -278,6 +278,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _stackLabel(cs.networkStack),
                             () => _showStackPicker(s),
                           ),
+                          // Part of the sing-box config rather than the OS
+                          // profile, so it sits with the DNS and stack pickers
+                          // above: all three take effect on the next connect,
+                          // which the home screen arranges by itself.
+                          const Divider(color: AppColors.disabled, height: 24),
+                          _switchRow(
+                            s.trackerProtection,
+                            s.trackerProtectionSubtitle,
+                            cs.blockTrackers,
+                            cs.setBlockTrackers,
+                          ),
                           // Both of these hand control of the tunnel to the
                           // OS, which is why neither is on by default: with
                           // auto-reconnect the system re-establishes the VPN
@@ -323,8 +334,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (defaultTargetPlatform == TargetPlatform.android ||
                       defaultTargetPlatform == TargetPlatform.iOS) ...<Widget>[
                   _sectionTitle(s.routing),
-                  _card(
+                  // The master switch lives here rather than in the header of
+                  // the screen behind this row: on/off is the decision people
+                  // come to Settings to make, and it was the one thing they had
+                  // to open another screen to reach. Rebuilt on settings
+                  // changes for two reasons — the switch's own value, and the
+                  // subtitle that has to say when it is off because tracker
+                  // protection took precedence, which otherwise reads as the
+                  // switch refusing to stay on.
+                  AnimatedBuilder(
+                    animation: widget.connectionSettings,
+                    builder: (context, _) => _card(
                     children: [
+                      _switchRow(
+                        s.splitTunneling,
+                        widget.connectionSettings.blockTrackers
+                            ? s.splitTunnelingOffForTracker
+                            : s.splitTunnelingSwitchSubtitle,
+                        widget.connectionSettings.splitTunnelEnabled,
+                        widget.connectionSettings.setSplitTunnelEnabled,
+                      ),
+                      const Divider(color: AppColors.disabled, height: 24),
                       InkWell(
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
@@ -375,6 +405,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                   ],
                   _sectionTitle(s.system),
@@ -808,9 +839,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// A labelled on/off row. The subtitle is not decoration: both switches that
-  /// use it change what happens when the VPN is *not* working, which the title
-  /// alone cannot convey.
+  /// A labelled on/off row. The subtitle is not decoration: every switch that
+  /// uses it has a consequence the title cannot carry — two change what happens
+  /// while the VPN is *not* working, and the third names the thing it may break.
   Widget _switchRow(
     String label,
     String subtitle,

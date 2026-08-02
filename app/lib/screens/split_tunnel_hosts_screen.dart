@@ -27,10 +27,7 @@ class SplitTunnelHostsScreen extends StatelessWidget {
       body: SafeArea(
         child: Column(
           children: [
-            SplitTunnelHeader(
-              title: s.splitTunneling,
-              connectionSettings: connectionSettings,
-            ),
+            SplitTunnelHeader(title: s.splitTunneling),
             SplitTunnelModeSelector(connectionSettings: connectionSettings),
             Expanded(child: HostBypassEditor(connectionSettings: connectionSettings)),
           ],
@@ -259,52 +256,44 @@ class _HostBypassEditorState extends State<HostBypassEditor> {
   }
 }
 
-/// Shared header (back arrow, centered title, master split-tunnel switch) used
-/// by the split-tunneling screens.
+/// Shared header (back arrow, centered title) used by the split-tunneling
+/// screens.
+///
+/// The master on/off switch used to sit at the right of this row and now lives
+/// in Settings, next to the row that opens these screens: turning the feature
+/// on is what people came to Settings for, and it was the one part of it that
+/// could only be reached by going a screen deeper.
 class SplitTunnelHeader extends StatelessWidget {
-  const SplitTunnelHeader({
-    super.key,
-    required this.title,
-    required this.connectionSettings,
-  });
+  const SplitTunnelHeader({super.key, required this.title});
 
   final String title;
-  final ConnectionSettingsController connectionSettings;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: connectionSettings,
-      builder: (context, _) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
-            children: [
-              IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon:
-                    const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-              ),
-              Expanded(
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              Switch(
-                value: connectionSettings.splitTunnelEnabled,
-                activeTrackColor: AppColors.accent,
-                onChanged: connectionSettings.setSplitTunnelEnabled,
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
           ),
-        );
-      },
+          Expanded(
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          // Balances the back arrow so the title stays optically centred, as
+          // the switch used to.
+          const SizedBox(width: 48),
+        ],
+      ),
     );
   }
 }

@@ -67,6 +67,31 @@ class SingboxRouteRulesBuilder {
       rules.add(<String, Object?>{'ip_is_private': true, 'outbound': 'direct'});
     }
 
+    // Ad/tracker blocking, ahead of every routing decision below it.
+    //
+    // The order is the whole point. Put it after the direct rules and the
+    // seeded bypass list would shield exactly the domains it most needs to
+    // catch — `yandex.ru` is bypassed, and `an.yandex.ru` / `mc.yandex.ru` are
+    // suffixes of it — so a user with the default settings would have ad
+    // blocking that skipped the largest ad network they actually meet. Put it
+    // ahead of them and "blocked" means blocked whichever way the traffic was
+    // going to leave.
+    //
+    // Still below the DNS-hijack and private-network rules above: resolving
+    // and reaching the LAN must not depend on what a list downloaded from the
+    // internet happens to say.
+    if (settings.route.blockAdvertisements) {
+      final List<String> blockedDomains = _dedupeStrings(
+        settings.route.blockedDomainSuffixes,
+      );
+      if (blockedDomains.isNotEmpty) {
+        rules.add(<String, Object?>{
+          'domain_suffix': blockedDomains,
+          'outbound': 'block',
+        });
+      }
+    }
+
     final List<String> directDomains = _dedupeStrings(<String>[
       ...bypassPolicy.directDomains,
       ...settings.route.regionDirectDomains,

@@ -5,6 +5,7 @@ import 'package:singbox_mm/singbox_mm.dart';
 
 import 'app_logger.dart';
 import 'secure_store.dart';
+import 'tracker_block_list.dart';
 
 /// Which way round the split-tunnel lists are read.
 enum SplitTunnelMode {
@@ -45,6 +46,14 @@ class ConnectionSettingsController extends ChangeNotifier {
   static const _splitSeedVersionKey = 'conn_split_hosts_seed_version';
   static const _autoReconnectKey = 'conn_auto_reconnect';
   static const _killSwitchKey = 'conn_kill_switch';
+  static const _blockTrackersKey = 'conn_block_trackers';
+  static const _suspendedKey = 'conn_exclusive_suspended';
+
+  // Values of [_autoSuspended]. Strings rather than an enum because this goes
+  // to disk, and a name is readable in a support dump where an index is not.
+  static const _suspendedNothing = 'none';
+  static const _suspendedSplitTunnel = 'split';
+  static const _suspendedTrackerProtection = 'trackers';
   final _storage = SecureStore();
 
   /// Domains every user gets in the host bypass list: the big Russian services
@@ -94,6 +103,36 @@ class ConnectionSettingsController extends ChangeNotifier {
   bool _autoReconnect = false;
   bool _killSwitch = false;
 
+  /// Whether tracker and ad-network domains are dropped inside the tunnel
+  /// ([TrackerBlockList]).
+  ///
+  /// Off by default, and that is the honest default rather than a timid one. A
+  /// blocklist is a list of things that will stop loading, and some of them —
+  /// a consent banner, a site that serves its own content through a tag
+  /// manager, an app that sulks when its attribution SDK is unreachable — are
+  /// things the user wanted. Nobody should meet that without having asked for
+  /// it; the switch is what asking looks like.
+  ///
+  /// Mutually exclusive with [_splitTunnelEnabled] (employer's decision,
+  /// 2026-08-02). The two overlap in a way that is hard to explain and easy to
+  /// get wrong: the blocklist is matched ahead of the bypass rules, so with
+  /// both on a domain the user had put in the bypass list could still be
+  /// blocked — the bypass list would quietly stop meaning what it has meant in
+  /// every shipped build. Keeping the two apart removes that question instead
+  /// of answering it.
+  bool _blockTrackers = false;
+
+  /// Which of the two mutually exclusive switches was turned off to make room
+  /// for the other, so releasing the winner puts the loser back exactly as the
+  /// user left it.
+  ///
+  /// Persisted, because "and back again" has to survive a restart: someone who
+  /// switches tracker protection on, closes the app, and switches it off a day
+  /// later still expects their split-tunnel rules to return. Kept as one marker
+  /// rather than a flag per switch — only one of them can be suspended at a
+  /// time, and two flags would allow a state that means nothing.
+  String _autoSuspended = _suspendedNothing;
+
   // Split tunneling: when enabled, apps in [_bypassPackages] skip the VPN
   // (mapped to sing-box `exclude_package`). Empty set = nothing bypasses.
   // Per-app bypass only works on Android — iOS has no per-app VPN for non-MDM
@@ -131,6 +170,9 @@ class ConnectionSettingsController extends ChangeNotifier {
   /// Whether traffic must be blocked while the tunnel is down. See
   /// [_killSwitch].
   bool get killSwitch => _killSwitch;
+
+  /// Whether tracker and ad-network domains are blocked. See [_blockTrackers].
+  bool get blockTrackers => _blockTrackers;
 
   /// Whether the lists name what skips the VPN or what is the only thing to
   /// use it. Each mode reads its own lists — see [activePackages].
@@ -215,6 +257,8 @@ class ConnectionSettingsController extends ChangeNotifier {
       _storage.read(key: _splitSeedVersionKey),
       _storage.read(key: _autoReconnectKey),
       _storage.read(key: _killSwitchKey),
+      _storage.read(key: _blockTrackersKey),
+      _storage.read(key: _suspendedKey),
     ]);
     final dns = values[0];
     final customDns = values[1];
@@ -229,13 +273,24 @@ class ConnectionSettingsController extends ChangeNotifier {
     final splitSeedVersion = values[10];
     final autoReconnect = values[11];
     final killSwitch = values[12];
+    final blockTrackers = values[13];
+    final suspended = values[14];
     var changed = false;
+    if (suspended == _suspendedSplitTunnel ||
+        suspended == _suspendedTrackerProtection) {
+      _autoSuspended = suspended!;
+      changed = true;
+    }
     if (autoReconnect == 'true') {
       _autoReconnect = true;
       changed = true;
     }
     if (killSwitch == 'true') {
       _killSwitch = true;
+      changed = true;
+    }
+    if (blockTrackers == 'true') {
+      _blockTrackers = true;
       changed = true;
     }
     if (dns != null) {
@@ -297,6 +352,8 @@ class ConnectionSettingsController extends ChangeNotifier {
       changed = await _seedDefaultBypassHosts(splitEnabled, seededBatches) ||
           changed;
     }
+    // Last, because the seeding above can switch split tunneling on.
+    changed = await _normalizeExclusivePair() || changed;
     if (changed) notifyListeners();
   }
 
@@ -406,11 +463,95 @@ class ConnectionSettingsController extends ChangeNotifier {
     await _storage.write(key: _killSwitchKey, value: enabled.toString());
   }
 
+  /// Turns tracker/ad-network blocking on or off.
+  ///
+  /// Unlike [setAutoReconnect] and [setKillSwitch], this one lives in the
+  /// sing-box config rather than the OS profile, so it takes effect on the next
+  /// connect — [HomeScreen] reconnects a live tunnel by itself when a config
+  /// setting changes (see `_onConnSettingsChanged`).
+  ///
+  /// Turning it on turns split tunneling off, and turning it back off puts
+  /// split tunneling back — see [_autoSuspended].
+  Future<void> setBlockTrackers(bool enabled) async {
+    if (_blockTrackers == enabled) return;
+    _blockTrackers = enabled;
+    if (enabled) {
+      if (_splitTunnelEnabled) {
+        _splitTunnelEnabled = false;
+        _autoSuspended = _suspendedSplitTunnel;
+      }
+    } else if (_autoSuspended == _suspendedSplitTunnel) {
+      _splitTunnelEnabled = true;
+      _autoSuspended = _suspendedNothing;
+    }
+    notifyListeners();
+    await _persistExclusivePair();
+  }
+
+  /// Turns split tunneling on or off. The mirror of [setBlockTrackers]: the two
+  /// are mutually exclusive, and each puts the other back when released.
   Future<void> setSplitTunnelEnabled(bool enabled) async {
     if (_splitTunnelEnabled == enabled) return;
     _splitTunnelEnabled = enabled;
+    if (enabled) {
+      if (_blockTrackers) {
+        _blockTrackers = false;
+        _autoSuspended = _suspendedTrackerProtection;
+      }
+    } else if (_autoSuspended == _suspendedTrackerProtection) {
+      _blockTrackers = true;
+      _autoSuspended = _suspendedNothing;
+    }
     notifyListeners();
-    await _storage.write(key: _splitEnabledKey, value: enabled.toString());
+    await _persistExclusivePair();
+  }
+
+  /// Puts a stored state back inside the "never both" rule, and drops a
+  /// suspension marker that no longer describes anything. Returns whether
+  /// anything changed.
+  ///
+  /// Both switches on at once cannot be produced by this build; it takes a
+  /// hand-edited store, or a downgrade to a version that predates the exclusion
+  /// and then a return. Split tunneling wins that tie. It is the older setting,
+  /// it is what the seeded Russian bypass domains hang off, and its absence is
+  /// the one that breaks things silently — an app the user deliberately kept
+  /// out of the VPN would suddenly find itself inside it, which on a banking
+  /// app looks like the app being broken rather than a setting having changed.
+  Future<bool> _normalizeExclusivePair() async {
+    final bool bothOn = _blockTrackers && _splitTunnelEnabled;
+    // A marker naming a switch that is currently *on* describes a restore that
+    // has already happened by other means.
+    final bool staleMarker =
+        (_autoSuspended == _suspendedSplitTunnel && _splitTunnelEnabled) ||
+            (_autoSuspended == _suspendedTrackerProtection && _blockTrackers);
+    if (!bothOn && !staleMarker) return false;
+
+    if (bothOn) {
+      _blockTrackers = false;
+      log.w(
+        'Tracker protection and split tunneling were both stored as on, which '
+        'this build never writes; kept split tunneling and switched tracker '
+        'protection off',
+      );
+    }
+    _autoSuspended = _suspendedNothing;
+    await _persistExclusivePair();
+    return true;
+  }
+
+  /// Writes all three values the exclusion touches. One place, because the two
+  /// switches and the marker have to land on disk together or not at all: a
+  /// crash between two of these writes is what leaves a user with both switches
+  /// off and nothing to explain why.
+  Future<void> _persistExclusivePair() async {
+    await Future.wait(<Future<void>>[
+      _storage.write(key: _blockTrackersKey, value: _blockTrackers.toString()),
+      _storage.write(
+        key: _splitEnabledKey,
+        value: _splitTunnelEnabled.toString(),
+      ),
+      _storage.write(key: _suspendedKey, value: _autoSuspended),
+    ]);
   }
 
   /// Switches which way the lists are read. The lists themselves are left
@@ -558,11 +699,21 @@ class ConnectionSettingsController extends ChangeNotifier {
         regionDirectCidrs: whitelist ? const <String>[] : cidrs,
         regionProxyDomains: whitelist ? domains : const <String>[],
         regionProxyCidrs: whitelist ? cidrs : const <String>[],
+        blockAdvertisements: _blockTrackers,
+        blockedDomainSuffixes:
+            _blockTrackers ? TrackerBlockList.domainSuffixes : const <String>[],
         // Domain-suffix route rules only match once sing-box knows the
         // connection's domain, which requires sniffing (SNI/host). Enable it
         // only when there are domain rules — IP/CIDR rules match on the
         // destination address alone and need no sniffing.
-        resolveDestination: domains.isNotEmpty,
+        //
+        // The blocklist counts as domain rules, and while it is on there are no
+        // others: split tunneling is off (see [_blockTrackers]), so nothing
+        // else would switch sniffing on. Fake IPs would carry most of it —
+        // sing-box maps them back to the name it handed out — but only for `A`
+        // queries, which leaves the rest of a connection's traffic matching on
+        // an address the rules say nothing about.
+        resolveDestination: domains.isNotEmpty || _blockTrackers,
       ),
       dns: DnsOptions.fromProvider(
         preset: _dnsPreset,

@@ -211,6 +211,7 @@ class RouteOptions {
     this.regionProxyDomains = const <String>[],
     this.regionProxyCidrs = const <String>[],
     this.extraBlockedKeywords = const <String>[],
+    this.blockedDomainSuffixes = const <String>[],
     this.ruleSets = const <SingboxRuleSet>[],
   });
 
@@ -263,6 +264,15 @@ class RouteOptions {
   /// Documented field.
   final List<String> extraBlockedKeywords;
 
+  /// Domain suffixes dropped outright while [blockAdvertisements] is on — the
+  /// ad/tracker list.
+  ///
+  /// Suffixes rather than the `domain_keyword` matching next door, and that is
+  /// not a style choice: `domain_keyword` is a plain substring test, so the
+  /// obvious keyword `ads` also matches `downloads.example.com`. A suffix can
+  /// only ever over-match a domain that genuinely ends in the listed one.
+  final List<String> blockedDomainSuffixes;
+
   /// Custom rule-sets for modern routing (v1.8+).
   final List<SingboxRuleSet> ruleSets;
 
@@ -280,6 +290,7 @@ class RouteOptions {
       'regionProxyDomains': regionProxyDomains,
       'regionProxyCidrs': regionProxyCidrs,
       'extraBlockedKeywords': extraBlockedKeywords,
+      'blockedDomainSuffixes': blockedDomainSuffixes,
       'ruleSets': ruleSets.map((SingboxRuleSet e) => e.toMap()).toList(),
     };
   }
@@ -306,6 +317,7 @@ class RouteOptions {
       regionProxyDomains: _readStringList(raw['regionProxyDomains']),
       regionProxyCidrs: _readStringList(raw['regionProxyCidrs']),
       extraBlockedKeywords: _readStringList(raw['extraBlockedKeywords']),
+      blockedDomainSuffixes: _readStringList(raw['blockedDomainSuffixes']),
       ruleSets: (raw['ruleSets'] as List<dynamic>?)
               ?.map(
                 (dynamic e) =>

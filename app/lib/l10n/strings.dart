@@ -15,6 +15,10 @@ class Strings {
     required this.autoReconnectSubtitle,
     required this.killSwitch,
     required this.killSwitchSubtitle,
+    required this.trackerProtection,
+    required this.trackerProtectionSubtitle,
+    required this.splitTunnelingOffForTracker,
+    required this.splitTunnelingSwitchSubtitle,
     required this.appliesOnNextConnection,
     required this.customDnsHint,
     required this.routing,
@@ -139,6 +143,18 @@ class Strings {
   final String autoReconnectSubtitle;
   final String killSwitch;
   final String killSwitchSubtitle;
+  final String trackerProtection;
+  final String trackerProtectionSubtitle;
+
+  /// Shown in place of the split-tunnelling subtitle while tracker protection
+  /// holds the floor. The two switches are mutually exclusive, and turning one
+  /// on turns the other off — which reads as a bug unless it is said out loud.
+  final String splitTunnelingOffForTracker;
+
+  /// Under the master switch in Settings. Deliberately mode-neutral: the same
+  /// lists mean "goes around the VPN" or "is the only thing allowed through it"
+  /// depending on the mode, and the switch above them governs both.
+  final String splitTunnelingSwitchSubtitle;
   final String appliesOnNextConnection;
   final String customDnsHint;
   final String routing;
@@ -364,6 +380,14 @@ const Strings enStrings = Strings(
   killSwitch: 'Block traffic without VPN',
   killSwitchSubtitle:
       'Nothing leaves the device while the tunnel is down',
+  trackerProtection: 'Tracker protection',
+  trackerProtectionSubtitle:
+      'Blocks trackers and ad networks while the VPN is on. Some sites may '
+      'need it off. Turns split tunneling off while it runs',
+  splitTunnelingOffForTracker:
+      'Off while tracker protection is on. Your rules are kept and come back '
+      'when you switch it off',
+  splitTunnelingSwitchSubtitle: 'Your rules decide what goes through the VPN',
   appliesOnNextConnection: 'Changes apply automatically',
   customDnsHint: 'Custom resolver (DoH URL, tls:// or IP)',
   routing: 'ROUTING',
@@ -451,14 +475,18 @@ const Strings enStrings = Strings(
   cancel: 'Cancel',
   searchApps: 'Search apps',
   loadingApps: 'Loading apps…',
-  splitTunnelDisabledHint: 'Turn on the switch above to pick apps that bypass the VPN.',
+  splitTunnelDisabledHint:
+      'Split tunneling is off. Turn it on in Settings to pick apps that bypass '
+      'the VPN.',
   splitTunnelingSubtitleHosts: 'Choose which domains and IPs use the VPN',
   hostsBypassVpn: 'Domains and IP ranges that bypass the VPN',
   addBypassHost: 'Add domain or IP',
   bypassHostHint: 'example.com, *.ru or 10.0.0.0/8',
   invalidBypassHost: 'Enter a domain (example.com) or an IP/CIDR (10.0.0.0/8).',
   bypassHostExists: 'This rule is already in the list.',
-  splitTunnelHostsDisabledHint: 'Turn on the switch above to add domains and IPs that bypass the VPN.',
+  splitTunnelHostsDisabledHint:
+      'Split tunneling is off. Turn it on in Settings to add domains and IPs '
+      'that bypass the VPN.',
   noBypassHosts: 'No rules yet. Tap “Add domain or IP” to create one.',
   splitTunnelAppsTab: 'Apps',
   splitTunnelHostsTab: 'Domains / IP',
@@ -468,9 +496,11 @@ const Strings enStrings = Strings(
   appsUseVpnOnly: 'Only these apps use the VPN',
   hostsUseVpnOnly: 'Only these domains and IP ranges use the VPN',
   splitTunnelIncludeDisabledHint:
-      'Turn on the switch above to pick the only apps that use the VPN.',
+      'Split tunneling is off. Turn it on in Settings to pick the only apps '
+      'that use the VPN.',
   splitTunnelHostsIncludeDisabledHint:
-      'Turn on the switch above to pick the only domains and IPs that use the VPN.',
+      'Split tunneling is off. Turn it on in Settings to pick the only domains '
+      'and IPs that use the VPN.',
   splitTunnelIncludeEmptyNotice:
       'This list is empty, so everything still goes through the VPN.',
   notifExpiringSoonTitle: 'Access ending soon',
@@ -518,6 +548,15 @@ final Strings ruStrings = Strings(
       'Система сама поднимет VPN после сбоя или перезагрузки',
   killSwitch: 'Блокировать трафик без VPN',
   killSwitchSubtitle: 'Пока туннель не работает, ничего не уходит с устройства',
+  trackerProtection: 'Защита от трекинга',
+  trackerProtectionSubtitle:
+      'Блокирует трекеры и рекламные сети при включённом VPN. Отдельные сайты '
+      'могут потребовать её выключить. Раздельное туннелирование на это время '
+      'отключается',
+  splitTunnelingOffForTracker:
+      'Отключено, пока включена защита от трекинга. Правила сохранены и '
+      'вернутся, когда вы её выключите',
+  splitTunnelingSwitchSubtitle: 'Ваши правила решают, что идёт через VPN',
   appliesOnNextConnection: 'Изменения применяются автоматически',
   customDnsHint: 'Свой резолвер (DoH-URL, tls:// или IP)',
   routing: 'МАРШРУТИЗАЦИЯ',
@@ -609,14 +648,18 @@ final Strings ruStrings = Strings(
   cancel: 'Отмена',
   searchApps: 'Поиск приложений',
   loadingApps: 'Загрузка приложений…',
-  splitTunnelDisabledHint: 'Включите переключатель выше, чтобы выбрать приложения в обход VPN.',
+  splitTunnelDisabledHint:
+      'Раздельное туннелирование выключено. Включите его в настройках, чтобы '
+      'выбрать приложения в обход VPN.',
   splitTunnelingSubtitleHosts: 'Выберите, какие домены и IP идут через VPN',
   hostsBypassVpn: 'Домены и подсети, которые обходят VPN',
   addBypassHost: 'Добавить домен или IP',
   bypassHostHint: 'example.com, *.ru или 10.0.0.0/8',
   invalidBypassHost: 'Введите домен (example.com) или IP/подсеть (10.0.0.0/8).',
   bypassHostExists: 'Это правило уже в списке.',
-  splitTunnelHostsDisabledHint: 'Включите переключатель выше, чтобы добавить домены и IP в обход VPN.',
+  splitTunnelHostsDisabledHint:
+      'Раздельное туннелирование выключено. Включите его в настройках, чтобы '
+      'добавить домены и IP в обход VPN.',
   noBypassHosts: 'Пока нет правил. Нажмите «Добавить домен или IP».',
   splitTunnelAppsTab: 'Приложения',
   splitTunnelHostsTab: 'Домены / IP',
@@ -626,9 +669,11 @@ final Strings ruStrings = Strings(
   appsUseVpnOnly: 'Через VPN идут только эти приложения',
   hostsUseVpnOnly: 'Через VPN идут только эти домены и подсети',
   splitTunnelIncludeDisabledHint:
-      'Включите переключатель выше, чтобы выбрать приложения, которым разрешён VPN.',
+      'Раздельное туннелирование выключено. Включите его в настройках, чтобы '
+      'выбрать приложения, которым разрешён VPN.',
   splitTunnelHostsIncludeDisabledHint:
-      'Включите переключатель выше, чтобы выбрать домены и IP, которым разрешён VPN.',
+      'Раздельное туннелирование выключено. Включите его в настройках, чтобы '
+      'выбрать домены и IP, которым разрешён VPN.',
   splitTunnelIncludeEmptyNotice:
       'Список пуст, поэтому весь трафик по-прежнему идёт через VPN.',
   notifExpiringSoonTitle: 'Доступ скоро закончится',
