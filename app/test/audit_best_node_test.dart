@@ -117,7 +117,6 @@ void main() {
       'n5.example.com': null,
     });
 
-    final started = DateTime.now();
     try {
       await vpn.connectToBestNode(
         ServerCountry(country: 'DE', flag: 'DE', nodeCount: nodes.length, nodes: nodes),
@@ -127,15 +126,17 @@ void main() {
       // The connect itself is not what this test is about; the pings happen
       // before it and are already recorded.
     }
-    final elapsed = DateTime.now().difference(started);
 
     expect(pings.asked.toSet(), hasLength(6),
         reason: 'every candidate must still be measured');
-    expect(pings.maxInFlight, greaterThan(1),
+    // The claim is "in parallel", and the in-flight counter says it directly:
+    // `mapConcurrently` runs a pool of 6, so six candidates all enter before any
+    // of them returns. This used to be asserted by wall clock instead
+    // (elapsed < 6 x 40 ms), which measures the machine as much as the code and
+    // went red on a loaded one — the same test, the same tree, both colours.
+    expect(pings.maxInFlight, 6,
         reason: 'sequential pings cost 3 s per unreachable node on the path of '
             'every Connect tap');
-    expect(elapsed.inMilliseconds, lessThan(6 * 40),
-        reason: '6 x 40 ms sequentially would be 240 ms');
   });
 
   test('parallelism is bounded so 20 nodes do not open 20 sockets at once',
