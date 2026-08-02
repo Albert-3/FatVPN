@@ -35,6 +35,14 @@ void main() {
     await AppLogger.instance.init();
   });
 
+  /// Everything the logger has actually put on disk.
+  String logText() {
+    final logDir = Directory('${dir.path}${Platform.pathSeparator}fatvpn_logs');
+    final files = logDir.listSync().whereType<File>().toList();
+    expect(files, isNotEmpty, reason: 'the logger should have opened a file');
+    return files.map((f) => f.readAsStringSync()).join('\n');
+  }
+
   test('logging an error with a stack trace does not throw', () {
     final before = AppLogger.instance.inMemoryCount;
 
@@ -64,6 +72,20 @@ void main() {
     );
   });
 
+  test('an awaited flush waits for the one already in flight', () async {
+    // `e()` fires an unawaited flush of its own, so any flush() called just
+    // after an error used to find one in flight — and *return* rather than
+    // join it. The caller got a completed future with nothing on disk. On a
+    // phone that is the support bundle missing the last lines before a
+    // force-quit: exactly the lines someone went looking for.
+    AppLogger.instance.e('trigger', 'err', StackTrace.current);
+    AppLogger.instance.i('after the error');
+
+    await AppLogger.instance.flush();
+
+    expect(logText(), contains('after the error'));
+  });
+
   test('lines written while a flush is in flight reach the file', () async {
     AppLogger.instance.i('before the flush');
     final flushing = AppLogger.instance.flush();
@@ -73,10 +95,7 @@ void main() {
     await flushing;
     await AppLogger.instance.flush();
 
-    final logDir = Directory('${dir.path}${Platform.pathSeparator}fatvpn_logs');
-    final files = logDir.listSync().whereType<File>().toList();
-    expect(files, isNotEmpty, reason: 'the logger should have opened a file');
-    final text = files.map((f) => f.readAsStringSync()).join('\n');
+    final text = logText();
     expect(text, contains('before the flush'));
     expect(text, contains('during the flush'));
   });

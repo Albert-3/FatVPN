@@ -13,9 +13,16 @@
 // be asserted together: an address without the rule is a leak, the rule without
 // an address is decoration.
 //
-// The file `singbox_inbound_builder.dart` is SHARED WITH ANDROID, which stays
-// IPv4-only on purpose (its released build was device-tested that way), so every
-// assertion below names the platform it protects.
+// The file `singbox_inbound_builder.dart` is SHARED WITH ANDROID, and since
+// 2026-08-02 Android carries the address too (docs/open-bugs.md 1.1): the gap
+// was the same on both, and six snapshots of the live Android config showed the
+// TUN with an IPv4 address and nothing else. Assertions still name the platform
+// they protect — the two are equal now by decision, not by accident, and a
+// regression could land on one alone.
+//
+// Neither platform's half has been measured on a device: the leak was inferred
+// from the config, never reproduced. What these tests pin is the shape of the
+// config, which is all a host test can see.
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -100,38 +107,61 @@ void main() {
       expect(addresses, contains(defaultTunInet6Address));
     });
 
-    test('Android: the tun inbound stays IPv4-only', () {
+    test('Android: the tun inbound has a v6 address too', () {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
 
       final addresses = _tunAddresses(_build());
 
       expect(
-        addresses.where((a) => a.contains(':')),
-        isEmpty,
+        addresses.any((a) => a.contains(':')),
+        isTrue,
         reason:
-            'the released Android build was device-tested IPv4-only; '
-            'porting this is a separate task with its own run, not a side '
-            'effect of the iOS fix',
+            'the same hole as on iOS, and open for the same reason: '
+            'Android routes no v6 into an interface that holds no v6 '
+            'address, so the ::/0 rule below never sees a packet',
       );
-      expect(addresses, hasLength(1));
+      expect(addresses, contains(defaultTunInet6Address));
+    });
+
+    test('every platform that gets a v6 address also gets MTU >= 1280', () {
+      // The coupling, not the two values. An interface below the IPv6 minimum
+      // link MTU may not carry an inet6 address at all — the kernel drops the
+      // address rather than negotiating — so the pair "1100 + inet6" produces a
+      // tunnel that reads as fixed and leaks exactly as before. That is worse
+      // than the original bug, because nothing in the config says so.
+      for (final platform in TargetPlatform.values) {
+        debugDefaultTargetPlatformOverride = platform;
+        final config = _build();
+        final hasV6 = _tunAddresses(config).any((a) => a.contains(':'));
+        if (!hasV6) continue;
+        expect(
+          _tun(config)?['mtu'],
+          greaterThanOrEqualTo(1280),
+          reason: '$platform hands the TUN a v6 address',
+        );
+      }
     });
 
     test('the address is a documented ULA, not a routable prefix', () {
-      // The getter is platform-keyed and answers null off iOS, so the override
-      // is part of the assertion rather than scaffolding.
-      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      // The getter is platform-keyed, so the override is part of the assertion
+      // rather than scaffolding.
+      for (final platform in <TargetPlatform>[
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      ]) {
+        debugDefaultTargetPlatformOverride = platform;
 
-      // fdfe::/8 is unique-local: it cannot be reached from the internet, so
-      // handing it to the interface leaks nothing by itself.
-      expect(defaultTunInet6Address, startsWith('fd'));
-      expect(defaultTunInet6Address, contains('/'));
+        // fdfe::/8 is unique-local: it cannot be reached from the internet, so
+        // handing it to the interface leaks nothing by itself.
+        expect(defaultTunInet6Address, startsWith('fd'), reason: '$platform');
+        expect(defaultTunInet6Address, contains('/'), reason: '$platform');
+      }
 
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(
-        defaultTunInet6Address,
-        isNull,
-        reason: 'and Android must not pick it up by accident',
-      );
+      // Everything else keeps the old answer: no v6 address, and with it the
+      // old MTU. A platform that starts shipping a TUN here has to make the
+      // choice deliberately, not inherit it.
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      expect(defaultTunInet6Address, isNull);
     });
   });
 

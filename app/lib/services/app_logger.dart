@@ -140,13 +140,33 @@ class AppLogger {
   /// force-quit doesn't lose the trail — which was untrue as long as the only
   /// flush happened in [clear]. Called on errors, on a short timer, and when
   /// the app is backgrounded (where the OS may kill it without warning).
-  Future<void> flush() async {
+  Future<void> flush() {
     _flushTimer?.cancel();
     _flushTimer = null;
+    if (_sink == null) return Future<void>.value();
+    // Re-entrant calls are *chained*, not dropped. This used to `return` when a
+    // flush was already in flight, on the reasoning that the one in flight
+    // writes the same buffer through — but returning is not joining. The caller
+    // got a completed future while nothing had reached the disk, which is the
+    // one promise this method exists to make: `e()` fires an unawaited flush on
+    // every error, so any awaited flush shortly after an error — backgrounding,
+    // building a support bundle — could be a no-op. It showed up as a flaky
+    // test; on a phone it would show up as the last lines before a force-quit
+    // missing from the bundle, i.e. exactly the lines someone wanted.
+    final Future<void> queued =
+        (_flushInFlight ?? Future<void>.value()).then((_) => _flushOnce());
+    _flushInFlight = queued;
+    return queued.whenComplete(() {
+      if (identical(_flushInFlight, queued)) _flushInFlight = null;
+    });
+  }
+
+  /// The flush currently running or queued, so callers can wait for it.
+  Future<void>? _flushInFlight;
+
+  Future<void> _flushOnce() async {
     final sink = _sink;
-    // Re-entrant calls would each bind the sink; the one already in flight is
-    // writing the same buffer through, so joining it is the same guarantee.
-    if (sink == null || _flushing) return;
+    if (sink == null) return;
     _flushing = true;
     try {
       await sink.flush();
@@ -154,13 +174,26 @@ class AppLogger {
       // Best-effort: the lines are still in the in-memory buffer.
     } finally {
       _flushing = false;
-      if (_pendingWrites.isNotEmpty) {
-        final parked = List<String>.of(_pendingWrites);
-        _pendingWrites.clear();
-        for (final line in parked) {
-          _write(line);
-        }
-      }
+    }
+
+    if (_pendingWrites.isEmpty) return;
+    final parked = List<String>.of(_pendingWrites);
+    _pendingWrites.clear();
+    for (final line in parked) {
+      _write(line);
+    }
+    // Replaying puts those lines in the sink's buffer, not on the disk. Without
+    // this second pass an awaited flush would still lose precisely the lines it
+    // had displaced — they were written before the call, so they are covered by
+    // its promise. Anything parked by *this* pass was written after, and rides
+    // the next flush.
+    _flushing = true;
+    try {
+      await sink.flush();
+    } catch (_) {
+      // Same best-effort.
+    } finally {
+      _flushing = false;
     }
   }
 

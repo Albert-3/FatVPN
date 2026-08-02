@@ -127,11 +127,16 @@ void main() {
           reason: 'above the Ethernet MTU the tunnel would fragment');
     });
 
-    test('the Android default is left as it shipped', () {
-      // The plan is iOS-scoped and this file is shared; Android's 1100 is what
-      // the released build was device-tested against. Stated explicitly so a
-      // later edit has to decide to change it rather than drift into it.
-      expect(mtuOn(TargetPlatform.android), 1100);
+    test('the Android default is the IPv6 minimum, not the old 1100', () {
+      // Changed 2026-08-02, and not for throughput: it is the precondition for
+      // giving the Android TUN an inet6 address (docs/open-bugs.md 1.1). An
+      // interface below 1280 may not carry IPv6 at all, so "1100 + inet6" is a
+      // tunnel that reads as fixed and leaks exactly as before.
+      //
+      // The pin stays a literal so the next edit has to decide rather than
+      // drift: the value the released Android build was device-tested against
+      // is 1100, and this one has been on no device at all.
+      expect(mtuOn(TargetPlatform.android), 1280);
     });
 
     test('an explicit InboundOptions.mtu wins over the platform default', () {

@@ -7,10 +7,16 @@
 // where the auto-MTU probe lives. Making `tunMtu` nullable created a specific
 // hazard there: `mtuCandidates.indexOf(null)` is -1, `max(0, -1)` is 0, and
 // candidate 0 is the *highest* value in the list. Unguarded, every ordinary
-// connect would have been pinned to 1400 — overriding the platform default on
-// Android (1100), which is the shipped, device-tested value.
+// connect would have been pinned to 1400 — overriding the platform default.
 //
 // So these tests drive SignboxVpn itself and read what was actually written.
+//
+// They assert against [defaultTunMtu] rather than a literal on purpose: what is
+// being protected is "an unset tunMtu resolves to the platform default", not
+// any particular number. The numbers themselves are pinned per platform in
+// ios_audit_tun_stack_and_mtu_test.dart, which is where a change of default has
+// to be argued. (Android's moved 1100 → 1280 on 2026-08-02, as the precondition
+// for giving the TUN an inet6 address — see ios_audit_ipv6_leak_test.dart.)
 
 import 'dart:async';
 import 'dart:convert';
@@ -167,10 +173,10 @@ void main() {
     expect(platform.writtenConfigs, isNotEmpty);
     expect(
       _mtuOf(platform.writtenConfigs.first),
-      1100,
-      reason: 'flutter_test reports the Android platform, whose shipped MTU is '
-          '1100; resolving an unset tunMtu to the top probe candidate would '
-          'silently move every Android install to 1400',
+      defaultTunMtu,
+      reason: 'nothing was configured and nothing probed, so the platform '
+          'default must survive; resolving an unset tunMtu to the top probe '
+          'candidate would silently move every install to 1400',
     );
 
     await vpn.dispose();
@@ -221,11 +227,10 @@ void main() {
     expect(platform.writtenConfigs, isNotEmpty);
     expect(
       _mtuOf(platform.writtenConfigs.first),
-      1100,
-      reason: 'SingboxInboundBuilder.defaultTunMtu documents "Android keeps '
-          '1100: that value is what the device testing behind the current '
-          'release was done against" — either the preset must stop overriding '
-          'it, or that promise is not being kept',
+      defaultTunMtu,
+      reason: 'the connect path must agree with the pool path about what an '
+          'unconfigured connect means — either the preset stops overriding the '
+          'platform default, or defaultTunMtu is not what ships',
     );
 
     await vpn.dispose();
@@ -251,7 +256,7 @@ void main() {
       ),
     );
 
-    expect(_mtuOf(platform.writtenConfigs.first), 1100,
+    expect(_mtuOf(platform.writtenConfigs.first), defaultTunMtu,
         reason: 'candidates exist, but none of them was asked for');
 
     await vpn.dispose();

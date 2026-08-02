@@ -17,35 +17,56 @@ enum SingboxTunImplementation { system, gvisor }
 /// which on iOS is also another slice of a battery and of a 50 MB memory
 /// budget.
 ///
-/// Raised on iOS only. 1280 is the IPv6 minimum link MTU, so nothing on a v6
-/// path may fragment below it, and it still leaves room for the outbound's own
-/// encapsulation. Android keeps 1100: that is the value the current release was
-/// device-tested against, and the config builder is shared between the two.
-int get defaultTunMtu =>
-    defaultTargetPlatform == TargetPlatform.iOS ? 1280 : 1100;
+/// 1280 is the IPv6 minimum link MTU, so nothing on a v6 path may fragment
+/// below it, and it still leaves room for the outbound's own encapsulation.
+///
+/// Android was raised to it on 2026-08-02, and **not** as a throughput tweak:
+/// it is a precondition of [defaultTunInet6Address]. An interface below 1280
+/// may not carry IPv6 at all — the kernel refuses the address rather than
+/// negotiating — so a TUN asking for both 1100 and an inet6 address either
+/// comes up without v6 or does not come up. The first outcome is the dangerous
+/// one: the leak would stay open while every reading of the config said it was
+/// closed. The two values move together or not at all.
+///
+/// 1100 stays for anything that is neither: it is well below every path MTU and
+/// safe by construction, and no such platform ships a TUN here today.
+int get defaultTunMtu => switch (defaultTargetPlatform) {
+  TargetPlatform.iOS || TargetPlatform.android => 1280,
+  _ => 1100,
+};
 
 /// IPv6 address given to the TUN interface, or null to leave it IPv4-only.
 ///
-/// Non-null on iOS, and this is a leak fix rather than a feature. The config
-/// already blocks `::/0` inside sing-box (see `SingboxRouteRulesBuilder`, under
-/// `ipv6RouteMode == disable`) — but a rule can only act on packets that reach
-/// the core, and iOS routes nothing of a family the tunnel interface holds no
-/// address for. With no inet6 address the whole v6 half of the device's traffic
-/// went around the tunnel on an IPv6-enabled carrier, in the clear, with the
-/// user's real address: a leak a DNS-leak test cannot see, because DNS is not
-/// what leaks. Giving the interface an address is what puts `::/0` in front of
-/// the block rule.
+/// A leak fix rather than a feature. The config already blocks `::/0` inside
+/// sing-box (see `SingboxRouteRulesBuilder`, under `ipv6RouteMode == disable`)
+/// — but a rule can only act on packets that reach the core, and an OS routes
+/// nothing of a family the tunnel interface holds no address for. With no inet6
+/// address the whole v6 half of the device's traffic goes around the tunnel on
+/// an IPv6-enabled carrier, in the clear, with the user's real address: a leak
+/// a DNS-leak test cannot see, because DNS is not what leaks. Giving the
+/// interface an address is what puts `::/0` in front of the block rule.
 ///
 /// The prefix is sing-box's own documented TUN default, chosen from the unique
 /// local range so it cannot collide with anything routable.
 ///
-/// Android keeps IPv4-only: the same gap exists there, but this file is shared
-/// and the Android build is the device-tested one — closing it there is its own
-/// change, with its own testing.
-String? get defaultTunInet6Address =>
-    defaultTargetPlatform == TargetPlatform.iOS
-    ? 'fdfe:dcba:9876::1/126'
-    : null;
+/// **Android joined iOS here on 2026-08-02** (`docs/open-bugs.md` 1.1). The gap
+/// was identical on both — six snapshots of the live Android config taken on
+/// 2026-08-02 all showed `"address":"172.19.0.1/30"` and nothing else — and
+/// nothing about the reasoning was iOS-specific. Two things travel with it:
+/// [defaultTunMtu] rises to the v6 minimum of 1280 (an interface below it
+/// cannot hold an inet6 address at all), and Android's native side needs no
+/// change, because `VpnTunBuilderConfigurator` already reads `inet6Address`
+/// out of libbox's `TunOptions` and adds `::/0` when one is present.
+///
+/// ⚠️ Not measured on a device. The leak was inferred from the config, not
+/// reproduced — the emulator most likely has no IPv6 at all — so this closes
+/// what the config says is open. Confirming it takes a phone on a carrier with
+/// real IPv6 and `test-ipv6.com`; until then the honest claim is "the interface
+/// now has an address for the family", not "the leak is gone".
+String? get defaultTunInet6Address => switch (defaultTargetPlatform) {
+  TargetPlatform.iOS || TargetPlatform.android => 'fdfe:dcba:9876::1/126',
+  _ => null,
+};
 
 /// TUN stack used when the caller expresses no preference.
 ///

@@ -334,14 +334,15 @@ void main() {
     expect(tunInbound['mtu'], lessThanOrEqualTo(9000));
     // Was `containsKey('inet6_address')`, which could never fail: the builder
     // has no such key — every address goes into `address`. Assert the thing the
-    // name promised instead. This runs on the default (non-iOS) platform, where
-    // the tunnel stays IPv4-only; the iOS side is pinned in
-    // ios_audit_ipv6_leak_test.dart.
+    // name promised instead. Since 2026-08-02 Android carries a v6 address too
+    // (docs/open-bugs.md 1.1) — without one the OS routes no v6 into the tunnel
+    // and the `::/0 → block` rule never sees a packet. Both platforms are
+    // pinned in ios_audit_ipv6_leak_test.dart; here it is only shape.
     expect(
       (tunInbound['address'] as List<dynamic>).whereType<String>().where(
         (String address) => address.contains(':'),
       ),
-      isEmpty,
+      hasLength(1),
     );
     expect(tunInbound['include_package'], <String>['com.example.browser']);
     expect(tunInbound['exclude_package'], <String>['com.example.bank']);
@@ -2017,7 +2018,7 @@ void main() {
   });
 
   test(
-    'strict-route mode omits inet6 TUN address when ipv6 route mode is disabled',
+    'strict-route mode still gives the TUN an inet6 address when ipv6 is disabled',
     () async {
       final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
       SignboxVpnPlatform.instance = fakePlatform;
@@ -2047,22 +2048,23 @@ void main() {
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
-      // Was `containsKey('inet6_address')`, which could never fail: the builder
-      // has no such key — every address goes into `address`. Assert the thing the
-      // name promised instead. This runs on the default (non-iOS) platform, where
-      // the tunnel stays IPv4-only; the iOS side is pinned in
-      // ios_audit_ipv6_leak_test.dart.
+      // The old assertion (and the old test name) read `disable` as "no v6 on
+      // the interface". That is what the leak *was*: with no address of the
+      // family the OS routes no v6 into the tunnel, the `::/0 → block` rule
+      // never sees a packet, and every v6 connection goes out around the VPN
+      // in the clear. `disable` means blocked, not absent — so the address has
+      // to be there for the rule to be able to act on anything.
       expect(
         (tunInbound['address'] as List<dynamic>).whereType<String>().where(
           (String address) => address.contains(':'),
         ),
-        isEmpty,
+        hasLength(1),
       );
     },
   );
 
   test(
-    'hysteria2 with ipv6 disabled forces ipv4-only DNS and disables tun inet6 capture',
+    'hysteria2 with ipv6 disabled forces ipv4-only DNS and blocks v6 in-tunnel',
     () async {
       final FakeSignboxVpnPlatform fakePlatform = FakeSignboxVpnPlatform();
       SignboxVpnPlatform.instance = fakePlatform;
@@ -2093,16 +2095,15 @@ void main() {
                   )
                   as Map<dynamic, dynamic>)
               .cast<String, dynamic>();
-      // Was `containsKey('inet6_address')`, which could never fail: the builder
-      // has no such key — every address goes into `address`. Assert the thing the
-      // name promised instead. This runs on the default (non-iOS) platform, where
-      // the tunnel stays IPv4-only; the iOS side is pinned in
-      // ios_audit_ipv6_leak_test.dart.
+      // Same correction as the test above: the interface keeps a v6 address so
+      // that `::/0 → block` has traffic to act on. ipv4-only DNS is the other
+      // half — with no AAAA answers almost nothing tries v6 in the first place,
+      // and what does is blocked rather than leaked.
       expect(
         (tunInbound['address'] as List<dynamic>).whereType<String>().where(
           (String address) => address.contains(':'),
         ),
-        isEmpty,
+        hasLength(1),
       );
 
       final List<dynamic> outbounds = config['outbounds'] as List<dynamic>;

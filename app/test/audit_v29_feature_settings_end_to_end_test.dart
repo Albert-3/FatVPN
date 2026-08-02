@@ -96,13 +96,17 @@ void main() {
             'emitted config, or every probe runs unauthenticated');
   });
 
-  test('Android defaults are untouched: gvisor, MTU 1100, cache on', () async {
+  test('Android keeps gvisor and the cache; MTU is now 1280', () async {
     final config = await _buildOn(TargetPlatform.android);
     final tun = _tun(config);
 
     expect(tun?['stack'], 'gvisor',
         reason: 'the shipped, device-tested Android default');
-    expect(tun?['mtu'], 1100);
+    expect(tun?['mtu'], 1280,
+        reason: 'raised from 1100 on 2026-08-02 as the precondition for the '
+            'TUN carrying an inet6 address (docs/open-bugs.md 1.1): an '
+            'interface below the IPv6 minimum link MTU cannot hold one, so '
+            '1100 + inet6 would read as fixed and leak exactly as before');
     expect(_section(config, 'cache_file')?['enabled'], true,
         reason: 'Android has no jetsam ceiling and keeps the cache');
   });
