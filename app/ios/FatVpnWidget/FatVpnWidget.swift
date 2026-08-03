@@ -176,22 +176,32 @@ struct FatVpnWidgetEntryView: View {
         .widgetURL(tileURL)
     }
 
-    /// What a tap on the tile does.
+    /// What a tap on the tile does, for everything the power control does not
+    /// own.
     ///
-    ///  * **With a session** — the toggle, for the whole tile, on every version
-    ///    of iOS. The press is a link everywhere (see [powerControl]), so there
-    ///    is no in-tile button for a URL to swallow, and `systemSmall` could not
-    ///    have had a second tap target regardless: WidgetKit gives a small
-    ///    widget exactly one, and it is this.
+    ///  * **iOS 18+ with a session** — `nil`, and that matters: a `.widgetURL`
+    ///    makes the whole widget one tap target and is reported to swallow
+    ///    presses that land on a `Button(intent:)` inside it (Apple Developer
+    ///    Forums thread 731758). The button owns its area; a tap anywhere else
+    ///    falls through to WidgetKit's default, which is "open the app" anyway.
+    ///  * **iOS 17 and below, with a session** — the toggle, for the whole tile.
+    ///    There is no button on those versions (see [powerControl]), so nothing
+    ///    is left for a URL to swallow, and `systemSmall` could not have had a
+    ///    second tap target regardless: WidgetKit gives a small widget exactly
+    ///    one, and it is this.
     ///  * **No session** — `open`, because the only thing the user can do about
     ///    that is on a screen. The Dart side tells `widget/open` apart from a
     ///    plain launch.
     ///
-    /// The cost is real and deliberate: a tap on the status text toggles the VPN
-    /// too, where the design says it should only open the app. That is the price
-    /// of the control working at all — see [powerControl].
+    /// The cost on 17 is real and deliberate: a tap on the status text toggles
+    /// the VPN there too, where the design says it should only open the app.
+    /// That is the price of the control working at all — see [powerControl].
     private var tileURL: URL? {
-        snapshot.signedIn ? FatVpnWidgetLink.toggle : FatVpnWidgetLink.open
+        guard snapshot.signedIn else { return FatVpnWidgetLink.open }
+        if #available(iOSApplicationExtension 18.0, *) {
+            return nil
+        }
+        return FatVpnWidgetLink.toggle
     }
 
     /// The session clock while connected, the call to action otherwise.
@@ -216,36 +226,39 @@ struct FatVpnWidgetEntryView: View {
         }
     }
 
-    /// The power control as a tap target: **a link on every version of iOS**.
+    /// The power control as a tap target, by what the OS actually delivers.
     ///
-    ///  * **With a session** — the press opens the app and arrives as
-    ///    `fatvpn://widget/toggle`, which the app routes to the same action an
-    ///    in-app press takes. Confirmed working on a device (iPhone 11 /
-    ///    iOS 17.6.1, build 207, and again on iOS 18 in the 2026-08-03 run).
+    ///  * **iOS 18+** — a real `Button` running [FatVpnTogglePowerIntent]: the
+    ///    system performs it in the app's process in the background, and nothing
+    ///    appears on screen. This is the behaviour the widget exists for.
+    ///  * **iOS 17 and below** — a link, not a button. The press opens the app
+    ///    and arrives as `fatvpn://widget/toggle`, which the app routes to the
+    ///    same action an in-app press takes. Confirmed working on a device
+    ///    (iPhone 11 / iOS 17.6.1, build 207).
     ///  * **No session** — not a control at all: the tile opens the app, the
     ///    only place the user can do anything about that.
     ///
-    /// ⚠️ **Why no App Intent, when interactive widgets are an iOS 17 feature.**
-    ///
-    /// On 17 it never ran. Every marker Apple documents was shipped and tried on
-    /// an iPhone 11 / iOS 17.6.1 — `ForegroundContinuableIntent`,
+    /// ⚠️ **Why 17 gets a link, when interactive widgets are a 17 feature.**
+    /// Because there it does not run. Every marker Apple documents was shipped
+    /// and tried on that phone — `ForegroundContinuableIntent`,
     /// `LiveActivityIntent`, `AudioPlaybackIntent` — and then `openAppWhenRun:
     /// true` with no `widgetURL` on the tile to swallow the press (build 206).
     /// The native press trail, written to the App Group on `perform()`'s first
     /// line before anything that could fail, came back **empty every time**.
     ///
-    /// On 18 it was unreliable in the field: build 233 (current `master`) came
-    /// back from a user's phone toggling nothing, with no haptic — the same
-    /// signature as a `perform()` that never ran — while the link path has
-    /// carried a press end-to-end into Dart on every device it has been tried
-    /// on. So the intent is gone, on the owner's call (2026-08-03): one control
-    /// that always works, on every version, beats one that works in the
-    /// background on some phones and not at all on others.
-    ///
-    /// The price, paid deliberately: the app comes to the front on every press
-    /// — there is no background toggle on iOS any more — and a tap anywhere on
-    /// the tile toggles rather than only the disc, because `systemSmall` gets
-    /// exactly one tap target from WidgetKit.
+    /// ⚠️ **iOS 18 has never been seen working either.** Build 207 (no
+    /// `UIBackgroundModes`): the press opened the app, toggled nothing, no
+    /// haptic. Build 233 (`audio` mode shipped since 208): the same, from a
+    /// user's phone — so the audio-mode hypothesis did not rescue it. A run on
+    /// 2026-08-03 briefly reported the button working on 18, and the tester
+    /// retracted that the same day. The intent was then deleted outright, and
+    /// **re-added on the owner's later call (2026-08-03)**: 18 is the one
+    /// version where Apple documents background execution for a widget intent,
+    /// and the failure has never actually been diagnosed — no press trail has
+    /// ever been collected from an iOS 18 phone, so "perform() never ran" and
+    /// "ran and failed" are still indistinguishable there. Acceptance is a
+    /// **traced** run on an iOS 18 device (the support bundle carries the
+    /// trail); if the trail is empty there too, demote 18 to the link for good.
     ///
     /// The `Link` serves the medium family; on `systemSmall` WidgetKit allows
     /// exactly one tap target and ignores links, so there the tile's own
@@ -253,9 +266,20 @@ struct FatVpnWidgetEntryView: View {
     /// which one the system honours.
     @ViewBuilder
     private func powerControl(diameter: CGFloat) -> some View {
-        if snapshot.signedIn && family != .systemSmall {
-            Link(destination: FatVpnWidgetLink.toggle) {
+        if snapshot.signedIn {
+            if #available(iOSApplicationExtension 18.0, *) {
+                Button(intent: FatVpnTogglePowerIntent()) {
+                    powerButton(diameter: diameter)
+                }
+                // Without `.plain` the system draws its own chrome — a grey
+                // capsule behind a disc that is already a button.
+                .buttonStyle(.plain)
+            } else if family == .systemSmall {
                 powerButton(diameter: diameter)
+            } else {
+                Link(destination: FatVpnWidgetLink.toggle) {
+                    powerButton(diameter: diameter)
+                }
             }
         } else {
             powerButton(diameter: diameter)
@@ -277,11 +301,12 @@ struct FatVpnWidgetEntryView: View {
         }
         .frame(width: diameter, height: diameter)
         // Dimmed while the tunnel is moving either way, so the press has an
-        // answer that needs no reading. The press itself is answered by the app
-        // coming to the front — the tile is a link now, so there is no in-tile
-        // press state to draw: `invalidatableContent` only greys content while
-        // an App Intent runs, and nothing here runs one. Kept because it costs
-        // nothing and is what this modifier is for the moment a button returns.
+        // answer that needs no reading — and marked invalidatable, which is the
+        // one press state WidgetKit offers: the system greys whatever carries
+        // this from the moment the intent starts until the reload that follows
+        // it. A custom pressed `ButtonStyle` cannot stand in for it — a widget's
+        // view is archived, and nothing in it has runtime state to track a
+        // finger with.
         .opacity(snapshot.isBusy ? 0.5 : 1)
         .fatVpnInvalidatable()
     }

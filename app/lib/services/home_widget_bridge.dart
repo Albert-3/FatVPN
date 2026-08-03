@@ -237,14 +237,15 @@ class HomeWidgetBridge {
   /// see [listenForActions].
   VoidCallback? onActionAvailable;
 
-  /// Listens for a widget press the platform is holding while this app is
-  /// already running.
+  /// Listens for taps the platform parks while this app is already running.
   ///
-  /// The poll ([takeLaunchLink] / [takePendingAction] on launch and on resume)
-  /// cannot be the only path on iOS: a press against a live app arrives as a
-  /// URL open *after* both polls have run, and without this nudge it would sit
-  /// natively until the user backgrounded and reopened the app — a button that
-  /// does nothing as far as anyone pressing it is concerned.
+  /// The poll ([takePendingAction] on launch and on resume) cannot be the only
+  /// path on iOS. The power button is an App Intent performed **in this
+  /// process**, and on iOS 17 the system performs it *after* the app it opened
+  /// is already active — i.e. after both polls have run. Without this the press
+  /// would sit in the App Group until the user backgrounded and reopened the
+  /// app, which is a button that does nothing as far as anyone pressing it is
+  /// concerned.
   void listenForActions() {
     channel.setMethodCallHandler((call) async {
       if (call.method != 'actionAvailable') {
@@ -307,24 +308,24 @@ class HomeWidgetBridge {
   /// Takes the action a widget tap parked with the platform, leaving nothing
   /// behind. Null when there is none.
   ///
-  /// **Legacy path, kept for one update.** It is how an iOS press used to
-  /// arrive: the power button was an App Intent, which can ask the system to
-  /// open its app but cannot hand that app a URL, so the request was left in the
-  /// shared App Group and collected here. Since 2026-08-03 the press is a
-  /// `fatvpn://widget/toggle` link on every version of iOS and nothing parks
-  /// anything — but a phone updating from an older build can still have one
-  /// waiting, and dropping it would swallow a press the user did make. Android
-  /// has always delivered its taps as links and parks nothing, so this answers
-  /// null there.
+  /// This is how an iOS press arrives: the power button is an App Intent, which
+  /// may ask the system to open its app but cannot hand that app a URL, so the
+  /// request is left in the shared App Group and collected here. The Android
+  /// widget delivers its taps as `fatvpn://widget/...` links and parks nothing,
+  /// so this answers null there.
   Future<HomeWidgetAction?> takePendingAction() async {
     if (_unsupported) return null;
     try {
       final name = await channel.invokeMethod<String>('takePendingAction');
       if (name == null || name.isEmpty) return null;
-      // The press's own haptic, and the only one it gets: nothing native buzzes
-      // for a widget tap on iOS. A widget extension has no vibromotor at all,
-      // and the app's own process has none it may use until it is in front of
-      // the user — which is exactly now.
+      // The press's own haptic, and the only one it gets on iOS 17.
+      //
+      // There the power button opens the app rather than working in the
+      // background, and the native side deliberately stays silent: a widget
+      // extension has no vibromotor at all, and the app's own process has no
+      // usable one until it is actually in front of the user — which is exactly
+      // now. The iOS 18 press never reaches this line: it is served entirely in
+      // the background and buzzes there instead.
       unawaited(HapticFeedback.mediumImpact());
       return homeWidgetActionFromName(name);
     } on MissingPluginException {
