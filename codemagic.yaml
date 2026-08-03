@@ -354,64 +354,37 @@ workflows:
             fi
             echo "PrivacyInfo.xcprivacy present."
           done
-      - name: Verify the toggle intent is in the shipped App Intents metadata
+      - name: Verify no background mode and no App Intent shipped
         script: |
           # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
           #
-          # When appintentsmetadataprocessor cannot make sense of a type it warns
-          # and silently leaves that type out, producing a perfectly well-formed
-          # Metadata.appintents with no intent in it — and on a device that is
-          # indistinguishable from "the system declined to route the press",
-          # which is the theory three builds were once spent on.
-          #
-          # An earlier version of this check grepped the *build log* for those
-          # warnings and reported a reassuring "none found". It could not have
-          # found any: `flutter build ipa` prints "Running Xcode build..." and a
-          # duration, never xcodebuild's per-task output. A check that cannot
-          # fail is worse than no check — this one reads the artifact, where the
-          # answer actually is.
+          # The widget's power button used to be an App Intent, routed into the
+          # app's process by an AudioPlaybackIntent conformance, which in turn
+          # wanted the `audio` background mode in Info.plist. All of it was
+          # removed on 2026-08-03 — the press is a plain fatvpn://widget/toggle
+          # link on every version of iOS now (see powerControl in
+          # FatVpnWidget.swift). This gate keeps it removed, because both halves
+          # come back quietly: a background mode a VPN app cannot justify is an
+          # App Store review question, and a re-added intent is a button that
+          # works on some phones and silently does nothing on others.
           set -e
           APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
           if [ -z "$APP" ]; then
             echo "No .app under /tmp/ipa-check — the entitlement step did not unpack the .ipa." >&2
             exit 1
           fi
-          echo "Every App Intents metadata bundle in the .ipa:"
-          find "$APP" -name 'Metadata.appintents' -type d
-          echo "--------------------------------------------------------------"
-          # Both bundles matter, for different reasons: the system reads the
-          # *widget's* metadata to decide where a press is routed, and the app
-          # must carry the type to be able to perform it. Either one missing is a
-          # dead button.
-          #
-          # One intent, not two: iOS 17 no longer uses an intent at all — its
-          # power control is a link, because six builds of device evidence say
-          # perform() never runs on that version. FatVpnTogglePowerIntent serves
-          # iOS 18+ only. If a second intent type is ever added back, add it to
-          # the loop below with it.
-          for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
-            META="$BUNDLE/Metadata.appintents"
-            if [ ! -d "$META" ]; then
-              echo "No Metadata.appintents in $BUNDLE — App Intents were not extracted at all." >&2
-              exit 1
-            fi
-            for INTENT in FatVpnTogglePowerIntent; do
-              # -a because the extracted metadata is not necessarily text.
-              if ! grep -raq "$INTENT" "$META"; then
-                echo "$INTENT is absent from $META — the iOS 18 button ships dead." >&2
-                exit 1
-              fi
-              echo "$BUNDLE: $INTENT present."
-            done
-            # Not a gate: the marker's spelling in the metadata is Apple's
-            # business and has changed between releases. Printed because the
-            # marker is what routes a press into the app's process, and a build
-            # where it silently stopped being recorded is worth seeing.
-            echo -n "  conformance markers recorded: "
-            grep -rao 'AudioPlayback[A-Za-z]*\|LiveActivity[A-Za-z]*\|ForegroundContinuable[A-Za-z]*' "$META" \
-              | sed 's/.*://' | sort -u | tr '\n' ' '
-            echo
-          done
+          if /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP/Info.plist" 2>/dev/null; then
+            echo "Runner declares UIBackgroundModes — see the note in ios/Runner/Info.plist." >&2
+            exit 1
+          fi
+          echo "No UIBackgroundModes in the shipped app."
+          # An empty Metadata.appintents is fine and is what a widget with no
+          # intents produces; a FatVpnTogglePowerIntent inside one is not.
+          if grep -raq 'FatVpnTogglePowerIntent' "$APP" 2>/dev/null; then
+            echo "FatVpnTogglePowerIntent is still in the bundle — the link-only press was undone." >&2
+            exit 1
+          fi
+          echo "No toggle App Intent in the bundle."
     artifacts:
       - app/build/ios/ipa/*.ipa
       # Only produced when the step above had to rebuild the framework.
@@ -529,21 +502,22 @@ workflows:
     max_build_duration: 120
     # Exists for one question the phones in this project cannot answer.
     #
-    # The widget's power button is served by an App Intent on iOS 18 and by a
-    # link below that, because on every device tried the intent's `perform()`
-    # never ran (see docs/home-widgets-spec.md §10). Testing the 18 path needs
-    # an iOS 18 device, and each attempt otherwise costs a TestFlight round
-    # trip. Codemagic's App Preview runs a *simulator* in the browser, where
-    # the iOS version is a dropdown — but it cannot run the .ipa the release
-    # workflow produces, because that is signed for real hardware. This
-    # workflow builds the simulator slice instead and hands it over zipped.
+    # The widget's power button is a `fatvpn://widget/toggle` link on every
+    # version of iOS (the App Intent was removed on 2026-08-03 — see
+    # docs/home-widgets-spec.md). Trying a press on a given iOS version
+    # otherwise costs a TestFlight round trip. Codemagic's App Preview runs a
+    # *simulator* in the browser, where the iOS version is a dropdown — but it
+    # cannot run the .ipa the release workflow produces, because that is signed
+    # for real hardware. This workflow builds the simulator slice instead and
+    # hands it over zipped.
     #
-    # ⚠️ What this can and cannot answer. WidgetKit and App Intents do run in
-    # the Simulator, so "did perform() run, and in which process" is testable
-    # here — that is the whole point. The tunnel is not: iOS Simulator has no
+    # ⚠️ What this can and cannot answer. The tile draws and the app's handling
+    # of the link is testable here. The tunnel is not: iOS Simulator has no
     # NetworkExtension packet-tunnel support, so a connect will always fail,
     # and the widget only draws its button once the app has a session, which
-    # means signing in inside the preview first.
+    # means signing in inside the preview first. Note also that the simulator
+    # never delivers `simctl openurl` to the scene delegate at all, which is why
+    # the URL check below fails only when the app itself is at fault.
     environment:
       flutter: 3.44.4
       xcode: latest
@@ -614,9 +588,10 @@ workflows:
           # TestFlight round trip.
           #
           # ⚠️ What it cannot test, so nobody reads more into a green tick than
-          # is there: the App Intent. There is no simctl verb that presses a
-          # widget's button, and that press — on iOS 18 in particular — is the
-          # open question. This checks the plumbing around it.
+          # is there: the press itself. There is no simctl verb that taps a
+          # widget's tile. This checks the plumbing around it — that the app
+          # installs, that the widget extension is embedded, and that a
+          # `fatvpn://widget/toggle` open reaches Dart.
           APP="$PWD/app/build/ios/iphonesimulator/Runner.app"
           BUNDLE_ID=com.fatvpn.fatvpnApp
 
@@ -630,9 +605,9 @@ workflows:
           UDID="$(echo "$PICK" | cut -f1)"
           echo "Device:  $(echo "$PICK" | cut -f2)"
           echo "Runtime: $(echo "$PICK" | cut -f3)"
-          # Printed, not asserted: which iOS this ran on decides which half of
-          # the widget was exercised — 18 and up draws the intent button, below
-          # that a link — and a green tick means little without it.
+          # Printed, not asserted: the press is the same link on every version
+          # now, but which iOS this ran on still decides what a green tick is
+          # worth — WidgetKit's own behaviour differs between them.
 
           cleanup() {
             xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true

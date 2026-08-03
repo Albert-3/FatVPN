@@ -18,16 +18,12 @@
 #
 #  * `Shared/FatVpnWidgetStore.swift` → all three targets. The widget draws what
 #    the other two write; none of them can call each other.
-#  * `FatVpnWidget/FatVpnWidgetIntents.swift` → widget **and** app. The system
-#    reads the *widget* bundle's App Intents metadata to decide where a press is
-#    routed, and the *app* must carry the type to be able to perform it. Either
-#    membership missing is a dead button, and nothing says so at build time.
-#  * `FatVpnWidget/FatVpnWidgetHaptics.swift` → widget and app, for the same
-#    reason: the press body calls it from both, and it compiles to nothing in
-#    the extension.
-#  * `Runner/FatVpnWidgetToggle.swift` → app only. It talks to
-#    NETunnelProviderManager and to Flutter, neither of which exists in a widget
-#    extension.
+#
+# That is now the only file the widget shares with anything. The App Intent, the
+# native haptics and the background toggle it drove were removed on 2026-08-03
+# (see powerControl in FatVpnWidget.swift): the press is a plain
+# `fatvpn://widget/toggle` link on every version of iOS, and a link needs no code
+# in the extension and no shared type in the app.
 
 # See add_packet_tunnel_target.rb for why the version is pinned here as well as
 # in codemagic.yaml: `gem install` makes a version available, `gem` activates it.
@@ -39,27 +35,21 @@ PROJECT_PATH = File.join(IOS_DIR, 'Runner.xcodeproj')
 EXT_NAME = 'FatVpnWidget'
 EXT_BUNDLE_ID = 'com.fatvpn.fatvpnApp.FatVpnWidget'
 
-# 16.0, not the app's 13.0 and not 17.0.
+# 16.0, not the app's 13.0.
 #
-# Below 16 there is no AppIntents framework to link and no lock-screen widget to
-# draw, so nothing on 14–15 would work anyway. Above 16 we would drop the
-# accessory (lock screen and StandBy) widgets on iOS 16 for no gain — the
-# interactive button is already gated to 17+ inside the view, where the check is
-# made against the OS actually drawing the tile.
+# Below 16 there is no lock-screen widget to draw and the accessory families do
+# not exist, so nothing on 14–15 would work anyway. Raising it further would drop
+# the accessory (lock screen and StandBy) widgets on iOS 16 for no gain.
 DEPLOYMENT_TARGET = '16.0'
 
 WIDGET_SOURCES = %w[
   FatVpnWidget.swift
   FatVpnWidgetBundle.swift
-  FatVpnWidgetIntents.swift
   FatVpnWidgetStrings.swift
-  FatVpnWidgetHaptics.swift
 ].freeze
 
 # Shared with the app (and, for the store, with the tunnel).
 SHARED_STORE = 'FatVpnWidgetStore.swift'
-APP_SHARED_FROM_WIDGET = %w[FatVpnWidgetIntents.swift FatVpnWidgetHaptics.swift].freeze
-APP_ONLY_SOURCE = 'FatVpnWidgetToggle.swift'
 
 project = Xcodeproj::Project.open(PROJECT_PATH)
 
@@ -87,16 +77,11 @@ end
 
 ext_group = project.main_group.new_group(EXT_NAME, EXT_NAME)
 shared_group = project.main_group['Shared'] || project.main_group.new_group('Shared', 'Shared')
-runner_group = project.main_group.find_subpath('Runner', false)
-raise '[add_widget_target] Runner group not found' unless runner_group
-
 widget_refs = WIDGET_SOURCES.map { |name| ext_group.new_reference(name) }
 ext_group.new_reference('Info.plist')
 ext_group.new_reference("#{EXT_NAME}.entitlements")
 
 store_ref = shared_group.find_file_by_path(SHARED_STORE) || shared_group.new_reference(SHARED_STORE)
-toggle_ref = runner_group.find_file_by_path(APP_ONLY_SOURCE) ||
-             runner_group.new_reference(APP_ONLY_SOURCE)
 
 # --- FatVpnWidget: the new app-extension target ------------------------------
 
@@ -118,11 +103,10 @@ ext_target.build_configurations.each do |config|
   config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = DEPLOYMENT_TARGET
   config.build_settings['SKIP_INSTALL'] = 'YES'
-  # This is what makes the two copies of FatVpnWidgetIntents.swift different —
-  # the widget's copy parks the press for the app instead of trying to toggle a
-  # tunnel it has no entitlement to touch, and its copy of the haptics compiles
-  # away entirely. Without this flag the extension would fail to build the
-  # moment it reached `import NetworkExtension`.
+  # Nothing reads this today — the widget shares only FatVpnWidgetStore.swift
+  # with the app, and the store is identical in both. Kept because a file shared
+  # with the app is the normal way this widget grows, and an extension cannot
+  # compile everything the app can (`import NetworkExtension`, for one).
   config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
     ['$(inherited)', 'FATVPN_WIDGET_EXTENSION']
   # An app extension must not ship an embedded Frameworks/ directory — App Store
@@ -138,24 +122,11 @@ end
 
 # --- The app's share of the widget's code ------------------------------------
 
-APP_SHARED_FROM_WIDGET.each do |name|
-  ref = widget_refs.find { |r| r.path == name }
-  raise "[add_widget_target] #{name} was not added to the widget group" unless ref
-
-  runner_target.source_build_phase.add_file_reference(ref)
-end
+# Just the store: the app writes the snapshot the widget draws. Everything else
+# the two used to share went with the App Intent — and with it the
+# `-weak_framework AppIntents` this script used to add to Runner, which existed
+# because Runner deploys to iOS 13 where that framework does not exist at all.
 runner_target.source_build_phase.add_file_reference(store_ref)
-runner_target.source_build_phase.add_file_reference(toggle_ref)
-
-runner_target.build_configurations.each do |config|
-  # Runner deploys to iOS 13 and now imports AppIntents, which does not exist
-  # before iOS 16. Linked normally that is a dyld failure at launch on every
-  # older device — the app would not start at all, and nothing in this build
-  # would say so. Weakly linked, the framework is simply absent there and every
-  # type that touches it is behind `@available(iOS 17.0, *)` anyway.
-  flags = Array(config.build_settings['OTHER_LDFLAGS'] || ['$(inherited)'])
-  config.build_settings['OTHER_LDFLAGS'] = (flags + ['-weak_framework', 'AppIntents']).uniq
-end
 
 # The tunnel writes the snapshot when it comes up or goes down without the app,
 # which on iOS is the ordinary case: an on-demand start, or a stop from

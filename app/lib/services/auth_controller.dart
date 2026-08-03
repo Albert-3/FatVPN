@@ -220,13 +220,13 @@ class AuthController extends ChangeNotifier {
       unawaited(_refreshNow());
     }
 
-    // A widget tap the platform is holding for us (the iOS App Intent — see
-    // [pollWidgetAction]). Before the deep link, because on iOS this is the path
-    // that actually carries a widget tap.
+    // A widget tap the platform is holding for us (see [pollWidgetAction]).
+    // Before the deep link, because on iOS this is the path that actually
+    // carries a widget tap.
     //
     // Both halves matter: the listener catches a press made while the app is
-    // alive — the intent runs in our own process, *after* the resume callback
-    // has already polled — and the poll catches the press that cold-started us.
+    // alive — the URL arrives *after* the resume callback has already polled —
+    // and the poll catches the press that cold-started us.
     HomeWidgetBridge.instance.onActionAvailable = () {
       unawaited(pollWidgetAction());
     };
@@ -240,14 +240,13 @@ class AuthController extends ChangeNotifier {
     }
   }
 
-  /// Picks up a widget tap that the platform parked instead of deep-linking.
+  /// Picks up a widget tap the platform is holding for us — the URL it opened
+  /// the app with, and (from an older build) an action parked in the App Group.
   ///
-  /// On iOS the widget's power button is an App Intent: it can ask the system
-  /// to open the app, but not to open a URL, so the action is left in the shared
-  /// App Group and collected here — on launch, and on every resume
-  /// (`main.dart`), since the app is frequently already running when the user
-  /// taps its widget. The Android widget delivers its taps as
-  /// `fatvpn://widget/...` links and parks nothing, so this is a no-op there.
+  /// Runs on launch and on every resume (`main.dart`), since the app is
+  /// frequently already running when the user taps its widget. The Android
+  /// widget delivers its taps as ordinary `fatvpn://widget/...` links, so this
+  /// is a no-op there.
   Future<void> pollWidgetAction() async {
     // The native press trace first: it narrates the very launch that is
     // collecting it, and it is the only record left behind by a press whose
@@ -579,9 +578,8 @@ class AuthController extends ChangeNotifier {
         log.i('Widget action received: ${action.name}');
         // The press's own haptic, and on iOS the only one it gets.
         //
-        // This is how an iOS 17 press arrives — the tile's power control is a
-        // link there, because an App Intent does not run on that version (six
-        // builds of device evidence; see `powerControl` in FatVpnWidget.swift).
+        // This is how every iOS press arrives — the tile's power control is a
+        // link on all versions (see `powerControl` in FatVpnWidget.swift).
         // Nothing native can buzz for it: the widget's process has no
         // vibromotor at all, and the app's has no usable one until it is in
         // front of the user, which is this moment.
