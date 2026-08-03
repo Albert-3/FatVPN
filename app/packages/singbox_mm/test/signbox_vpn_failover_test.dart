@@ -397,6 +397,7 @@ vless://11111111-2222-3333-4444-555555555556@edge-b.example.com:443?security=non
   });
 
   test('startup grace window suppresses immediate failover churn', () async {
+    const Duration startupGraceWindow = Duration(milliseconds: 250);
     final _ManagedFakePlatform fakePlatform = _ManagedFakePlatform()
       ..pingShouldFail = true;
     SignboxVpnPlatform.instance = fakePlatform;
@@ -424,7 +425,7 @@ vless://11111111-2222-3333-4444-555555555556@edge-b.example.com:443?security=non
         autoFailover: true,
         healthCheck: VpnHealthCheckOptions(
           checkInterval: Duration(milliseconds: 40),
-          startupGracePeriod: Duration(milliseconds: 250),
+          startupGracePeriod: startupGraceWindow,
           noTrafficTimeout: Duration(seconds: 10),
           pingEnabled: true,
           connectivityProbeEnabled: false,
@@ -433,13 +434,34 @@ vless://11111111-2222-3333-4444-555555555556@edge-b.example.com:443?security=non
       ),
     );
 
+    // Timed by when the failover *happened*, not by sleeping to a point just
+    // inside the window and asserting it hasn't yet. That earlier shape slept
+    // 180 ms against a 250 ms grace period and read `restartCalls == 0`, so a
+    // machine that overshot by 70 ms — routine under a full test run — failed a
+    // test about behaviour with a fact about load. It failed roughly two runs
+    // in five here, which on CI is a red release build for nothing.
+    //
+    // This direction cannot go that way: slowness only *delays* the first
+    // restart, and the claim is that it must not come early.
+    final Stopwatch sinceStart = Stopwatch()..start();
     await vpn.startManaged();
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    expect(vpn.activeEndpointProfile?.tag, 'edge-a');
+    // The immediate half of "immediate failover churn", and the one assertion
+    // that is safe to make against the clock: nothing has had time to fire.
     expect(fakePlatform.restartCalls, 0);
+    expect(vpn.activeEndpointProfile?.tag, 'edge-a');
 
-    await Future<void>.delayed(const Duration(milliseconds: 520));
-    expect(fakePlatform.restartCalls, greaterThanOrEqualTo(1));
+    while (fakePlatform.restartCalls == 0 &&
+        sinceStart.elapsed < const Duration(seconds: 5)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(fakePlatform.restartCalls, greaterThanOrEqualTo(1),
+        reason: 'a pool whose every ping fails must eventually move off the '
+            'endpoint it started on');
+    expect(sinceStart.elapsed, greaterThanOrEqualTo(startupGraceWindow),
+        reason: 'the grace window exists so a tunnel that has only just come '
+            'up is not thrown away by the health check it has not had time to '
+            'pass; a failover inside it is the churn this guards against');
     expect(vpn.activeEndpointProfile?.tag, 'edge-b');
 
     await vpn.dispose();
