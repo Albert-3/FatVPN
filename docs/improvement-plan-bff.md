@@ -16,7 +16,7 @@
 
 | Что | Почему открыто |
 |---|---|
-| **S2 — HTTPS** | Условие `UseHttpsRedirection` исправлено, но включение спрятано за `Security:RequireHttps` (по умолчанию `false`). Включать вместе с переездом приложения на `https://`-адрес: иначе каждая уже установленная сборка упрётся в 307. Требует домена — блокер общий с приложением §1.1 |
+| **S2 — HTTPS** | Условие `UseHttpsRedirection` исправлено, но включение спрятано за `Security:RequireHttps` (по умолчанию `false`). ⚠️ **Уточнение 2026-08-03:** домена этот флаг больше не ждёт — `https://api.fatklyuchi.space` живёт с 2026-07-30, приложение ходит туда, `AllowedHosts` выкачен на прод и проверен снаружи. Флаг ждёт **исчезновения старых сборок**: включённый, он ответит 307 и HSTS на `http://87.121.221.229:5030`, где сертификата нет, — то есть выключит ровно тех, ради кого этот порт оставлен открытым |
 | **S9 — владение в `/internal/*`** | Проверка секрета вынесена в политику `[Authorize(Policy = "Bot")]`, но `/internal/account/subscription` по-прежнему позволяет выставить любой `ExpiresAt` любому `telegramUserId`. Единственный вызывающий — наш бот; менять контракт без правки бота нельзя |
 | ~~**S10 — размер ответа панели**~~ | ✅ Закрыто 2026-08-02: ответ панели ограничен 4 МБ (`RemnawaveClient.MaxResponseBytes`), превышение — 502 |
 
@@ -48,7 +48,7 @@
 | B2 | 🔴 critical | БАГ | Race condition в `/auth/refresh`: две сессии из одного refresh, обход reuse-detection | `AuthController.cs:62-113` | ✅ `820b1fe` |
 | B3 | 🔴 critical | БАГ | `DateTimeOffset` с ненулевым offset от бота → Npgsql бросает исключение → 500 | `InternalPairController.cs:53`, `InternalAccountController.cs:35`, `InternalTokensController.cs:46` | ✅ `820b1fe` |
 | S1 | 🔴 critical | БЕЗОП | Полное отсутствие rate limiting на публичных эндпоинтах | `Program.cs` | ✅ `820b1fe` |
-| S2 | 🔴 critical | БЕЗОП | `UseHttpsRedirection()` включён **только** в Development (условие инвертировано) | `Program.cs:61-65` | 🟡 условие исправлено, включение ждёт домена |
+| S2 | 🔴 critical | БЕЗОП | `UseHttpsRedirection()` включён **только** в Development (условие инвертировано) | `Program.cs:61-65` | 🟡 условие исправлено; домен и сертификат есть с 2026-07-30, флаг `Security:RequireHttps` ждёт исчезновения сборок, ходящих на голый IP |
 | S3 | 🔴 critical | БЕЗОП | Пустой `attestationToken` = общая device-identity → выдача чужой trial-сессии | `TrialController.cs:25` | ✅ `820b1fe` |
 | B4 | 🟠 high | БАГ | Утечка юзера в Remnawave при падении `SaveChanges` (нет компенсации) | `TrialController.cs:71-114` | ✅ `820b1fe` |
 | B5 | 🟠 high | БАГ | Race в `/trial`: два запроса → нарушение unique-index → 500 | `TrialController.cs:28-88` | ✅ `820b1fe` |
@@ -352,7 +352,10 @@ Development; `AllowedHosts` = реальный домен; приложение 
 > **Что осталось (обновлено 2026-08-02):** `bffBaseUrl` уже на `https://`
 > (2026-07-30), `AllowedHosts` выставлен в `backend/docker-compose.yml` —
 > `api.fatklyuchi.space;87.121.221.229;fatvpn-bff;bff;localhost;127.0.0.1`, под
-> тестом `DeploymentConfigTests`, и доедет со следующим деплоем. Остаётся **один**
+> тестом `DeploymentConfigTests`. ✅ **Деплой состоялся 2026-08-03** и проверен снаружи:
+> имя из списка отвечает штатно, имя вне списка — **400 на всё**, чем этот список и
+> опасен (`fatvpn-bff` — это как до BFF дотягивается бот, голый IP — как это делают уже
+> установленные сборки; выпавшее из списка имя выключает своих). Остаётся **один**
 > флаг `Security:RequireHttps`, и он ждёт не домена, а исчезновения старых сборок:
 > включённый, он даёт 307 и HSTS на `http://87.121.221.229:5030`, где сертификата
 > нет, — то есть выключит ровно тех, ради кого этот порт оставлен открытым. См.
