@@ -587,14 +587,17 @@ workflows:
           # is the one that suits this anyway: the on-disk log the support
           # bundle reads is written either way, and the press trail with it.
           flutter build ios --simulator --debug
-      - name: Zip Runner.app for App Preview
+      - name: Check the widget got embedded in the simulator build
         script: |
           set -e
           cd app/build/ios/iphonesimulator
-          # App Preview takes a zipped .app. -y keeps symlinks inside the bundle
-          # rather than storing their targets again — the same reason the
-          # framework zips use it.
-          zip -ryq Runner.app.zip Runner.app
+          # ⚠️ Do not zip Runner.app here and publish the zip instead of the
+          # bundle. App Preview's "Quick launch" only appears for an artifact
+          # Codemagic itself recognised as a simulator app, which it decides from
+          # the published `.app` — a zip we made ourselves is just a file, and the
+          # build page offers nothing but a download link (verified 2026-08-03 on
+          # builds #8 and #9, both of which had the zip and no Quick launch).
+          # Codemagic packs the bundle for download on its own.
           # Named here rather than trusted: a widget that never got embedded
           # would produce a preview where the tile simply does not exist in the
           # gallery, which reads as "the widget is broken" and is not.
@@ -754,5 +757,8 @@ workflows:
           # to see that the build is a real app and not a black rectangle.
           xcrun simctl io "$UDID" screenshot "$PWD/app/build/ios/iphonesimulator/simulator-home.png" || true
     artifacts:
-      - app/build/ios/iphonesimulator/Runner.app.zip
+      # The bundle itself, not a zip of it: this is what makes "Quick launch"
+      # appear on the build page and hand the app to App Preview's in-browser
+      # simulator. Codemagic zips it for download anyway.
+      - app/build/ios/iphonesimulator/Runner.app
       - app/build/ios/iphonesimulator/simulator-home.png
