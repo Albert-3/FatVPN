@@ -354,37 +354,86 @@ workflows:
             fi
             echo "PrivacyInfo.xcprivacy present."
           done
-      - name: Verify no background mode and no App Intent shipped
+      - name: Verify the widget intents shipped with usable App Intents metadata
         script: |
           # Reads the .ipa the step above already unpacked into /tmp/ipa-check.
           #
-          # The widget's power button used to be an App Intent, routed into the
-          # app's process by an AudioPlaybackIntent conformance, which in turn
-          # wanted the `audio` background mode in Info.plist. All of it was
-          # removed on 2026-08-03 — the press is a plain fatvpn://widget/toggle
-          # link on every version of iOS now (see powerControl in
-          # FatVpnWidget.swift). This gate keeps it removed, because both halves
-          # come back quietly: a background mode a VPN app cannot justify is an
-          # App Store review question, and a re-added intent is a button that
-          # works on some phones and silently does nothing on others.
+          # The widget press on iOS 18+ is a plain App Intent performed in the
+          # widget extension's own process, driving NETunnelProviderManager
+          # natively (the sing-box architecture, 2026-08-04 - see
+          # FatVpnWidgetIntents.swift). Three things have to hold in the
+          # shipped artifact, and each has failed quietly before:
+          #
+          #  1. No UIBackgroundModes. The `audio` mode belonged to the dead
+          #     app-process scheme and is an App Store review question a VPN
+          #     app cannot answer.
+          #  2. No FatVpnTogglePowerIntent anywhere - that is the dead scheme's
+          #     intent coming back.
+          #  3. The new intents present in BOTH bundles' Metadata.appintents
+          #     with a NON-EMPTY mangledTypeName. "grep finds the name" was the
+          #     old gate and it passed while the button shipped dead: Xcode's
+          #     deployment-aware processing emits descriptors whose
+          #     mangledTypeName is empty when a target deploys below iOS 16
+          #     (Apple-acknowledged, forums thread 751229), and an intent the
+          #     system cannot mangle-resolve is a press that falls through to
+          #     "open the app". add_widget_target.rb sets
+          #     ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING=NO precisely
+          #     against this; this gate is what proves the setting still bites.
           set -e
           APP="$(find /tmp/ipa-check/Payload -maxdepth 1 -name '*.app' -type d | head -n1)"
           if [ -z "$APP" ]; then
-            echo "No .app under /tmp/ipa-check — the entitlement step did not unpack the .ipa." >&2
+            echo "No .app under /tmp/ipa-check - the entitlement step did not unpack the .ipa." >&2
             exit 1
           fi
           if /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP/Info.plist" 2>/dev/null; then
-            echo "Runner declares UIBackgroundModes — see the note in ios/Runner/Info.plist." >&2
+            echo "Runner declares UIBackgroundModes - see the note in ios/Runner/Info.plist." >&2
             exit 1
           fi
           echo "No UIBackgroundModes in the shipped app."
-          # An empty Metadata.appintents is fine and is what a widget with no
-          # intents produces; a FatVpnTogglePowerIntent inside one is not.
           if grep -raq 'FatVpnTogglePowerIntent' "$APP" 2>/dev/null; then
-            echo "FatVpnTogglePowerIntent is still in the bundle — the link-only press was undone." >&2
+            echo "FatVpnTogglePowerIntent is back in the bundle - that is the dead app-process scheme." >&2
             exit 1
           fi
-          echo "No toggle App Intent in the bundle."
+          echo "The dead scheme's intent is absent."
+          for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
+            META="$BUNDLE/Metadata.appintents"
+            if [ ! -d "$META" ]; then
+              echo "No Metadata.appintents in $BUNDLE - App Intents were not extracted at all." >&2
+              exit 1
+            fi
+            python3 - "$META" <<'PY'
+          import json, sys, pathlib
+          meta = pathlib.Path(sys.argv[1])
+          wanted = {"FatVpnTunnelToggleIntent", "FatVpnTunnelSetIntent"}
+          path = meta / "extract.actionsdata"
+          if not path.exists():
+              sys.exit(f"{meta}: no extract.actionsdata - metadata extraction produced nothing")
+          data = json.loads(path.read_text())
+          found = {}
+          def walk(node):
+              if isinstance(node, dict):
+                  blob = json.dumps(node)
+                  for name in wanted:
+                      if name in blob and "mangledTypeName" in node:
+                          found.setdefault(name, []).append(node.get("mangledTypeName") or "")
+                  for value in node.values():
+                      walk(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      walk(value)
+          walk(data)
+          for name in sorted(wanted):
+              mangled = [m for m in found.get(name, []) if m]
+              if not found.get(name):
+                  sys.exit(f"{meta}: {name} is absent - the iOS 18 button ships dead")
+              if not mangled:
+                  sys.exit(f"{meta}: {name} has an EMPTY mangledTypeName - the "
+                           "deployment-aware metadata bug is back (thread 751229); "
+                           "check ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING=NO "
+                           "survived in add_widget_target.rb")
+              print(f"{meta}: {name} present, mangledTypeName={mangled[0]}")
+          PY
+          done
     artifacts:
       - app/build/ios/ipa/*.ipa
       # Only produced when the step above had to rebuild the framework.
@@ -502,10 +551,12 @@ workflows:
     max_build_duration: 120
     # Exists for one question the phones in this project cannot answer.
     #
-    # The widget's power button is a `fatvpn://widget/toggle` link on every
-    # version of iOS (the App Intent was removed on 2026-08-03 — see
-    # docs/home-widgets-spec.md). Trying a press on a given iOS version
-    # otherwise costs a TestFlight round trip. Codemagic's App Preview runs a
+    # The widget's power button is a `fatvpn://widget/toggle` link on iOS 16–17
+    # and a native widget-process App Intent on 18+ (the sing-box architecture,
+    # 2026-08-04 — see docs/home-widgets-spec.md). Trying a press on a given
+    # iOS version otherwise costs a TestFlight round trip. Only the link half
+    # is exercisable here: the 18+ intent toggles a tunnel, and the simulator
+    # has no packet-tunnel support at all. Codemagic's App Preview runs a
     # *simulator* in the browser, where the iOS version is a dropdown — but it
     # cannot run the .ipa the release workflow produces, because that is signed
     # for real hardware. This workflow builds the simulator slice instead and

@@ -18,12 +18,34 @@
 #
 #  * `Shared/FatVpnWidgetStore.swift` → all three targets. The widget draws what
 #    the other two write; none of them can call each other.
+#  * `FatVpnWidget/FatVpnWidgetIntents.swift` and `FatVpnWidgetTunnel.swift` →
+#    widget **and** app. The intents perform in the widget's own process and
+#    drive NETunnelProviderManager natively (the sing-box architecture,
+#    2026-08-04 — see FatVpnWidgetIntents.swift for the story), but Apple's
+#    interactivity doc requires a widget button's intent type in both targets,
+#    and the copies must be byte-identical: differing declarations produce
+#    differing metadata descriptors for one type name.
+#  * `FatVpnWidget/FatVpnWidgetControl.swift` → widget only. `ControlWidget`
+#    (the iOS 18 Control Center toggle) does not exist in an app target.
 #
-# That is now the only file the widget shares with anything. The App Intent, the
-# native haptics and the background toggle it drove were removed on 2026-08-03
-# (see powerControl in FatVpnWidget.swift): the press is a plain
-# `fatvpn://widget/toggle` link on every version of iOS, and a link needs no code
-# in the extension and no shared type in the app.
+# The App Intents **metadata settings** below are equally load-bearing. The
+# previous intent generation shipped metadata that grep found the type name in,
+# yet the button never ran on any device — the 2026-08-04 research matched that
+# to two build-level defects, both addressed here:
+#
+#  * `ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING = NO` on every target that
+#    compiles intents. Xcode 15.3+ "deployment-aware processing" is
+#    acknowledged broken by Apple for targets whose minimum deployment target
+#    is iOS 15 or earlier (Runner deploys to 13): it emits an empty
+#    `mangledTypeName`, the system cannot resolve the intent at the press, and
+#    the tap falls through to "open the app" (developer forums thread 751229,
+#    FB13664020 — the setting is Apple's own workaround).
+#  * AppIntents linked as a **framework build-phase entry with the Weak
+#    attribute** on Runner, not a raw `-weak_framework` in OTHER_LDFLAGS: the
+#    metadata extractor keys off the target's framework dependencies and a raw
+#    ldflag is invisible to it. Weak because Runner deploys to iOS 13, where
+#    the framework does not exist and a strong link is a dyld crash at launch.
+#    The widget target (deployment 16.0) links it strongly the same way.
 
 # See add_packet_tunnel_target.rb for why the version is pinned here as well as
 # in codemagic.yaml: `gem install` makes a version available, `gem` activates it.
@@ -39,14 +61,23 @@ EXT_BUNDLE_ID = 'com.fatvpn.fatvpnApp.FatVpnWidget'
 #
 # Below 16 there is no lock-screen widget to draw and the accessory families do
 # not exist, so nothing on 14–15 would work anyway. Raising it further would drop
-# the accessory (lock screen and StandBy) widgets on iOS 16 for no gain.
+# the accessory (lock screen and StandBy) widgets on iOS 16 for no gain — the
+# interactive button and the Control Center toggle are gated to 18+ inside the
+# code, where the check is made against the OS actually drawing them.
 DEPLOYMENT_TARGET = '16.0'
 
 WIDGET_SOURCES = %w[
   FatVpnWidget.swift
   FatVpnWidgetBundle.swift
   FatVpnWidgetStrings.swift
+  FatVpnWidgetIntents.swift
+  FatVpnWidgetTunnel.swift
+  FatVpnWidgetControl.swift
 ].freeze
+
+# Compiled into the app as well — see the header for why the copies must be
+# identical.
+APP_SHARED_FROM_WIDGET = %w[FatVpnWidgetIntents.swift FatVpnWidgetTunnel.swift].freeze
 
 # Shared with the app (and, for the store, with the tunnel).
 SHARED_STORE = 'FatVpnWidgetStore.swift'
@@ -83,12 +114,22 @@ ext_group.new_reference("#{EXT_NAME}.entitlements")
 
 store_ref = shared_group.find_file_by_path(SHARED_STORE) || shared_group.new_reference(SHARED_STORE)
 
+# --- AppIntents.framework, linked so the metadata extractor can see it -------
+
+frameworks_group = project.frameworks_group
+appintents_ref = frameworks_group.files.find { |f| f.path == 'System/Library/Frameworks/AppIntents.framework' }
+unless appintents_ref
+  appintents_ref = frameworks_group.new_file('System/Library/Frameworks/AppIntents.framework')
+  appintents_ref.source_tree = 'SDKROOT'
+end
+
 # --- FatVpnWidget: the new app-extension target ------------------------------
 
 ext_target = project.new_target(:app_extension, EXT_NAME, :ios, DEPLOYMENT_TARGET, nil, :swift)
 
 widget_refs.each { |ref| ext_target.source_build_phase.add_file_reference(ref) }
 ext_target.source_build_phase.add_file_reference(store_ref)
+ext_target.frameworks_build_phase.add_file_reference(appintents_ref)
 
 ext_target.build_configurations.each do |config|
   config.base_configuration_reference = config.name == 'Debug' ? debug_xcconfig : release_xcconfig
@@ -103,12 +144,9 @@ ext_target.build_configurations.each do |config|
   config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = DEPLOYMENT_TARGET
   config.build_settings['SKIP_INSTALL'] = 'YES'
-  # Nothing reads this today — the widget shares only FatVpnWidgetStore.swift
-  # with the app, and the store is identical in both. Kept because a file shared
-  # with the app is the normal way this widget grows, and an extension cannot
-  # compile everything the app can (`import NetworkExtension`, for one).
-  config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] =
-    ['$(inherited)', 'FATVPN_WIDGET_EXTENSION']
+  # See the header: Apple's own workaround for the metadata bug that produces
+  # resolvable-looking intents with an empty mangledTypeName.
+  config.build_settings['ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING'] = 'NO'
   # An app extension must not ship an embedded Frameworks/ directory — App Store
   # Connect rejects it (iris-code 90206) — and it does not need one: Swift's
   # runtime has lived in the OS since 12.2.
@@ -122,11 +160,26 @@ end
 
 # --- The app's share of the widget's code ------------------------------------
 
-# Just the store: the app writes the snapshot the widget draws. Everything else
-# the two used to share went with the App Intent — and with it the
-# `-weak_framework AppIntents` this script used to add to Runner, which existed
-# because Runner deploys to iOS 13 where that framework does not exist at all.
+APP_SHARED_FROM_WIDGET.each do |name|
+  ref = widget_refs.find { |r| r.path == name }
+  raise "[add_widget_target] #{name} was not added to the widget group" unless ref
+
+  runner_target.source_build_phase.add_file_reference(ref)
+end
 runner_target.source_build_phase.add_file_reference(store_ref)
+
+# Weak, because Runner deploys to iOS 13: linked normally, AppIntents is a dyld
+# failure at launch on every device below 16 — the app would not start at all,
+# and nothing in the build would say so. Weakly linked, the framework is simply
+# absent there, and every type that touches it is behind `@available(iOS 17…)`.
+# A frameworks-phase entry rather than OTHER_LDFLAGS so appintentsmetadataprocessor
+# recognises the dependency and actually extracts the metadata (see header).
+appintents_build_file = runner_target.frameworks_build_phase.add_file_reference(appintents_ref)
+appintents_build_file.settings = { 'ATTRIBUTES' => ['Weak'] }
+
+runner_target.build_configurations.each do |config|
+  config.build_settings['ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING'] = 'NO'
+end
 
 # The tunnel writes the snapshot when it comes up or goes down without the app,
 # which on iOS is the ordinary case: an on-demand start, or a stop from
