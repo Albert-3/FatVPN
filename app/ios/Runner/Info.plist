@@ -40,38 +40,13 @@
 	     crash *was* it delivering). -->
 	<key>FlutterDeepLinkingEnabled</key>
 	<true/>
-	<!-- Declared for the home-screen widget's power button on iOS 18, and for
-	     nothing else — this app plays no audio.
-
-	     The button's intent conforms to AudioPlaybackIntent, which is the marker
-	     that asks the system to perform it in the *app's* process rather than
-	     the widget extension's (the extension can never touch the tunnel: the
-	     NetworkExtension entitlement is not issued to a widget's App ID). Apple
-	     documents no background-mode requirement for that protocol — but every
-	     working example anyone has published has the app's `audio` background
-	     mode switched on, and an app with no UIBackgroundModes at all under this
-	     marker is described nowhere. Build 207 was exactly that app, and the
-	     press did nothing on an iPhone 16 / iOS 18: the app opened, the tunnel
-	     did not move, and the native press trail stayed empty, i.e. perform()
-	     never ran.
-
-	     ⚠️ Shipped since build 208, and it has NOT been shown to fix anything:
-	     build 233 carried it and a user's iOS 18 phone still saw a press that
-	     toggled nothing (the one report of the button working, from the
-	     2026-08-03 run, was retracted the same day). The key stays because the
-	     AudioPlaybackIntent marker is the only routing lever left on any iOS,
-	     the failure has never been traced from an iOS 18 phone, and dropping
-	     the mode would add one more untried variable to that trace. If a traced
-	     iOS 18 run shows perform() still never runs, delete this key together
-	     with the intent — see powerControl in FatVpnWidget.swift. And before
-	     submitting to the App Store, this key has to be justified or removed:
-	     review asks what a VPN app plays, and "nothing, it is a widget routing
-	     marker" is an answer that needs deciding on deliberately rather than
-	     discovering at submission. See docs/store-compliance.md. -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-	</array>
+	<!-- ⚠️ No UIBackgroundModes, deliberately. The `audio` mode was here for one
+	     reason — the widget's power button ran an AudioPlaybackIntent, and that
+	     marker is what asked the system to perform it in the app's process — and
+	     the intent is gone (2026-08-03): the press is a link on every version of
+	     iOS now. Re-adding the key would mean telling App Store review that a
+	     VPN app plays audio, which it does not. See powerControl in
+	     FatVpnWidget.swift and docs/store-compliance.md. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
