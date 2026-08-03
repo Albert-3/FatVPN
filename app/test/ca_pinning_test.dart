@@ -52,6 +52,13 @@ String _fingerprint(List<int> der) => sha256
     .join(':')
     .toUpperCase();
 
+/// When the fixture leaf stops being valid. Kept here rather than parsed out of
+/// the PEM because the failure it prevents is a mystery otherwise: an expired
+/// certificate fails the handshake with the same `CERTIFICATE_VERIFY_FAILED` as
+/// a pin that has genuinely broken, and this file's whole subject is telling
+/// those two apart. Regenerating is two commands — `test/fixtures/tls/README.md`.
+final _fixtureExpires = DateTime.utc(2027, 9, 5, 15, 33, 58);
+
 /// A TLS server on loopback holding a certificate from a CA that exists nowhere
 /// but `test/fixtures/tls`. Stands in for anything that is not the real BFF: a
 /// corporate middlebox, a profile someone installed on an iPhone, a CA that has
@@ -72,6 +79,18 @@ Future<HttpServer> _serverSignedByAnotherCa() async {
 }
 
 void main() {
+  test('the fixture certificate has not expired', () {
+    expect(
+      DateTime.now().toUtc().isBefore(_fixtureExpires),
+      isTrue,
+      reason: 'test/fixtures/tls expired on $_fixtureExpires — the tests below '
+          'would fail as if pinning had broken. Regenerate it: '
+          'test/fixtures/tls/README.md. It is deliberately short-lived: Apple '
+          'refuses any TLS certificate valid for more than 825 days, private CA '
+          'or not, and on iOS/macOS Apple is what validates.',
+    );
+  });
+
   test('the bundle is exactly the four published ISRG roots', () {
     final blocks = _derBlocks(letsEncryptRootsPem);
 
@@ -105,6 +124,19 @@ void main() {
     // above would also pass if the server never came up, if the port were wrong,
     // or if loopback TLS did not work at all on the machine, and the pin would
     // look proven by an accident.
+    //
+    // It is also the one check here that says anything about iOS. Dart verifies
+    // certificates with BoringSSL on Android, Linux and Windows, but hands the
+    // job to Apple's SecTrust on anything Apple (`security_context_macos.cc`,
+    // compiled for iOS too — `DART_HOST_OS_MACOS` is defined there as well), and
+    // the trust store we pass arrives as SecTrust's *anchors*. So "an anchor we
+    // added is actually accepted" is a different question on the two platforms,
+    // and this is where the Apple answer shows up: it went red on the macOS CI
+    // runner in Codemagic build 2026-08-03 while every Windows run was green.
+    // What was wrong was the fixture, not the app — Apple applies its TLS policy
+    // to private CAs as well, and the fixture predated that knowledge — but a
+    // failure here means "on iOS this client may trust nothing at all", which is
+    // the app being offline, not a test being fussy. Do not weaken it.
     final server = await _serverSignedByAnotherCa();
     addTearDown(() => server.close(force: true));
 
