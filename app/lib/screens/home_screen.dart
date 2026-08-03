@@ -7,6 +7,7 @@ import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../models/server_country.dart';
 import '../services/api_client.dart';
+import '../services/app_logger.dart';
 import '../services/auth_controller.dart';
 import '../services/connection_settings_controller.dart';
 import '../services/home_widget_bridge.dart';
@@ -330,7 +331,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _handleVpnChange() {
+  /// Points the location card at the country the tunnel is actually on.
+  ///
+  /// Called from two places, and needs both: [_handleVpnChange] catches the
+  /// tunnel moving under a running screen, and [_loadServers] catches the
+  /// reverse order — a relaunch onto a live tunnel knows its node before it has
+  /// any servers to resolve it against, and without a second pass the card sat
+  /// on "best server" while plainly connected to a specific country.
+  void _followTunnelCountry() {
     // An auto-switch can land the session in a different country with no user
     // action behind it; keep the location card honest about where the tunnel
     // actually is.
@@ -344,12 +352,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // teardown events of the old tunnel, and the reconnect went straight back
     // to the server the user had just left.
     final node = _serverExplicitlySelected ? null : _vpn.connectedNode;
-    if (node != null) {
-      final country = _countryOf(node);
-      if (country != null && country.country != _selectedServer?.country) {
-        _selectedServer = country;
+    if (node == null) return;
+    final country = _countryOf(node);
+    if (country == null) {
+      // The card falls back to "best server" from here, which is the one
+      // outcome that looks like nothing went wrong. Say it happened — but only
+      // once there is a list to be missing from. A relaunch onto a live tunnel
+      // resolves the restored node before `/servers` has answered, and warning
+      // there would fire on every such launch and mean nothing.
+      if (_servers.isNotEmpty) {
+        log.w('Connected node "${node.name}" (${node.id}) is in no country of '
+            'the loaded list — the location card cannot name it');
       }
+      return;
     }
+    if (country.country != _selectedServer?.country) {
+      _selectedServer = country;
+    }
+  }
+
+  void _handleVpnChange() {
+    _followTunnelCountry();
     if (_vpn.isConnected && _timer == null) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tickSession());
       _tickSession();
@@ -432,6 +455,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // "best server" because we hadn't finished reading it off disk.
       await _applyStoredSelection();
       if (!mounted) return;
+      // After the stored pick, not before: an explicit choice outranks the
+      // tunnel, and this is the first moment a node restored from disk can be
+      // resolved to a country at all.
+      setState(_followTunnelCountry);
       unawaited(_measureBestPings(servers));
       _publishWidgetSnapshot();
       // Right after a trial grant, bring the tunnel up automatically so the

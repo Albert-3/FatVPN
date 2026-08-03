@@ -20,6 +20,18 @@ class ServerNode {
     );
   }
 
+  /// Deliberately mirrors [ServerNode.fromJson] field for field, `configUri`
+  /// included by its absence: that link belongs to the `/config` response this
+  /// node was built from, and a stored copy would be a credential kept past the
+  /// session that used it. Everything persisted here is a label.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'address': address,
+        'port': port,
+        'usersOnline': usersOnline,
+      };
+
   final String id;
   final String name;
   final String address;

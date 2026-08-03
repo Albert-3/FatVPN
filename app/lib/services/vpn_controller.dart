@@ -44,6 +44,28 @@ class VpnController extends ChangeNotifier {
   static const _sessionStartKey = 'vpn_session_started_at';
   DateTime? _sessionStartedAt;
 
+  // Set by a teardown that is part of a reconnect (`disconnect(endSession:
+  // false)` — an auto-switch, or Settings re-applying DNS / split tunnelling),
+  // so the connect that follows knows it is continuing a session rather than
+  // starting one, and leaves the clock alone.
+  //
+  // A deadline rather than a flag, because nothing reliably clears a flag. The
+  // teardowns this covers are followed by their reconnect within seconds; a
+  // flag left standing by a reconnect that never came would silently preserve
+  // the clock across the *next* real session too. Erring the other way costs a
+  // clock that restarts from zero when it could have continued — a far smaller
+  // lie than one counting hours the VPN was off.
+  static const _reconnectGrace = Duration(minutes: 2);
+  DateTime? _sessionContinuesUntil;
+
+  // The node the running tunnel is on, persisted because the app can be
+  // relaunched onto a tunnel it did not start — the widget's background engine
+  // raises one, and the OS can restart the service on its own. Without it
+  // `connectedNode` comes back null and the home screen, which follows the
+  // tunnel when no country was explicitly chosen, falls back to "best server"
+  // while plainly connected to a specific country.
+  static const _connectedNodeKey = 'vpn_connected_node';
+
   // Bearer token the running tunnel's control API demands, persisted for the
   // same reason as the session start: the app can be relaunched onto a tunnel
   // it didn't start, and without the secret it can't ask that tunnel anything.
@@ -286,6 +308,12 @@ class VpnController extends ChangeNotifier {
   /// Mirrors a state read from the plugin into the UI, restoring the persisted
   /// session start when we discover a live tunnel.
   Future<void> _applyRuntimeState(VpnConnectionState actual) async {
+    // Independent of the session start below: the app can be relaunched onto a
+    // live tunnel it did not start (widget connect, OS-restarted service), and
+    // then it knows the tunnel is up but not *where* — see [_connectedNodeKey].
+    if (actual == VpnConnectionState.connected && _connectedNode == null) {
+      await _restoreConnectedNode();
+    }
     if (actual == VpnConnectionState.connected && _sessionStartedAt == null) {
       // Restore the persisted start so the session timer resumes from real
       // elapsed time rather than restarting at zero on relaunch.
@@ -380,6 +408,38 @@ class VpnController extends ChangeNotifier {
   void _clearSessionStart() {
     _sessionStartedAt = null;
     unawaited(_storage.delete(key: _sessionStartKey));
+  }
+
+  /// Restores [connectedNode] for a tunnel this process did not start, so the
+  /// location card and the widget name the country the tunnel is actually on
+  /// instead of falling back to "best server".
+  Future<void> _restoreConnectedNode() async {
+    try {
+      final stored = await _storage.read(key: _connectedNodeKey);
+      if (stored == null) {
+        log.i('Live tunnel with no stored node — the location card will show '
+            '"best server" until the next connect');
+        return;
+      }
+      final decoded = jsonDecode(stored);
+      if (decoded is Map<String, dynamic>) {
+        final node = ServerNode.fromJson(decoded);
+        _connectedNode = node;
+        log.i('Restored connected node "${node.name}"');
+        // Announce it. The caller only notifies when the *state* changed, and
+        // here it usually hasn't — the stream had already settled us on
+        // `connected` before `getState` answered. Without this the restored
+        // node sits in the controller until some unrelated event happens to
+        // notify, and the location card reads "best server" in the meantime:
+        // observed on the emulator as a card that corrected itself minutes
+        // later, which is indistinguishable from the bug it was meant to fix.
+        notifyListeners();
+      }
+    } catch (e) {
+      // A node we can't read is a label, not a session: log it and carry on
+      // rather than fail the reconciliation of a live tunnel over cosmetics.
+      log.w('Could not restore the connected node: $e');
+    }
   }
 
   Future<void> connectToBestNode(
@@ -801,6 +861,25 @@ class VpnController extends ChangeNotifier {
         return null;
       }
       _connectedNode = node;
+      unawaited(_storage.write(
+        key: _connectedNodeKey,
+        value: jsonEncode(node.toJson()),
+      ));
+      // A tunnel that has just come up starts a new session — unless a teardown
+      // moments ago said this connect continues one (see
+      // [_sessionContinuesUntil]).
+      //
+      // Anchoring here rather than in [_trackSessionStart] is the whole fix:
+      // that one only ever wrote when the start was `null`, so a start left
+      // behind by a session that ended without this app running — stopped from
+      // the widget or the notification, killed with the app, lost to a reboot —
+      // was inherited by the next connect, and the clock counted the hours the
+      // VPN had been *off*.
+      final continues = _sessionContinuesUntil;
+      if (continues == null || DateTime.now().isAfter(continues)) {
+        _rememberSessionStart(DateTime.now());
+      }
+      _sessionContinuesUntil = null;
       log.i('Tunnel established to "${node.name}"');
       // Watch this session from here on, so a node that degrades later doesn't
       // hold it for the rest of the day.
@@ -1197,6 +1276,11 @@ class VpnController extends ChangeNotifier {
     _userDisconnecting = true;
     if (endSession) {
       _clearSessionStart();
+      _sessionContinuesUntil = null;
+    } else {
+      // Not a power-off: whatever reconnects next is the same session, and must
+      // not restart the clock (see [_sessionContinuesUntil]).
+      _sessionContinuesUntil = DateTime.now().add(_reconnectGrace);
     }
     // The watchdog belongs to the session being torn down; the next connect
     // arms a fresh one for whatever it establishes.
@@ -1285,6 +1369,11 @@ class VpnController extends ChangeNotifier {
       await storage.delete(key: _clashApiPortKey);
     } catch (e) {
       log.w('Could not delete the stored tunnel API port: $e');
+    }
+    try {
+      await storage.delete(key: _connectedNodeKey);
+    } catch (e) {
+      log.w('Could not delete the stored connected node: $e');
     }
     try {
       await vpn.clearPersistedState();
