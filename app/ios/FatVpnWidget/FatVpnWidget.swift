@@ -135,38 +135,76 @@ struct FatVpnWidgetEntryView: View {
     /// still TW10 (reinstall the tile!) + TW14 with the trace, and the
     /// Control Center toggle (TW14a) is the discriminator.
     ///
-    /// **On 26+ the button is the disc, and only the disc** (owner's call,
-    /// 2026-08-04 night, after seeing the native toggle work end to end on
-    /// his own phone and pointing at the disc in both sizes). A tap anywhere
-    /// else opens the app, which is what WidgetKit does by default with no
-    /// `widgetURL` — and no `widgetURL` is deliberate: one is reported to
-    /// swallow presses landing on a `Button(intent:)` inside it (thread
-    /// 731758), and this project has already lost a button to exactly that
-    /// (`db87370`).
+    /// **On 26+ the whole tile is the button — again, and this time with a
+    /// device behind the decision (2026-08-05).** The owner asked for the disc
+    /// alone and got it in `65e2892`; on his iPhone 15 / iOS 26.5.2 the press
+    /// then stopped arriving altogether — every tap opened the app instead of
+    /// toggling. The build before it, whose button covered the tile, worked on
+    /// the same phone including presses on the disc. So on this OS WidgetKit
+    /// appears to deliver a press to a `Button(intent:)` only when the button
+    /// is the tile; a smaller one inside it gets nothing and the tap falls
+    /// through to the "open the app" default.
     ///
-    /// The whole tile *was* the button for one build. It is not a regression
-    /// to take that back: on ≤18 the whole tile still toggles, because there
-    /// the press is a link and `systemSmall` gets exactly one tap target from
-    /// WidgetKit — the asymmetry is the platform's, not a design choice.
+    /// The hypothesis has a rival — the `contentShape(Circle())` that the
+    /// disc-only button carried — and the medium family was going to be the
+    /// experiment that tells them apart. The owner chose certainty instead
+    /// (2026-08-05): **both families are whole-tile buttons**, and whether the
+    /// disc alone can own the press stays unanswered. Re-running that
+    /// experiment costs someone a dead button for a build cycle, so ask before
+    /// you do.
+    ///
+    /// No `widgetURL` on 26+ either way: one is reported to swallow presses
+    /// landing on a `Button(intent:)` inside it (thread 731758), and
+    /// `db87370` is this project losing a button to exactly that.
     ///
     /// Every line scales down instead of truncating — the Russian strings are
     /// half again as long as the English ones and a tile this narrow has no room
     /// to lose a word to an ellipsis.
+    /// The nesting is not style: a `@ViewBuilder` `if` has its own rules about
+    /// what it may contain, and an availability check *on its own* is the
+    /// shape that is certainly allowed — the same reason `FatVpnWidgetRootView`
+    /// nests its checks.
+    @ViewBuilder
     private var smallBody: some View {
-        smallContent
-            .fatVpnWidgetBackground()
-            .widgetURL(tileURL)
+        if #available(iOS 26.0, iOSApplicationExtension 26.0, *) {
+            if snapshot.signedIn {
+                Button(intent: FatVpnTunnelToggleIntent()) {
+                    smallContent(interactiveDisc: false)
+                        // The VStack's own hit area is its drawn pixels; the
+                        // rectangle is what makes the padding press too.
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+            } else {
+                smallContent(interactiveDisc: true)
+                    .fatVpnWidgetBackground()
+                    .widgetURL(tileURL)
+            }
+        } else {
+            smallContent(interactiveDisc: true)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+        }
     }
 
-    private var smallContent: some View {
+    /// [interactiveDisc] false means an ancestor owns the press — the 26+
+    /// whole-tile button — and the disc must be drawn inert so it cannot
+    /// argue with its parent about who was tapped.
+    @ViewBuilder
+    private func smallContent(interactiveDisc: Bool) -> some View {
         VStack(spacing: 7) {
-            // 76, not 62 (owner, 2026-08-04 night: "сделай побольше"). It is
-            // also the tile's only tap target now, so size is reach as much as
-            // looks. The ceiling is the text under it: a `systemSmall` tile is
-            // ~155pt tall, 24 of which go to this padding and ~45 to three
-            // lines of caption — leaving about 80 before the caption starts
-            // shrinking itself through `minimumScaleFactor`.
-            powerControl(diameter: 76)
+            // 76, not 62 (owner, 2026-08-04 night: "сделай побольше"). The
+            // ceiling is the text under it: a `systemSmall` tile is ~155pt
+            // tall, 24 of which go to this padding and ~45 to three lines of
+            // caption — leaving about 80 before the caption starts shrinking
+            // itself through `minimumScaleFactor`.
+            if interactiveDisc {
+                powerControl(diameter: 76)
+            } else {
+                powerButton(diameter: 76, decorative: true)
+            }
             VStack(spacing: 2) {
                 HStack(spacing: 5) {
                     Circle().fill(accent).frame(width: 7, height: 7)
@@ -189,9 +227,42 @@ struct FatVpnWidgetEntryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// The medium tile, with the button at the top of its column rather than
-    /// centred against the text.
+    /// The medium tile. Same press model as the 2×2 (see [smallBody]): on 26+
+    /// the **whole tile** is the button.
+    ///
+    /// This one was going to keep the disc-only button as the experiment that
+    /// tells the two explanations apart — a sub-tile button being undeliverable
+    /// on 26.5, versus the `contentShape(Circle())` it carried. The owner chose
+    /// certainty over the answer (2026-08-05): both tiles work, and the
+    /// question of whether the disc alone can own the press stays open. Do not
+    /// re-run that experiment without asking — the cost of the wrong outcome is
+    /// a dead button on the user's home screen for a whole build cycle.
+    @ViewBuilder
     private var mediumBody: some View {
+        if #available(iOS 26.0, iOSApplicationExtension 26.0, *) {
+            if snapshot.signedIn {
+                Button(intent: FatVpnTunnelToggleIntent()) {
+                    mediumContent(interactiveDisc: false)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+            } else {
+                mediumContent(interactiveDisc: true)
+                    .fatVpnWidgetBackground()
+                    .widgetURL(tileURL)
+            }
+        } else {
+            mediumContent(interactiveDisc: true)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+        }
+    }
+
+    /// The medium tile's content, with the button at the top of its column
+    /// rather than centred against the text.
+    private func mediumContent(interactiveDisc: Bool) -> some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("FatVPN")
@@ -217,15 +288,17 @@ struct FatVpnWidgetEntryView: View {
             // Same 76 as the small tile: one control, one size, and the medium
             // tile has the room — its four text lines sit in a column beside
             // the disc rather than under it.
-            powerControl(diameter: 76)
+            if interactiveDisc {
+                powerControl(diameter: 76)
+            } else {
+                powerButton(diameter: 76, decorative: true)
+            }
         }
         .padding(16)
         // `.topLeading`, not `.leading`: aligning the row's contents to the top
         // is not enough while the row itself is centred in a tile half again as
         // tall as it is.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .fatVpnWidgetBackground()
-        .widgetURL(tileURL)
     }
 
     /// What a tap on the tile does, for everything the power control does not
@@ -277,14 +350,12 @@ struct FatVpnWidgetEntryView: View {
         }
     }
 
-    /// The power control as a tap target, by what the OS actually delivers.
-    /// The split is **26**, not 18 (owner's call, 2026-08-04 evening — see
-    /// [smallBody] for the full reasoning and the FB22848510 caveat).
+    /// The power control as a tap target on **iOS ≤18**, where the disc may be
+    /// one. On 26+ the press belongs to the tile — the button wraps the whole
+    /// content there (see [smallBody]) and the disc is drawn inert — so this
+    /// is only reached on 26+ when there is no session, and then it is not a
+    /// control at all.
     ///
-    ///  * **iOS 26+** — a `Button` running [FatVpnTunnelToggleIntent] **in the
-    ///    widget's own process**, toggling the tunnel natively — the sing-box
-    ///    architecture, adopted 2026-08-04 (see FatVpnWidgetTunnel.swift).
-    ///    Nothing opens; the tile redraws itself.
     ///  * **iOS 18 and below** — a link, not a button. The press opens the app
     ///    and arrives as `fatvpn://widget/toggle`, which the app routes to the
     ///    same action an in-app press takes. Confirmed working on a device
@@ -296,38 +367,20 @@ struct FatVpnWidgetEntryView: View {
     ///  * **No session** — not a control at all: the tile opens the app, the
     ///    only place the user can do anything about that.
     ///
-    /// ⚠️ **The 26+ button is NOT the old app-process scheme back for a third
-    /// try.** That scheme — route the press into the *app's* process via
-    /// `AudioPlaybackIntent` and toggle from there — is buried for good after
-    /// failing identically on three devices (builds 207 and 233, and the
-    /// owner's iOS 18+ phone on 2026-08-04), and the 2026-08-04 research
-    /// showed that route broken ecosystem-wide (see
-    /// FatVpnWidgetIntents.swift). This intent is the opposite shape: plain,
-    /// widget-process, native tunnel work — the shape sing-box demonstrably
-    /// ships, on the surface (Control Center) where it is field-proven, plus
-    /// this button, where it is documented but publicly undemonstrated for a
-    /// VPN. Acceptance is a traced run (TW14), and the tile must be removed
-    /// and re-added first — WidgetKit archives the view, and an archived tile
-    /// keeps the dead build's button.
-    ///
     /// The `Link` serves the medium family; on `systemSmall` WidgetKit allows
     /// exactly one tap target and ignores links, so there the tile's own
     /// [tileURL] is the toggle. Both end at the same URL, so it does not matter
     /// which one the system honours.
+    ///
+    /// There is no 26+ `Button` here any more, and its absence is a device
+    /// finding rather than a tidy-up: a button smaller than the tile received
+    /// no presses at all on an iPhone 15 / iOS 26.5.2 (`65e2892`), while the
+    /// same phone worked when the button was the tile. Bringing one back means
+    /// re-running that experiment on someone's home screen — ask first.
     @ViewBuilder
     private func powerControl(diameter: CGFloat) -> some View {
         if snapshot.signedIn {
-            if #available(iOS 26.0, iOSApplicationExtension 26.0, *) {
-                Button(intent: FatVpnTunnelToggleIntent()) {
-                    powerButton(diameter: diameter)
-                        // The disc's press target is the disc, not the glyph
-                        // inside it — see [powerButton].
-                        .contentShape(Circle())
-                }
-                // Without `.plain` the system draws its own chrome — a grey
-                // capsule behind a disc that is already a button.
-                .buttonStyle(.plain)
-            } else if family == .systemSmall {
+            if family == .systemSmall {
                 powerButton(diameter: diameter)
             } else {
                 Link(destination: FatVpnWidgetLink.toggle) {
@@ -343,17 +396,19 @@ struct FatVpnWidgetEntryView: View {
     /// — so "is it on?" stays answerable at a glance without the button going
     /// grey on a signed-in user.
     ///
-    /// **The glyph is out of hit testing, always**, and that is a fix rather
-    /// than tidiness. On the reporter's iPhone 15 a press on the *text* toggled
-    /// the VPN while a press on the **disc** merely opened the app — a press
-    /// that reached WidgetKit's "no interactive control here" default instead
-    /// of the control it landed on. The one thing under the disc and nowhere
-    /// else is this `Image(systemName:)` carrying `widgetAccentedRenderingMode`,
-    /// the modifier at the centre of Apple's own unfixed reports of buttons
-    /// that stop firing. So the glyph is taken out of the press path rather
-    /// than left to argue with its parent about who was tapped, and the disc's
-    /// press area is declared by the `contentShape(Circle())` at the call site.
-    private func powerButton(diameter: CGFloat) -> some View {
+    /// **The glyph is out of hit testing, always.** On the reporter's iPhone 15
+    /// a press on the *text* toggled the VPN while a press on the **disc**
+    /// merely opened the app, and the one thing under the disc and nowhere
+    /// else is this `Image(systemName:)` carrying `widgetAccentedRenderingMode`
+    /// — the modifier at the centre of Apple's own unfixed reports of buttons
+    /// that stop firing. Taking it out of the press path was part of the build
+    /// that then worked, so it stays, even though the later evidence points at
+    /// the button's *area* rather than the glyph (see [smallBody]).
+    ///
+    /// [decorative] means an ancestor owns the press — the 26+ whole-tile
+    /// button — so the whole disc declares itself out of hit testing rather
+    /// than competing with its parent for the tap.
+    private func powerButton(diameter: CGFloat, decorative: Bool = false) -> some View {
         ZStack {
             Circle().fill(powerTint.opacity(snapshot.isConnected ? 1 : 0.18))
             Circle().strokeBorder(powerTint.opacity(snapshot.isConnected ? 0 : 0.6), lineWidth: 2)
@@ -384,6 +439,7 @@ struct FatVpnWidgetEntryView: View {
         // is the 18+ button's press state.
         .opacity(snapshot.isBusy ? 0.5 : 1)
         .fatVpnInvalidatable()
+        .allowsHitTesting(!decorative)
     }
 }
 
