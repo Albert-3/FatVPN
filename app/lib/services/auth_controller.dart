@@ -535,6 +535,18 @@ class AuthController extends ChangeNotifier {
   /// once by the home screen — see [consumeWidgetAction].
   HomeWidgetAction? _pendingWidgetAction;
 
+  // One iOS press reaches [_handleUri] twice: the scene delegate parks the URL
+  // for `takeLaunchLink` *and* lets the engine push it as a route, and the
+  // route-level duplicate guard in main.dart never sees the first arrival. Two
+  // toggles are not a no-op — the second lands while the first's connect has
+  // already flipped the state to `connecting`, so it takes the disconnect
+  // branch and cancels it. On a device: the press buzzes, opens the app and
+  // the VPN never comes up, while the disconnect direction survives only
+  // because a connect issued during teardown is dropped by the plugin.
+  HomeWidgetAction? _lastWidgetAction;
+  DateTime? _lastWidgetActionAt;
+  static const _widgetActionDedupWindow = Duration(seconds: 2);
+
   /// Takes the pending widget action, leaving nothing behind. Returns null when
   /// there is none.
   ///
@@ -575,6 +587,20 @@ class AuthController extends ChangeNotifier {
     if (uri.host == homeWidgetLinkHost) {
       final action = homeWidgetActionFromUri(uri);
       if (action != null) {
+        // Same press, second delivery path — see [_lastWidgetAction]. The
+        // window also debounces a real double-tap, which for a toggle is the
+        // kinder reading: carrying both out would connect and immediately
+        // hang up.
+        final now = DateTime.now();
+        final duplicate = _lastWidgetAction == action &&
+            _lastWidgetActionAt != null &&
+            now.difference(_lastWidgetActionAt!) < _widgetActionDedupWindow;
+        _lastWidgetAction = action;
+        _lastWidgetActionAt = now;
+        if (duplicate) {
+          log.i('Widget action duplicate ignored: ${action.name}');
+          return;
+        }
         log.i('Widget action received: ${action.name}');
         // The press's own haptic, and on iOS the only one it gets.
         //
