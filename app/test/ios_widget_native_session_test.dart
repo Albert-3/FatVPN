@@ -19,6 +19,7 @@
 //   · a platform that answers nothing (Android, or a build without the call)
 //     changes nothing at all.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:singbox_mm/singbox_mm.dart';
@@ -42,6 +43,10 @@ void main() {
   var takes = 0;
 
   setUp(() async {
+    // The whole path is iOS-only, and deliberately gated on the platform
+    // rather than on the channel: awaiting a channel on every reconciliation
+    // hangs any `testWidgets` body that reconciles without pumping.
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     FlutterSecureStorage.setMockInitialValues(<String, String>{});
     platform = FakeVpnPlatform();
     SignboxVpnPlatform.instance = platform;
@@ -63,6 +68,7 @@ void main() {
   });
 
   tearDown(() {
+    debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(HomeWidgetBridge.channel, null);
     HomeWidgetBridge.instance.resetForTest();

@@ -314,7 +314,15 @@ class VpnController extends ChangeNotifier {
   /// Only ever moves the anchor *forward*, and the marker is read once, so an
   /// in-app connect that deliberately continues a session (a server switch,
   /// `endSession: false`) cannot be overruled by it.
+  ///
+  /// iOS-gated on the platform rather than on the channel answering null,
+  /// because this sits on the path every reconciliation takes: a platform
+  /// channel round trip inside a `testWidgets` body only completes on a pump,
+  /// so awaiting one unconditionally hangs every widget test that reconciles —
+  /// which is exactly what it did (`audit_wait_disconnected_test`, caught by
+  /// the full run).
   Future<void> _adoptNativeSessionStart() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
     final started = await HomeWidgetBridge.instance.takeNativeSessionStart();
     if (started == null) return;
     final current = _sessionStartedAt;
