@@ -154,8 +154,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     setState(() => _sharingLogs = true);
     try {
+      // iOS 26 refuses a share sheet with no anchor rect (the call throws and
+      // the button reads as dead — see AppLogger.shareOriginOrFallback). The
+      // screen's own bounds are anchor enough: on iPhone the sheet is modal
+      // and only needs the rect to be valid, on iPad the popover lands
+      // mid-screen, which beats not appearing.
+      final box = context.findRenderObject() as RenderBox?;
+      final origin = box == null || !box.hasSize
+          ? null
+          : box.localToGlobal(Offset.zero) & box.size;
       await AppLogger.instance.shareSupportBundle(
         extraContext: _diagnosticsContext(),
+        sharePositionOrigin: origin,
       );
     } finally {
       if (mounted) setState(() => _sharingLogs = false);

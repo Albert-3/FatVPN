@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -351,6 +352,7 @@ class AppLogger {
   Future<bool> shareSupportBundle({
     Map<String, String> extraContext = const {},
     String subject = 'FatVPN diagnostics',
+    Rect? sharePositionOrigin,
   }) async {
     final bundle = await buildSupportBundle(extraContext: extraContext);
     try {
@@ -361,6 +363,7 @@ class AppLogger {
       unawaited(_launchShare(
         [XFile(file.path, mimeType: 'text/plain')],
         subject,
+        shareOriginOrFallback(sharePositionOrigin),
       ));
       return true;
     } catch (err) {
@@ -369,9 +372,36 @@ class AppLogger {
     }
   }
 
-  Future<void> _launchShare(List<XFile> files, String subject) async {
+  /// The share sheet's anchor, never absent and never zero-sized.
+  ///
+  /// iOS 26 made `sharePositionOrigin` mandatory: `Share.shareXFiles` without
+  /// it throws `PlatformException(sharePositionOrigin: argument must be set)`
+  /// where earlier versions quietly presented the sheet anyway. The throw
+  /// lands in [_launchShare]'s catch, whose only output is this log — i.e. the
+  /// one place the user was trying to send — so on a device it reads as the
+  /// Send button doing nothing at all (reported from iOS 26, 2026-08-04).
+  /// Callers pass the rect of the button that was pressed; when nothing is
+  /// passed, a 1×1 rect at the origin satisfies the requirement everywhere
+  /// (Android ignores the parameter entirely).
+  @visibleForTesting
+  static Rect shareOriginOrFallback(Rect? requested) {
+    if (requested == null || requested.isEmpty) {
+      return const Rect.fromLTWH(0, 0, 1, 1);
+    }
+    return requested;
+  }
+
+  Future<void> _launchShare(
+    List<XFile> files,
+    String subject,
+    Rect sharePositionOrigin,
+  ) async {
     try {
-      await Share.shareXFiles(files, subject: subject);
+      await Share.shareXFiles(
+        files,
+        subject: subject,
+        sharePositionOrigin: sharePositionOrigin,
+      );
     } catch (err) {
       e('AppLogger: share sheet error', err);
     }
