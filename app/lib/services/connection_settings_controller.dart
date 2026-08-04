@@ -160,6 +160,18 @@ class ConnectionSettingsController extends ChangeNotifier {
   /// (e.g. `https://1.1.1.1/dns-query`, `tls://8.8.8.8`, or a plain IP).
   String get customDns => _customDns;
   SingboxTunImplementation get networkStack => _networkStack;
+
+  /// The stack the next connect will actually run: [networkStack], unless the
+  /// kill switch narrows it to gvisor on iOS — sing-box refuses to start the
+  /// `system`/`mixed` stack under `includeAllNetworks` (sing-tun#25), so with
+  /// the switch on there is exactly one stack that boots at all. Settings
+  /// displays this rather than [networkStack] so the row never names a stack
+  /// the tunnel cannot start; the stored pick survives untouched and comes
+  /// back when the switch goes off.
+  SingboxTunImplementation get effectiveNetworkStack =>
+      defaultTargetPlatform == TargetPlatform.iOS && _killSwitch
+          ? SingboxTunImplementation.gvisor
+          : _networkStack;
   bool get splitTunnelEnabled => _splitTunnelEnabled;
 
   /// Whether the system may bring the tunnel back on its own. See
@@ -726,7 +738,12 @@ class ConnectionSettingsController extends ChangeNotifier {
         remoteDnsOverride: useCustomDns ? _customDns.trim() : null,
       ),
       inbound: InboundOptions(
-        tunImplementation: _networkStack,
+        // Not [_networkStack]: the kill switch narrows the choice to gvisor
+        // on iOS, where "system + includeAllNetworks" is not a slower tunnel
+        // but one that never comes up — seen live on an iPhone 16
+        // (2026-08-04), every connect dying in the extension with START
+        // FAILED until the switch was turned off. See [effectiveNetworkStack].
+        tunImplementation: effectiveNetworkStack,
         splitTunnelingEnabled: splitApps,
         includePackages:
             splitApps && whitelist ? packages.toList() : const <String>[],

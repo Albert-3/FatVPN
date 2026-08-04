@@ -188,6 +188,46 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         (tunnelOptions?["includeAllNetworks"] as? NSNumber)?.boolValue ?? false
     }
 
+    /// Same question asked of options that are not yet installed as
+    /// [tunnelOptions] — the start path needs the answer *before* it commits
+    /// them, because the answer decides whether the config they carry can run
+    /// at all.
+    private func includeAllNetworksIsRequested(in options: [String: NSObject]) -> Bool {
+        (options["includeAllNetworks"] as? NSNumber)?.boolValue ?? false
+    }
+
+    /// Rewrites every TUN inbound whose stack cannot coexist with
+    /// `includeAllNetworks` onto `gvisor`, and leaves everything else exactly
+    /// as it was.
+    ///
+    /// A missing `stack` key is rewritten too: sing-box's default is `mixed`,
+    /// which fails the same way. A config that does not parse is returned
+    /// untouched — sing-box will then fail it with its own, more specific
+    /// error, which is strictly better than this guard guessing.
+    static func forceGvisorStack(in configContent: String) -> String {
+        guard let data = configContent.data(using: .utf8),
+              var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var inbounds = root["inbounds"] as? [[String: Any]]
+        else { return configContent }
+        var changed = false
+        for index in inbounds.indices {
+            var inbound = inbounds[index]
+            guard inbound["type"] as? String == "tun" else { continue }
+            let stack = inbound["stack"] as? String
+            if stack == nil || stack == "system" || stack == "mixed" {
+                inbound["stack"] = "gvisor"
+                inbounds[index] = inbound
+                changed = true
+            }
+        }
+        guard changed else { return configContent }
+        root["inbounds"] = inbounds
+        guard let patchedData = try? JSONSerialization.data(withJSONObject: root),
+              let patched = String(data: patchedData, encoding: .utf8)
+        else { return configContent }
+        return patched
+    }
+
     /// How long the whole of `startTunnel` may take before we answer the
     /// framework ourselves. Anything past this is a hang, not a slow server, and
     /// an explicit error at least leaves the user a retriable state instead of
@@ -481,9 +521,27 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         Self.harden(Self.workingDirectory)
         Self.harden(Self.cacheDirectory)
 
-        let effectiveOptions = try resolveStartOptions(startOptions)
-        guard let configContent = effectiveOptions["configContent"] as? String, !configContent.isEmpty else {
+        var effectiveOptions = try resolveStartOptions(startOptions)
+        guard var configContent = effectiveOptions["configContent"] as? String, !configContent.isEmpty else {
             throw TunnelStartupError(message: "Missing configContent in tunnel start options")
+        }
+        // sing-box refuses to start the `system` (or `mixed`) TUN stack when
+        // the profile carries `includeAllNetworks` (sing-tun#25), and on this
+        // app the two meet: the audit moved iOS to the system stack, the kill
+        // switch sets includeAllNetworks. The app now builds gvisor configs
+        // for kill-switch sessions, but this process also starts from a
+        // *persisted* snapshot (on-demand, the widget's native start) that may
+        // predate the switch being flipped — so the last line of defence is
+        // here, on whatever config is actually about to run. Without it the
+        // start dies with START FAILED and, under on-demand, retries into the
+        // same wall forever. Seen live on an iPhone 16 (2026-08-04).
+        if includeAllNetworksIsRequested(in: effectiveOptions) {
+            let patched = Self.forceGvisorStack(in: configContent)
+            if patched != configContent {
+                writeMessage("(packet-tunnel) kill switch is on: tun.stack rewritten to gvisor (system/mixed cannot start with includeAllNetworks)")
+                configContent = patched
+                effectiveOptions["configContent"] = patched as NSString
+            }
         }
         tunnelOptions = effectiveOptions
 

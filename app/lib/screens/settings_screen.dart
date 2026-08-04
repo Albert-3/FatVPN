@@ -172,6 +172,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'dns_preset': cs.dnsPreset.name,
       'custom_dns': cs.customDns.isEmpty ? '(none)' : cs.customDns,
       'network_stack': cs.networkStack.name,
+      // Distinct from the stored pick when the kill switch forces gvisor on
+      // iOS — a support bundle saying "system" for a tunnel running gvisor
+      // would send the reader down the wrong stack's failure modes.
+      'network_stack_effective': cs.effectiveNetworkStack.name,
       // Both change what happens when the tunnel is *not* up, which is the
       // situation most support reports are actually about.
       'auto_reconnect': cs.autoReconnect.toString(),
@@ -275,7 +279,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           const Divider(color: AppColors.disabled, height: 24),
                           _pickerRow(
                             s.networkStack,
-                            _stackLabel(cs.networkStack),
+                            // The *effective* stack, not the stored pick: with
+                            // the kill switch on, iOS runs gvisor no matter
+                            // what was chosen (the system stack cannot start
+                            // under includeAllNetworks), and a row that kept
+                            // saying "Mixed" would name a stack the tunnel
+                            // never runs.
+                            _stackLabel(cs.effectiveNetworkStack),
                             () => _showStackPicker(s),
                           ),
                           // Part of the sing-box config rather than the OS
