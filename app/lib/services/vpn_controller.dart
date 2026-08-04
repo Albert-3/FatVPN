@@ -14,6 +14,7 @@ import 'api_client.dart';
 import 'app_logger.dart';
 import 'auto_switch_policy.dart';
 import 'connection_settings_controller.dart';
+import 'home_widget_bridge.dart';
 import 'ping_service.dart';
 import 'secure_store.dart';
 import 'vless_config_parser.dart';
@@ -268,6 +269,7 @@ class VpnController extends ChangeNotifier {
   Future<void> syncFromRuntime() async {
     try {
       await _ensureInitialized();
+      await _adoptNativeSessionStart();
       final actual = await _vpn.getState();
       await _applyRuntimeState(actual);
       if (actual == VpnConnectionState.connected) {
@@ -297,6 +299,29 @@ class VpnController extends ChangeNotifier {
       // Best-effort: if the platform query fails, leave the state untouched.
       log.w('syncFromRuntime failed: $e');
     }
+  }
+
+  /// Takes over the session a widget press started without us.
+  ///
+  /// On iOS the widget's power button performs in the widget's own process and
+  /// drives the tunnel natively — no Flutter, so [connect] never runs and
+  /// nothing anchors a session. The persisted start then belongs to whatever
+  /// session this app last watched, and the clock counts from there: the
+  /// reporter's own recording shows `00:00:46` on a tunnel seven seconds old
+  /// (2026-08-04). The press leaves its start in the App Group; this is where
+  /// the app collects it.
+  ///
+  /// Only ever moves the anchor *forward*, and the marker is read once, so an
+  /// in-app connect that deliberately continues a session (a server switch,
+  /// `endSession: false`) cannot be overruled by it.
+  Future<void> _adoptNativeSessionStart() async {
+    final started = await HomeWidgetBridge.instance.takeNativeSessionStart();
+    if (started == null) return;
+    final current = _sessionStartedAt;
+    if (current != null && !started.isAfter(current)) return;
+    log.i('Adopting the session a widget press started at $started');
+    _rememberSessionStart(started);
+    notifyListeners();
   }
 
   /// Arms the runtime-state reconciliation poll when the UI is sitting on a

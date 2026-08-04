@@ -52,17 +52,29 @@ struct FatVpnWidgetProvider: TimelineProvider {
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<FatVpnWidgetEntry>) -> Void) {
-        let now = Date()
-        let entry = FatVpnWidgetEntry(date: now, snapshot: FatVpnWidgetStore.read())
-        // One entry and a distant refresh. Everything that changes what this
-        // tile shows already reloads it explicitly — the app on every state
-        // change, the packet-tunnel extension when the OS starts or stops the
-        // tunnel without the app, the press overlay the moment a button is
-        // tapped — and the session clock ticks by itself inside SwiftUI's timer
-        // text. The scheduled refresh is only a backstop for a reload that never
-        // arrived, and WidgetKit budgets reloads: asking for one a minute spends
-        // the budget and gets the widget frozen for hours.
-        completion(Timeline(entries: [entry], policy: .after(now.addingTimeInterval(15 * 60))))
+        Task {
+            // Ask the OS what the tunnel is doing, rather than drawing the last
+            // thing another process managed to tell us. The record on disk is
+            // written faithfully — the packet-tunnel extension patches it on
+            // every start and stop — but the reload next to that patch never
+            // arrives, so before this the tile could sit on "Подключение…" over
+            // a live tunnel until the user opened the app (iPhone 15 / iOS
+            // 26.5.2, 2026-08-04, on video). `nil` means the question could not
+            // be asked; then the stored record is all there is.
+            let live = await FatVpnWidgetTunnel.liveState()
+            let now = Date()
+            let snapshot = FatVpnWidgetStore.read(live: live)
+            // One entry, and a refresh whose distance depends on whether
+            // anything is expected to change. A tunnel on its way up or down
+            // settles in seconds and nothing else will come and say so; a
+            // settled one can wait, because WidgetKit budgets reloads and
+            // asking for one a minute spends the budget and gets the widget
+            // frozen for hours. The session clock ticks by itself inside
+            // SwiftUI's timer text, so a live session needs no refresh at all.
+            let next = now.addingTimeInterval(snapshot.isBusy ? 10 : 15 * 60)
+            let entry = FatVpnWidgetEntry(date: now, snapshot: snapshot)
+            completion(Timeline(entries: [entry], policy: .after(next)))
+        }
     }
 }
 
@@ -166,7 +178,7 @@ struct FatVpnWidgetEntryView: View {
             if interactiveDisc {
                 powerControl(diameter: 62)
             } else {
-                powerButton(diameter: 62)
+                powerButton(diameter: 62, decorative: true)
             }
             VStack(spacing: 2) {
                 HStack(spacing: 5) {
@@ -317,6 +329,9 @@ struct FatVpnWidgetEntryView: View {
             if #available(iOS 26.0, iOSApplicationExtension 26.0, *) {
                 Button(intent: FatVpnTunnelToggleIntent()) {
                     powerButton(diameter: diameter)
+                        // The disc's press target is the disc, not the glyph
+                        // inside it — see [powerButton].
+                        .contentShape(Circle())
                 }
                 // Without `.plain` the system draws its own chrome — a grey
                 // capsule behind a disc that is already a button.
@@ -336,7 +351,19 @@ struct FatVpnWidgetEntryView: View {
     /// Green either way — filled when the tunnel is up, outlined when it is not
     /// — so "is it on?" stays answerable at a glance without the button going
     /// grey on a signed-in user.
-    private func powerButton(diameter: CGFloat) -> some View {
+    ///
+    /// [decorative] means an ancestor owns the press (the 26+ whole-tile
+    /// button) and this disc is pixels, nothing more — so it declares itself
+    /// out of hit testing entirely. That is a fix, not tidiness: the reporter's
+    /// iPhone 15 toggled the VPN when the *text* was pressed and merely opened
+    /// the app when the **disc** was, which is a press that reached WidgetKit's
+    /// "no interactive control here" default instead of the button wrapping the
+    /// whole tile. The one thing under the disc and nowhere else is an
+    /// `Image(systemName:)` carrying `widgetAccentedRenderingMode` — the modifier
+    /// at the centre of Apple's own unfixed reports of buttons that stop firing
+    /// — so the glyph is taken out of the press path rather than left to argue
+    /// with its parent about who was tapped.
+    private func powerButton(diameter: CGFloat, decorative: Bool = false) -> some View {
         ZStack {
             Circle().fill(powerTint.opacity(snapshot.isConnected ? 1 : 0.18))
             Circle().strokeBorder(powerTint.opacity(snapshot.isConnected ? 0 : 0.6), lineWidth: 2)
@@ -365,6 +392,7 @@ struct FatVpnWidgetEntryView: View {
         // is the 18+ button's press state.
         .opacity(snapshot.isBusy ? 0.5 : 1)
         .fatVpnInvalidatable()
+        .allowsHitTesting(!decorative)
     }
 }
 

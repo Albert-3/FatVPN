@@ -46,6 +46,13 @@ class FatVpnWidgetChannel(private val context: Context) : MethodChannel.MethodCa
             // real `fatvpn://widget/...` intent. Answering keeps the shared Dart
             // call from taking a MissingPluginException for an answer.
             "takePendingAction" -> result.success(null)
+            // Also always null, and for the same reason. On iOS the widget's
+            // press starts the tunnel natively, with no Dart in the process, so
+            // it leaves the session's start here for the app to adopt. Android's
+            // widget connect runs the app's own Dart in a background engine —
+            // its sessions are anchored the ordinary way and there is nothing to
+            // hand over.
+            "takeNativeSessionStart" -> result.success(null)
             else -> result.notImplemented()
         }
     }

@@ -122,6 +122,12 @@ import UIKit
         Self.pendingLaunchLink = nil
       case "takeBreadcrumbs":
         result(FatVpnWidgetStore.takeTrail())
+      case "takeNativeSessionStart":
+        // A session the widget started on its own. Read once, so it anchors
+        // exactly one — see FatVpnWidgetStore.markNativeSessionStart.
+        result(FatVpnWidgetStore.takeNativeSessionStart().map {
+          Int($0.timeIntervalSince1970 * 1000)
+        })
       default:
         result(FlutterMethodNotImplemented)
       }

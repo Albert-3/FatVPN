@@ -43,6 +43,44 @@ enum FatVpnWidgetTunnel {
         return started(manager.connection.status)
     }
 
+    /// What the OS says about the tunnel right now, for the tile to draw from.
+    ///
+    /// The widget's timeline used to draw the record another process had
+    /// written, which is only ever as fresh as the reload that was supposed to
+    /// follow it — and the reload the packet-tunnel extension asks for does not
+    /// arrive (2026-08-04: the tile sat on "Подключение…" for five seconds over
+    /// a connected tunnel, then over a disconnected one, until the app was
+    /// opened). Asking here costs one preferences load and cannot be lost in
+    /// the post.
+    ///
+    /// Quiet on purpose: this runs on WidgetKit's schedule, and a trail entry
+    /// per refresh would push the press trail — 60 lines, the only witness a
+    /// press has — out of the App Group before anyone read it.
+    static func liveState() async -> FatVpnLiveTunnelState? {
+        guard let manager = await loadManager(quiet: true) else { return nil }
+        return liveState(of: manager)
+    }
+
+    private static func liveState(of manager: NETunnelProviderManager) -> FatVpnLiveTunnelState? {
+        switch manager.connection.status {
+        case .connected:
+            return FatVpnLiveTunnelState(
+                state: "connected", connectedAt: manager.connection.connectedDate)
+        case .connecting, .reasserting:
+            return FatVpnLiveTunnelState(state: "connecting", connectedAt: nil)
+        case .disconnecting:
+            return FatVpnLiveTunnelState(state: "disconnecting", connectedAt: nil)
+        case .disconnected:
+            return FatVpnLiveTunnelState(state: "disconnected", connectedAt: nil)
+        case .invalid:
+            // No usable configuration — the stored record is a better guess
+            // than "disconnected", which would blank a tile mid-session.
+            return nil
+        @unknown default:
+            return nil
+        }
+    }
+
     /// The power button: resolve the direction against the live connection —
     /// the tile may be a redraw behind the tunnel — and go.
     static func toggle() async throws {
@@ -129,6 +167,12 @@ enum FatVpnWidgetTunnel {
             // check that refuses a snapshot older than its session.
             try manager.connection.startVPNTunnel()
             FatVpnWidgetStore.trace("native start issued")
+            // The session begins with the press. Refined to the OS's own
+            // connect date below if we are still alive when the tunnel lands;
+            // written here first so a press whose intent the system cuts short
+            // still leaves the app an anchor that is not last week's.
+            FatVpnWidgetStore.markNativeSessionStart(Date())
+            await publishWhenSettled(wantStarted: true)
         } catch {
             FatVpnWidgetStore.clearPress()
             FatVpnWidgetStore.trace("native start failed: \(error.localizedDescription)")
@@ -162,14 +206,71 @@ enum FatVpnWidgetTunnel {
         }
         manager.connection.stopVPNTunnel()
         FatVpnWidgetStore.trace("native stop issued")
-        // No clearPress: the extension's own teardown patches the snapshot to
-        // "disconnected" within seconds, which supersedes the overlay; the
-        // stop overlay's own window is short (stopOptimism) either way.
+        // The session ends here, whoever starts the next one.
+        FatVpnWidgetStore.clearNativeSessionStart()
+        // No clearPress: the overlay is superseded the moment the state moves,
+        // and its own window is short (stopOptimism) either way. What the tile
+        // does need is somebody to notice the tunnel actually went down.
+        await publishWhenSettled(wantStarted: false)
+    }
+
+    /// Follows the tunnel to where the press was aiming, then writes that into
+    /// the snapshot the tile draws from — from the widget's own process, where
+    /// a `reloadAllTimelines()` demonstrably lands.
+    ///
+    /// The tile is redrawn by WidgetKit, not by us, and only when somebody asks
+    /// for a reload. The packet-tunnel extension asks (`patchTunnelState` on
+    /// every start and stop) and it does not work: on 2026-08-04 an iPhone 15
+    /// showed "Подключение…" over a tunnel that had been up for five seconds,
+    /// and "Отключение…" over one that was already down, both until the app
+    /// came to the front and published from *its* process. So the press waits
+    /// for its own outcome instead of trusting a message to be delivered.
+    ///
+    /// Bounded, and short: an App Intent that runs too long is killed, and the
+    /// timeline asks for a refresh of its own while the tile is busy, so an
+    /// answer that misses this window is late rather than lost.
+    private static func publishWhenSettled(wantStarted: Bool) async {
+        let deadline = Date().addingTimeInterval(wantStarted ? 6 : 4)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            // Re-loaded rather than re-read: a connection object is only as
+            // live as the process's subscription to it, and this process was
+            // launched for one press.
+            guard let manager = await loadManager(quiet: true),
+                  let live = liveState(of: manager) else { continue }
+            if wantStarted, live.state == "connected" {
+                let startedAt = live.connectedAt ?? Date()
+                FatVpnWidgetStore.markNativeSessionStart(startedAt)
+                FatVpnWidgetStore.patchTunnelState("connected", connectedAt: startedAt)
+                FatVpnWidgetStore.trace("native start settled: connected")
+                return
+            }
+            if !wantStarted, live.state == "disconnected" {
+                FatVpnWidgetStore.patchTunnelState("disconnected", connectedAt: nil)
+                FatVpnWidgetStore.trace("native stop settled: disconnected")
+                return
+            }
+        }
+        FatVpnWidgetStore.trace(
+            "native \(wantStarted ? "start" : "stop"): still moving after the wait")
+        // Redraw anyway: the timeline reads the live status for itself now, so
+        // even an unsettled tile shows what the OS is actually doing.
+        FatVpnWidgetStore.reloadWidgets()
     }
 
     // MARK: - Plumbing
 
-    private static func loadManager() async -> NETunnelProviderManager? {
+    /// [quiet] is for the callers that run on a schedule rather than on a press
+    /// — one attempt, nothing written to the trail (see [liveState]).
+    private static func loadManager(quiet: Bool = false) async -> NETunnelProviderManager? {
+        if quiet {
+            let managers = try? await NETunnelProviderManager.loadAllFromPreferences()
+            return managers?.first
+        }
+        return await loadManagerTraced()
+    }
+
+    private static func loadManagerTraced() async -> NETunnelProviderManager? {
         // Asked twice before concluding there is no configuration: the first
         // read may happen in a process the system only just launched, and one
         // empty answer there would cost the press entirely.

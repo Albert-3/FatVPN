@@ -304,6 +304,32 @@ class HomeWidgetBridge {
     }
   }
 
+  /// Takes the moment a **widget press** raised the tunnel, leaving nothing
+  /// behind. Null when this session is not one of those.
+  ///
+  /// iOS only, and only for the press that runs natively in the widget's own
+  /// process: there is no Flutter there, so the app's connect path — the one
+  /// place a session is anchored — never runs. Without this the app opens onto
+  /// a tunnel that came up seconds ago and shows the clock of whatever session
+  /// it last saw; the reporter's screen recording has it at `00:00:46` for a
+  /// seven-second-old tunnel. Android answers null: its widget connect runs the
+  /// app's own Dart in a background engine, so its sessions are anchored the
+  /// ordinary way.
+  Future<DateTime?> takeNativeSessionStart() async {
+    if (_unsupported) return null;
+    try {
+      final millis = await channel.invokeMethod<int>('takeNativeSessionStart');
+      if (millis == null || millis <= 0) return null;
+      return DateTime.fromMillisecondsSinceEpoch(millis);
+    } on MissingPluginException {
+      // A platform build that predates this call, or one with no widget at all.
+      return null;
+    } catch (e) {
+      log.w('Could not read the native session start: $e');
+      return null;
+    }
+  }
+
   /// Takes the action a widget tap parked with the platform, leaving nothing
   /// behind. Null when there is none.
   ///

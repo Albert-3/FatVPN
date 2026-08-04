@@ -55,6 +55,18 @@ struct FatVpnWidgetSnapshot: Equatable {
     static let empty = FatVpnWidgetSnapshot()
 }
 
+/// The tunnel state as the OS reports it *right now*, read by the widget's own
+/// process — see `FatVpnWidgetTunnel.liveState()`.
+///
+/// The stored snapshot is a message from another process, and a message only
+/// arrives if somebody delivers it. This is the state nobody has to deliver.
+struct FatVpnLiveTunnelState {
+    let state: String
+    /// When the OS says the current connection came up, where it knows. Not the
+    /// same thing as the *session* start the app keeps — see [FatVpnWidgetStore.read].
+    let connectedAt: Date?
+}
+
 /// What a press asked for, parked in the App Group for the app to collect.
 ///
 /// It has to be a mailbox rather than a URL because of what the button is on
@@ -77,6 +89,7 @@ enum FatVpnWidgetStore {
     private static let pressKey = "fatvpn.widget.press"
     private static let pressAtKey = "fatvpn.widget.pressAt"
     private static let trailKey = "fatvpn.widget.trail"
+    private static let nativeSessionKey = "fatvpn.widget.nativeSessionAt"
 
     /// How long a parked action stays worth acting on. The app is expected
     /// within a second or two — on iOS 17 the same press opens it — so anything
@@ -99,8 +112,24 @@ enum FatVpnWidgetStore {
 
     // MARK: - Snapshot
 
-    static func read() -> FatVpnWidgetSnapshot {
+    /// Reads what the tile should draw.
+    ///
+    /// [live] is the tunnel state the widget process just asked the OS for, and
+    /// when it is there it **wins** over the stored one. That is not belt and
+    /// braces, it is the fix for a tile that stayed on "Подключение…" over a
+    /// live tunnel until the user opened the app (reported from an iPhone 15 /
+    /// iOS 26.5.2, 2026-08-04, with the video to prove it): the record on disk
+    /// was right — the packet-tunnel extension patches it the moment the tunnel
+    /// comes up — but the `reloadAllTimelines()` next to that patch never
+    /// reached WidgetKit, so nothing ever re-rendered the tile. A snapshot the
+    /// widget reads for itself needs no delivery.
+    ///
+    /// Everything the OS cannot know — the location, the language, whether
+    /// there is a session at all — still comes from the stored record.
+    static func read(live: FatVpnLiveTunnelState? = nil) -> FatVpnWidgetSnapshot {
         guard let stored = defaults?.dictionary(forKey: snapshotKey) else {
+            // Nothing has ever been published: there is no session to draw a
+            // button for, whatever the tunnel is doing.
             return .empty
         }
         var snapshot = FatVpnWidgetSnapshot()
@@ -115,7 +144,33 @@ enum FatVpnWidgetStore {
         // guessing at: anything but the current version renders as "no data
         // yet", which the tile already knows how to draw.
         guard snapshot.version == FatVpnWidgetSnapshot.currentVersion else { return .empty }
+        if let live {
+            snapshot = merge(live, into: snapshot)
+        }
         return applyPress(to: snapshot)
+    }
+
+    /// Puts the OS's answer over the stored one, keeping the *session* clock.
+    ///
+    /// The session start is deliberately not `connection.connectedDate`: a
+    /// session survives a reconnect (a server switch, a network change), and
+    /// the OS's date restarts with every re-establish. So the stored start is
+    /// preferred wherever the record already agreed the tunnel was up, and the
+    /// OS's date is only the fallback for a record that has fallen behind.
+    private static func merge(
+        _ live: FatVpnLiveTunnelState,
+        into snapshot: FatVpnWidgetSnapshot
+    ) -> FatVpnWidgetSnapshot {
+        var merged = snapshot
+        merged.state = live.state
+        guard live.state == "connected" else {
+            merged.connectedAt = nil
+            return merged
+        }
+        merged.connectedAt = snapshot.state == "connected"
+            ? (snapshot.connectedAt ?? live.connectedAt)
+            : (live.connectedAt ?? snapshot.connectedAt)
+        return merged
     }
 
     /// Stores what the app published.
@@ -242,6 +297,34 @@ enum FatVpnWidgetStore {
         // start belongs to one that is on its way out or has not begun.
         overlaid.connectedAt = nil
         return overlaid
+    }
+
+    // MARK: - A session the app was never told about
+
+    /// Records that a *widget* press is what raised this tunnel, and when.
+    ///
+    /// The app anchors a session in its own connect path, and a widget start
+    /// never goes near it: no Flutter runs in a widget process. Without this
+    /// the app inherits the start of whatever session it last saw — which is
+    /// how a tunnel seven seconds old was shown as `00:00:46` on the reporter's
+    /// own screen recording (2026-08-04). Written by the press, read once by
+    /// the app the next time it reconciles with a live tunnel.
+    static func markNativeSessionStart(_ date: Date) {
+        defaults?.set(date.timeIntervalSince1970, forKey: nativeSessionKey)
+    }
+
+    /// Forgets a marked session start. A stop ends the session it belonged to.
+    static func clearNativeSessionStart() {
+        defaults?.removeObject(forKey: nativeSessionKey)
+    }
+
+    /// Reads the marked start and clears it, so one press anchors one session.
+    static func takeNativeSessionStart() -> Date? {
+        guard let defaults else { return nil }
+        let seconds = defaults.double(forKey: nativeSessionKey)
+        guard seconds > 0 else { return nil }
+        defaults.removeObject(forKey: nativeSessionKey)
+        return Date(timeIntervalSince1970: seconds)
     }
 
     // MARK: - The parked action
