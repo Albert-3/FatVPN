@@ -329,10 +329,10 @@ struct FatVpnWidgetEntryView: View {
             Circle().fill(powerTint.opacity(snapshot.isConnected ? 1 : 0.18))
             Circle().strokeBorder(powerTint.opacity(snapshot.isConnected ? 0 : 0.6), lineWidth: 2)
             Image(systemName: "power")
-                .font(.system(size: diameter * 0.42, weight: .bold))
-                .foregroundColor(snapshot.isConnected
-                                 ? FatVpnWidgetPalette.background
-                                 : powerTint)
+                // First in the chain, not last: this is an `Image`-only
+                // modifier, and `.font`/`.foregroundColor` below already
+                // erase the receiver to `some View` (caught by the CI build).
+                //
                 // Not cosmetic. Under a tinted/clear Home Screen appearance —
                 // first-class on iOS 26 — widgets render "accented", and an
                 // accented-desaturated Image inside a Button is an
@@ -340,6 +340,10 @@ struct FatVpnWidgetEntryView: View {
                 // its intent at all (2026-08-04 research). Full colour opts the
                 // glyph out of that entire failure class.
                 .fatVpnFullColorInAccentedMode()
+                .font(.system(size: diameter * 0.42, weight: .bold))
+                .foregroundColor(snapshot.isConnected
+                                 ? FatVpnWidgetPalette.background
+                                 : powerTint)
         }
         .frame(width: diameter, height: diameter)
         // Dimmed while the tunnel is moving either way, so the press has an
