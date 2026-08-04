@@ -150,13 +150,16 @@ enum FatVpnWidgetStore {
         return applyPress(to: snapshot)
     }
 
-    /// Puts the OS's answer over the stored one, keeping the *session* clock.
+    /// Puts the OS's answer over the stored one — for the *state*, and for the
+    /// state only. The clock keeps the stored start.
     ///
-    /// The session start is deliberately not `connection.connectedDate`: a
-    /// session survives a reconnect (a server switch, a network change), and
-    /// the OS's date restarts with every re-establish. So the stored start is
-    /// preferred wherever the record already agreed the tunnel was up, and the
-    /// OS's date is only the fallback for a record that has fallen behind.
+    /// The session start is deliberately not `connection.connectedDate`. A
+    /// session survives a reconnect (a server switch, a network change) and the
+    /// OS's date restarts with every re-establish, so the two disagree by
+    /// design — and the app's screen counts from the stored one. Preferring
+    /// anything else here puts a different number on the tile than in the app,
+    /// which is what the owner reported on 2026-08-05: "таймер не совпадает".
+    /// The OS's date is a seed for a record that has none, nothing more.
     private static func merge(
         _ live: FatVpnLiveTunnelState,
         into snapshot: FatVpnWidgetSnapshot
@@ -167,9 +170,7 @@ enum FatVpnWidgetStore {
             merged.connectedAt = nil
             return merged
         }
-        merged.connectedAt = snapshot.state == "connected"
-            ? (snapshot.connectedAt ?? live.connectedAt)
-            : (live.connectedAt ?? snapshot.connectedAt)
+        merged.connectedAt = snapshot.connectedAt ?? live.connectedAt
         return merged
     }
 
@@ -226,9 +227,22 @@ enum FatVpnWidgetStore {
         // A record the app has never written carries no version; stamping it
         // keeps `read()` from discarding what the extension just observed.
         stored["v"] = FatVpnWidgetSnapshot.currentVersion
+        let sessionWasUnderWay = (stored["state"] as? String) == "connected"
+            && stored["connectedAtMillis"] != nil
         stored["state"] = state
         if let connectedAt {
-            stored["connectedAtMillis"] = Int(connectedAt.timeIntervalSince1970 * 1000)
+            // A start is written once per session, not once per tunnel. Every
+            // caller here has its own idea of "now" — the extension's is the
+            // moment sing-box came up, the widget press's is the OS's
+            // `connectedDate`, the app's is where its own connect finished —
+            // and they sit seconds apart, which is exactly the drift between
+            // the tile's clock and the app's that was reported on 2026-08-05.
+            // Whoever got there first for this session wins; a tunnel that
+            // merely re-established (on-demand, a jetsam restart) keeps
+            // counting, which is also what the app's session clock does.
+            if !sessionWasUnderWay {
+                stored["connectedAtMillis"] = Int(connectedAt.timeIntervalSince1970 * 1000)
+            }
         } else {
             stored.removeValue(forKey: "connectedAtMillis")
         }
@@ -319,11 +333,26 @@ enum FatVpnWidgetStore {
     }
 
     /// Reads the marked start and clears it, so one press anchors one session.
+    ///
+    /// The marker says *that* a widget press started this session; the instant
+    /// handed back is the one the tile is actually counting from, read out of
+    /// the snapshot. Two copies of "about now" — the press, and whatever the
+    /// tunnel reported a moment later — are what made the app's clock and the
+    /// tile's disagree by a few seconds (2026-08-05). One session, one instant,
+    /// and it is the one already on screen.
     static func takeNativeSessionStart() -> Date? {
         guard let defaults else { return nil }
         let seconds = defaults.double(forKey: nativeSessionKey)
         guard seconds > 0 else { return nil }
         defaults.removeObject(forKey: nativeSessionKey)
+        if let stored = defaults.dictionary(forKey: snapshotKey),
+           stored["state"] as? String == "connected",
+           let millis = (stored["connectedAtMillis"] as? NSNumber)?.doubleValue,
+           millis > 0 {
+            return Date(timeIntervalSince1970: millis / 1000)
+        }
+        // Nothing on the tile to agree with — the press is the best anchor
+        // there is.
         return Date(timeIntervalSince1970: seconds)
     }
 
