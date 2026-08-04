@@ -849,13 +849,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         writeMessage("(packet-tunnel) stopping, reason: \(reason)")
         healthWatchdog.stop()
         stopSnapshotRefresh()
-        // A session the user (or the system configuration) ended must not be
+        // A session whose *configuration* was walked away from must not be
         // resurrectable: without this, an extension launched later without
         // options — on-demand, a restart after a jetsam kill — would reconnect
         // to whatever node was last used, with credentials that may since have
         // been revoked, for a user who may since have logged out.
+        //
+        // ⚠️ `.userInitiated` is deliberately NOT in this list (2026-08-04,
+        // found by the build-246 trace from an iPhone 15 / iOS 26.5.2). It is
+        // the reason an ordinary off-switch arrives under — the widget's
+        // native stop, the in-app power button, Settings > VPN — and wiping
+        // here made every widget stop destroy the very snapshot the widget's
+        // next start rides: `press → native start issued` was followed by
+        // `START FAILED: Missing start options` on the device, every time,
+        // with an in-app connect between them being the only thing that could
+        // revive the button. "Turned it off for now" is not "walked away from
+        // this config": the revocation cases are covered explicitly — logout
+        // and 402 wipe the snapshot by name (the app's
+        // `stopAndForgetStandalone` plus the `forget` app message), and a
+        // snapshot older than 7 days refuses to start — while resurrection is
+        // prevented by the on-demand rule coming off before a deliberate stop,
+        // not by destroying the config.
         switch reason {
-        case .userInitiated, .userLogout, .userSwitch,
+        case .userLogout, .userSwitch,
             .configurationRemoved, .configurationDisabled, .authenticationCanceled:
             Self.clearPersistedStartOptions()
         default:

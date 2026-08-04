@@ -184,19 +184,28 @@ void main() {
     });
   });
 
-  group('§1.6 / §2.1 the persisted snapshot is erased when the session ends',
-      () {
-    test('ending the session clears the platform state', () async {
+  group(
+      '§1.6 / §2.1 the persisted snapshot is erased when the session *dies* — '
+      'and, since 2026-08-04, deliberately NOT on a power-off', () {
+    // The contract changed on the build-246 device trace (iPhone 15, iOS
+    // 26.5.2): the iOS widget's native start rides the persisted snapshot,
+    // and a power-off that wiped it made every widget connect die with
+    // "START FAILED: Missing start options" until the app connected again.
+    // "Off" is not "gone" — the wipe belongs to sign-out/401/402, which call
+    // forgetPersistedTunnelState explicitly, and the snapshot refuses to
+    // start after 7 days regardless.
+    test('a power-off keeps the snapshot — the widget reconnects from it',
+        () async {
       await connect();
 
       await vpn.disconnect();
 
-      expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
-          reason: 'the start-options snapshot is what the OS would reconnect '
-              'from — on credentials that may since have been revoked');
+      expect(platform.clearPersistedStateCalls, 0,
+          reason: 'wiping here is what made the widget button dead after '
+              'every in-app (or widget) off-switch');
     });
 
-    test('a mere reconnect does not clear it', () async {
+    test('a mere reconnect does not clear it either', () async {
       // Switching servers tears the tunnel down with endSession: false; wiping
       // the snapshot there would defeat on-demand recovery mid-session.
       await connect();
@@ -206,22 +215,42 @@ void main() {
       expect(platform.clearPersistedStateCalls, 0);
     });
 
+    test('session death clears the platform state', () async {
+      // The sign-out path (HomeScreen._stopTunnelOnSignOut) disconnects and
+      // then wipes explicitly; 401/402 go through stopAndForgetStandalone.
+      await connect();
+
+      await vpn.disconnect();
+      await vpn.forgetPersistedTunnelState();
+
+      expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
+          reason: 'the start-options snapshot is what the OS would reconnect '
+              'from — on credentials that may since have been revoked');
+    });
+
     test('a platform that refuses to clear does not break sign-out', () async {
       await connect();
       platform.clearPersistedStateThrows = true;
 
-      await expectLater(vpn.disconnect(), completes);
+      await vpn.disconnect();
+      await expectLater(vpn.forgetPersistedTunnelState(), completes);
       expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1));
     });
 
-    test('the control-API secret is dropped along with the tunnel state',
+    test('the control-API secret survives a power-off with the snapshot',
         () async {
+      // Coherence, not an oversight: a widget start raises the tunnel on the
+      // snapshot's config, whose clash secret is the one the app reads back
+      // from storage to probe the session — wiping the secret while keeping
+      // the snapshot would leave every post-widget-start probe answering 401.
       await connect();
       final storage = const FlutterSecureStorage();
       expect(await storage.read(key: 'vpn_clash_api_secret'), isNotNull);
 
       await vpn.disconnect();
+      expect(await storage.read(key: 'vpn_clash_api_secret'), isNotNull);
 
+      await vpn.forgetPersistedTunnelState();
       expect(await storage.read(key: 'vpn_clash_api_secret'), isNull,
           reason: 'a secret kept past the session it belonged to is a secret '
               'in a support bundle with nothing left to protect');
@@ -252,7 +281,9 @@ void main() {
       expect(vpn.errorMessage, isNull);
     });
 
-    test('the cancelled session is still torn down, wipe included', () async {
+    test('the cancelled session is still torn down — without a wipe', () async {
+      // A cancel is a power-off, and a power-off keeps the persisted state
+      // since 2026-08-04: the widget's native start rides it.
       platform.setConfigReached = Completer<void>();
       platform.holdAfterSetConfig = Completer<void>();
 
@@ -266,6 +297,26 @@ void main() {
       expect(vpn.isConnected, isFalse,
           reason: 'the user asked for the VPN to be off; a connect that landed '
               'after that request must not leave them on it');
+      expect(platform.clearPersistedStateCalls, 0,
+          reason: 'a cancel is an off-switch, not a sign-out — wiping here '
+              'would kill the next widget start');
+    });
+
+    test('a sign-out mid-connect still gets its wipe, deferred past the start',
+        () async {
+      platform.setConfigReached = Completer<void>();
+      platform.holdAfterSetConfig = Completer<void>();
+
+      final connecting = connect();
+      await platform.setConfigReached!.future;
+      // What HomeScreen._stopTunnelOnSignOut does when the session dies while
+      // a connect is in flight: disconnect, then wipe.
+      final disconnecting =
+          vpn.disconnect().then((_) => vpn.forgetPersistedTunnelState());
+      platform.holdAfterSetConfig!.complete();
+      await connecting;
+      await disconnecting;
+
       expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
           reason: 'deferring the wipe must not mean skipping it — the config '
               'and the start-options snapshot still have to go');
@@ -281,7 +332,10 @@ void main() {
       final connecting = connect();
       await platform.setConfigReached!.future;
       platform.setConfigThrows = true;
-      final disconnecting = vpn.disconnect();
+      // The sign-out shape again: the wipe is requested explicitly, lands in
+      // the _connecting window, and is deferred to the connect's own cleanup.
+      final disconnecting =
+          vpn.disconnect().then((_) => vpn.forgetPersistedTunnelState());
       platform.holdAfterSetConfig!.complete();
 
       await expectLater(connecting, throwsA(isA<Exception>()));
@@ -291,8 +345,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(platform.clearPersistedStateCalls, greaterThanOrEqualTo(1),
-          reason: 'a cancelled connect that also failed must not leave the '
-              'subscription on disk');
+          reason: 'a dead session whose connect also failed must not leave '
+              'the subscription on disk');
     });
   });
 }

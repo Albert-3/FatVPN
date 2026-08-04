@@ -108,6 +108,14 @@ class VpnController extends ChangeNotifier {
   // config and all. Same end state, without the two halves fighting.
   bool _connecting = false;
   bool _disconnectRequestedDuringConnect = false;
+  // Split from the flag above (2026-08-04): "cancel this connect" and "wipe
+  // the persisted state when it lands" used to be one flag, because the only
+  // way to cancel was a disconnect() that always wiped. A power-off no longer
+  // wipes (the iOS widget's native start rides the persisted snapshot, and
+  // wiping on every off-switch is what kept killing it), so a cancelled
+  // connect must tear the session down without erasing it — while a sign-out
+  // arriving mid-connect still needs its deferred wipe honoured.
+  bool _wipeDeferredDuringConnect = false;
   VpnConnectionState _state = VpnConnectionState.disconnected;
   String? _errorMessage;
   ServerNode? _connectedNode;
@@ -768,6 +776,7 @@ class VpnController extends ChangeNotifier {
     _userDisconnecting = false;
     _connecting = true;
     _disconnectRequestedDuringConnect = false;
+    _wipeDeferredDuringConnect = false;
     _state = VpnConnectionState.connecting;
     notifyListeners();
 
@@ -858,6 +867,13 @@ class VpnController extends ChangeNotifier {
         _connecting = false;
         _disconnectRequestedDuringConnect = false;
         await disconnect();
+        // Only when a wipe was actually requested (a sign-out mid-connect) —
+        // a plain cancel is a power-off, and a power-off keeps the persisted
+        // state so the widget can turn the VPN back on.
+        if (_wipeDeferredDuringConnect) {
+          _wipeDeferredDuringConnect = false;
+          await forgetPersistedTunnelState();
+        }
         return null;
       }
       _connectedNode = node;
@@ -906,12 +922,15 @@ class VpnController extends ChangeNotifier {
       rethrow;
     } finally {
       _connecting = false;
-      // A disconnect that arrived mid-connect had its cleanup deferred to this
+      // A sign-out that arrived mid-connect had its wipe deferred to this
       // method; if the connect failed instead of completing, the deferral must
-      // still be honoured, or a cancelled session would leave the subscription
-      // on disk.
+      // still be honoured, or a dead session would leave the subscription on
+      // disk. A plain cancel (power-off) clears its flag without wiping.
       if (_disconnectRequestedDuringConnect) {
         _disconnectRequestedDuringConnect = false;
+      }
+      if (_wipeDeferredDuringConnect) {
+        _wipeDeferredDuringConnect = false;
         unawaited(forgetPersistedTunnelState());
       }
     }
@@ -1274,6 +1293,14 @@ class VpnController extends ChangeNotifier {
   Future<void> disconnect({bool endSession = true}) async {
     log.i('Disconnecting tunnel (endSession=$endSession)');
     _userDisconnecting = true;
+    if (_connecting) {
+      // The second tap landed while the first was still connecting: the
+      // connect must notice and take its own session down once it completes
+      // (see [_disconnectRequestedDuringConnect]). This used to be armed as a
+      // side effect of the wipe below; the wipe is gone from this path, the
+      // cancel must not go with it.
+      _disconnectRequestedDuringConnect = true;
+    }
     if (endSession) {
       _clearSessionStart();
       _sessionContinuesUntil = null;
@@ -1294,9 +1321,18 @@ class VpnController extends ChangeNotifier {
     // leaving — which also stranded anyone trying to escape a dead one.
     _connectedNode = null;
     await _vpn.stop();
-    if (endSession) {
-      await forgetPersistedTunnelState();
-    }
+    // No [forgetPersistedTunnelState] here any more (2026-08-04, build-246
+    // trace from an iPhone 15). A power-off used to erase the extension's
+    // start-options snapshot — the very thing the iOS widget's native start
+    // rides — so the widget button could only ever turn the VPN back on if
+    // the app had connected since the last off-switch: on the device that
+    // read as `native start issued` → `START FAILED: Missing start options`
+    // on every widget connect. "Off" is not "gone": the wipe belongs to the
+    // paths where the session itself dies — sign-out, 401, 402
+    // ([AuthController.onSessionDropped] → [HomeScreen._stopTunnelOnSignOut],
+    // and [stopAndForgetStandalone]) — all of which call
+    // [forgetPersistedTunnelState] themselves, and the snapshot refuses to
+    // start after 7 days regardless.
   }
 
   /// Erases everything the platform still holds about the subscription that was
@@ -1321,6 +1357,7 @@ class VpnController extends ChangeNotifier {
       // performs this teardown itself once it lands (see [_connect]).
       log.i('Wipe requested during an in-flight connect; deferring it');
       _disconnectRequestedDuringConnect = true;
+      _wipeDeferredDuringConnect = true;
       return;
     }
     _clashApiSecret = null;

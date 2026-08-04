@@ -418,6 +418,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     await _vpn.disconnect();
+    // Explicitly, because disconnect() itself no longer wipes: an ordinary
+    // power-off keeps the snapshot so the widget can turn the VPN back on,
+    // but this path is the session *dying* — the credentials in that snapshot
+    // may be revoked already, and nothing may be able to raise a tunnel on
+    // them again.
+    await _vpn.forgetPersistedTunnelState();
   }
 
   @override

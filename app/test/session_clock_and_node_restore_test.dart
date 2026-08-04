@@ -170,9 +170,37 @@ void main() {
   // that cannot fail is worse than no test: it reads as a guarantee. Verified
   // on a device instead (docs/release-test-checklist.md, TA20).
 
+  test('a power-off keeps the stored node — the snapshot it describes stays',
+      () async {
+    // Changed 2026-08-04 with the snapshot itself: an off-switch no longer
+    // wipes the persisted tunnel state, because the iOS widget's native start
+    // rides it — and any tunnel raised without the app after a power-off runs
+    // the snapshot's config, i.e. exactly the node this label names. The
+    // mislabeling the old test guarded against needs a *different* config,
+    // which only an in-app connect can install — and it overwrites the label.
+    await connect();
+    await vpn.disconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    final relaunched = VpnController(
+      connectionSettings: settings,
+      apiClient: newApiClient(),
+    );
+    addTearDown(relaunched.dispose);
+    platform.reportedState = VpnConnectionState.connected;
+    await relaunched.syncFromRuntime();
+
+    expect(relaunched.connectedNode?.id, 'node-fr-1',
+        reason: 'a widget start after a power-off raises the snapshot config, '
+            'and the label must name the node that config is on');
+  });
+
   test('the stored node is dropped with the session it belonged to', () async {
     await connect();
     await vpn.disconnect();
+    // Session death (sign-out / 401 / 402) is what erases — see
+    // HomeScreen._stopTunnelOnSignOut and stopAndForgetStandalone.
+    await vpn.forgetPersistedTunnelState();
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     final relaunched = VpnController(
@@ -187,7 +215,7 @@ void main() {
     await relaunched.syncFromRuntime();
 
     expect(relaunched.connectedNode, isNull,
-        reason: 'a power-off wipes the tunnel state, and the node it was on is '
-            'part of that state');
+        reason: 'a dead session wipes the tunnel state, and the node it was '
+            'on is part of that state');
   });
 }
