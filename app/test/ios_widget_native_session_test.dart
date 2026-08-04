@@ -19,7 +19,6 @@
 //   · a platform that answers nothing (Android, or a build without the call)
 //     changes nothing at all.
 
-import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:singbox_mm/singbox_mm.dart';
