@@ -110,12 +110,55 @@ struct FatVpnWidgetEntryView: View {
     /// size and the top; the text answers "is it on?", which is a glance rather
     /// than a read.
     ///
+    /// On iOS 18+ with a session the **whole tile** is the button, not just the
+    /// disc (2026-08-04, after the iPhone 16 report). On ≤17 the whole tile has
+    /// always toggled — `widgetURL` covers every pixel — so a user who learned
+    /// the tile there and presses the text on 18+ got "open the app": WidgetKit
+    /// falls through to its default for any pixel outside a `Button`, and on
+    /// video that is indistinguishable from a dead intent. One tap target the
+    /// size of the tile removes the ambiguity from every future acceptance run.
+    /// The disc inside is plain visuals then — a `Button` nested in a `Button`
+    /// is exactly the tap-swallowing this widget has been bitten by before
+    /// (thread 731758, the `.widgetURL` variant of it).
+    ///
     /// Every line scales down instead of truncating — the Russian strings are
     /// half again as long as the English ones and a tile this narrow has no room
     /// to lose a word to an ellipsis.
+    @ViewBuilder
     private var smallBody: some View {
+        if #available(iOS 18.0, iOSApplicationExtension 18.0, *) {
+            if snapshot.signedIn {
+                Button(intent: FatVpnTunnelToggleIntent()) {
+                    smallContent(interactiveDisc: false)
+                        // The VStack's own hit area is its drawn pixels; the
+                        // rectangle is what makes the padding press too.
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+            } else {
+                smallContent(interactiveDisc: true)
+                    .fatVpnWidgetBackground()
+                    .widgetURL(tileURL)
+            }
+        } else {
+            smallContent(interactiveDisc: true)
+                .fatVpnWidgetBackground()
+                .widgetURL(tileURL)
+        }
+    }
+
+    /// The small tile's content. [interactiveDisc] false means an ancestor owns
+    /// the press (the 18+ whole-tile button) and the disc must be drawn inert.
+    @ViewBuilder
+    private func smallContent(interactiveDisc: Bool) -> some View {
         VStack(spacing: 7) {
-            powerControl(diameter: 62)
+            if interactiveDisc {
+                powerControl(diameter: 62)
+            } else {
+                powerButton(diameter: 62)
+            }
             VStack(spacing: 2) {
                 HStack(spacing: 5) {
                     Circle().fill(accent).frame(width: 7, height: 7)
@@ -136,8 +179,6 @@ struct FatVpnWidgetEntryView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .fatVpnWidgetBackground()
-        .widgetURL(tileURL)
     }
 
     /// The medium tile, with the button at the top of its column rather than
@@ -196,7 +237,7 @@ struct FatVpnWidgetEntryView: View {
     ///    plain launch.
     private var tileURL: URL? {
         guard snapshot.signedIn else { return FatVpnWidgetLink.open }
-        if #available(iOSApplicationExtension 18.0, *) {
+        if #available(iOS 18.0, iOSApplicationExtension 18.0, *) {
             return nil
         }
         return FatVpnWidgetLink.toggle
@@ -261,7 +302,7 @@ struct FatVpnWidgetEntryView: View {
     @ViewBuilder
     private func powerControl(diameter: CGFloat) -> some View {
         if snapshot.signedIn {
-            if #available(iOSApplicationExtension 18.0, *) {
+            if #available(iOS 18.0, iOSApplicationExtension 18.0, *) {
                 Button(intent: FatVpnTunnelToggleIntent()) {
                     powerButton(diameter: diameter)
                 }
@@ -292,14 +333,20 @@ struct FatVpnWidgetEntryView: View {
                 .foregroundColor(snapshot.isConnected
                                  ? FatVpnWidgetPalette.background
                                  : powerTint)
+                // Not cosmetic. Under a tinted/clear Home Screen appearance —
+                // first-class on iOS 26 — widgets render "accented", and an
+                // accented-desaturated Image inside a Button is an
+                // Apple-acknowledged, unfixed way for the button to stop firing
+                // its intent at all (2026-08-04 research). Full colour opts the
+                // glyph out of that entire failure class.
+                .fatVpnFullColorInAccentedMode()
         }
         .frame(width: diameter, height: diameter)
         // Dimmed while the tunnel is moving either way, so the press has an
-        // answer that needs no reading. The press itself is answered by the app
-        // coming to the front — the tile is a link now, so there is no in-tile
-        // press state to draw: `invalidatableContent` only greys content while
-        // an App Intent runs, and nothing here runs one. Kept because it costs
-        // nothing and is what this modifier is for the moment a button returns.
+        // answer that needs no reading. On ≤17 the press itself is answered by
+        // the app coming to the front (the tile is a link there);
+        // `invalidatableContent` greys content while an App Intent runs, which
+        // is the 18+ button's press state.
         .opacity(snapshot.isBusy ? 0.5 : 1)
         .fatVpnInvalidatable()
     }
@@ -308,7 +355,7 @@ struct FatVpnWidgetEntryView: View {
 /// Lock-screen (and StandBy) widgets. A separate view because accessory families
 /// are rendered by the system in a single tint colour — anything styled for the
 /// home screen comes out there as a flat silhouette.
-@available(iOSApplicationExtension 16.0, *)
+@available(iOS 16.0, iOSApplicationExtension 16.0, *)
 struct FatVpnAccessoryView: View {
     @Environment(\.widgetFamily) private var family
     var entry: FatVpnWidgetEntry
@@ -348,7 +395,7 @@ struct FatVpnWidget: Widget {
     let kind = "FatVpnWidget"
 
     private var supportedFamilies: [WidgetFamily] {
-        if #available(iOSApplicationExtension 16.0, *) {
+        if #available(iOS 16.0, iOSApplicationExtension 16.0, *) {
             return [
                 .systemSmall, .systemMedium,
                 .accessoryCircular, .accessoryRectangular, .accessoryInline,
@@ -382,7 +429,15 @@ struct FatVpnWidgetRootView: View {
         // Nested rather than `if #available(...), family == ...`: a ViewBuilder
         // body has its own rules about what an `if` may contain, and an
         // availability check on its own is the shape that is certainly allowed.
-        if #available(iOSApplicationExtension 16.0, *) {
+        //
+        // Two platforms in every check in this file (2026-08-04): a plain
+        // `iOSApplicationExtension N` clause is only evaluated when the file is
+        // compiled in extension mode — outside it the `*` matches and the check
+        // is TRUE on every OS version, which for the 18-gate would put the
+        // intent button on iOS 16–17 tiles and kill the one press mechanism
+        // this project has confirmed on a device. The two-platform form reads
+        // the same in both modes.
+        if #available(iOS 16.0, iOSApplicationExtension 16.0, *) {
             if family == .accessoryCircular ||
                 family == .accessoryRectangular ||
                 family == .accessoryInline {
@@ -396,13 +451,27 @@ struct FatVpnWidgetRootView: View {
     }
 }
 
+extension Image {
+    /// Keeps the glyph full-colour when the Home Screen renders widgets in
+    /// accented (tinted/clear) mode — see the note at the call site in
+    /// [powerButton].
+    @ViewBuilder
+    func fatVpnFullColorInAccentedMode() -> some View {
+        if #available(iOS 18.0, iOSApplicationExtension 18.0, *) {
+            self.widgetAccentedRenderingMode(.fullColor)
+        } else {
+            self
+        }
+    }
+}
+
 extension View {
     /// Marks content the system may grey out while the button's intent runs —
     /// WidgetKit's only press state, and the reason a tap feels like one before
     /// anything has actually changed.
     @ViewBuilder
     func fatVpnInvalidatable() -> some View {
-        if #available(iOSApplicationExtension 17.0, *) {
+        if #available(iOS 17.0, iOSApplicationExtension 17.0, *) {
             self.invalidatableContent()
         } else {
             self
@@ -415,7 +484,7 @@ extension View {
     /// entries, not frames — but a change *between* two of them does.
     @ViewBuilder
     func fatVpnCrossFade() -> some View {
-        if #available(iOSApplicationExtension 16.0, *) {
+        if #available(iOS 16.0, iOSApplicationExtension 16.0, *) {
             self.contentTransition(.opacity)
         } else {
             self
@@ -428,7 +497,7 @@ extension View {
     /// white text on top of it.
     @ViewBuilder
     func fatVpnWidgetBackground() -> some View {
-        if #available(iOSApplicationExtension 17.0, *) {
+        if #available(iOS 17.0, iOSApplicationExtension 17.0, *) {
             self.containerBackground(FatVpnWidgetPalette.background, for: .widget)
         } else {
             self.background(FatVpnWidgetPalette.background)

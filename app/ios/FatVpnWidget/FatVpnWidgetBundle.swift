@@ -11,7 +11,11 @@ import WidgetKit
 struct FatVpnWidgetBundle: WidgetBundle {
     var body: some Widget {
         FatVpnWidget()
-        if #available(iOSApplicationExtension 18.0, *) {
+        // Two platforms, like every gate in this extension: a bare
+        // `iOSApplicationExtension` clause is ignored outside extension-mode
+        // compilation and the `*` then matches everywhere — see the note in
+        // FatVpnWidgetRootView.
+        if #available(iOS 18.0, iOSApplicationExtension 18.0, *) {
             FatVpnWidgetControl()
         }
     }

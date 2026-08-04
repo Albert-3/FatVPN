@@ -1,8 +1,14 @@
 import AppIntents
 import Foundation
 
-/// The widget press on iOS 18+ — third architecture, and the first one copied
-/// from code that demonstrably ships: sing-box VT's widget toggle.
+/// The widget press on iOS 18+ — third architecture, modelled on sing-box
+/// VT's toggle. ⚠️ Precision matters here (2026-08-04 re-research): what
+/// sing-box demonstrably ships is a **Control Center control** only — their
+/// WidgetExtension contains no home-screen widget and no `Button(intent:)`
+/// anywhere. So the field-proven half of this architecture is
+/// `FatVpnWidgetControl.swift`; the home-screen button below is our own
+/// extrapolation of the same mechanism, documented by Apple but publicly
+/// undemonstrated for a VPN.
 ///
 /// ## Why these intents are deliberately plain
 ///
@@ -35,12 +41,16 @@ import Foundation
 ///
 ///  * Xcode 15.3+ "deployment-aware processing" of App Intents metadata is
 ///    **acknowledged broken by Apple** for targets with a minimum deployment
-///    target of iOS 15 or earlier (Runner deploys to 13): the extracted
-///    metadata carries an empty `mangledTypeName`, the system cannot resolve
-///    the type at the press, and the tap falls through to "open the app"
-///    (forums 751229, FB13664020). Workaround, per Apple:
-///    `ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING = NO` on every target
-///    that compiles intents.
+///    target of iOS 15 or earlier: the extracted metadata carries an empty
+///    `mangledTypeName`, the system cannot resolve the type at the press, and
+///    the tap falls through to "open the app" (forums 751229, FB13664020).
+///    Workaround, per Apple: `ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING =
+///    NO`. ⚠️ Scope, corrected 2026-08-04: the bug's trigger is min
+///    deployment ≤ iOS 15, which describes **Runner** (13.0) and NOT the
+///    widget (16.0) — so this defect can corrupt the app-side copy's metadata
+///    but never explained a dead button whose intent lives in the widget
+///    bundle. The setting is correct on Runner and a harmless no-op on the
+///    widget.
 ///  * A raw `-weak_framework AppIntents` in `OTHER_LDFLAGS` is invisible to
 ///    `appintentsmetadataprocessor`, which keys off the target's framework
 ///    dependencies ("Metadata extraction skipped" when it finds none). The
@@ -50,13 +60,19 @@ import Foundation
 /// CI verifies both: the intents must be present in both bundles' metadata
 /// **with a non-empty mangledTypeName** (codemagic.yaml).
 ///
-/// This file is compiled into the widget extension **and** the app — Apple's
-/// interactivity doc requires a widget button's intent in both targets — and
-/// the two copies are byte-identical on purpose: differing conformance lists
+/// This file is compiled into the widget extension **and** the app, and the
+/// two copies are byte-identical on purpose: differing conformance lists
 /// between the copies produce differing metadata descriptors for one type
 /// name, which is exactly the ambiguity nobody can debug from a device.
-/// `FatVpnWidgetControl.swift` (widget-only) is what puts the set intent on a
-/// Control Center toggle.
+/// ⚠️ The dual membership itself is under suspicion (2026-08-04): no Apple
+/// citation actually requires it, sing-box compiles their intent into the
+/// widget extension ONLY, and WWDC26 admits process selection for a type
+/// visible to both targets is heuristic ("prefers the app if running") with
+/// no override knob before iOS 27's ExecutionTargets. If the trace ever shows
+/// a press performing in Runner's process, the falsifiable experiment is to
+/// drop this file and FatVpnWidgetTunnel.swift from APP_SHARED_FROM_WIDGET in
+/// add_widget_target.rb — the sing-box shape. `FatVpnWidgetControl.swift`
+/// (widget-only) is what puts the set intent on a Control Center toggle.
 
 /// The home-screen power button, iOS 18+ only (the version gate lives in the
 /// view; iOS 16–17 press stays the `fatvpn://widget/toggle` link, confirmed
@@ -69,8 +85,13 @@ struct FatVpnTunnelToggleIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         // First line, before anything that can fail: the trail is how a device
         // proves perform() ran at all — the question that killed three build
-        // cycles of the previous architecture.
-        FatVpnWidgetStore.trace("press → native toggle (widget process)")
+        // cycles of the previous architecture. The bundle id is the process:
+        // this file compiles into BOTH targets, so a hardcoded "(widget
+        // process)" here would assert what it exists to measure — whether the
+        // system really performed the intent in the widget's process and not
+        // the app's (the heuristic is documented as preferring the app).
+        FatVpnWidgetStore.trace(
+            "press → native toggle in \(Bundle.main.bundleIdentifier ?? "unknown bundle")")
         try await FatVpnWidgetTunnel.toggle()
         return .result()
     }
@@ -87,7 +108,8 @@ struct FatVpnTunnelSetIntent: SetValueIntent {
     var value: Bool
 
     func perform() async throws -> some IntentResult {
-        FatVpnWidgetStore.trace("control → native set(\(value)) (widget process)")
+        FatVpnWidgetStore.trace(
+            "control → native set(\(value)) in \(Bundle.main.bundleIdentifier ?? "unknown bundle")")
         try await FatVpnWidgetTunnel.setStarted(value)
         return .result()
     }

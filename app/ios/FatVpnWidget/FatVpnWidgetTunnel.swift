@@ -54,7 +54,13 @@ enum FatVpnWidgetTunnel {
             FatVpnWidgetStore.trace("native toggle: no vpn configuration")
             throw FatVpnWidgetTunnelError.noConfiguration
         }
-        if started(manager.connection.status) {
+        // The status is the decision: a stale .connecting here is why a press
+        // meant as "connect" can issue a stop. One line makes that visible
+        // from a support bundle instead of deniable.
+        let status = manager.connection.status
+        FatVpnWidgetStore.trace(
+            "native toggle: status=\(status.rawValue) → \(started(status) ? "stop" : "start")")
+        if started(status) {
             try await stop(manager)
         } else {
             try await start(manager)
@@ -68,10 +74,18 @@ enum FatVpnWidgetTunnel {
             throw FatVpnWidgetTunnelError.noConfiguration
         }
         if wanted {
-            guard !started(manager.connection.status) else { return }
+            guard !started(manager.connection.status) else {
+                // Traced, not silent: "flipped the switch and nothing
+                // happened" must be tellable apart from "perform() never ran".
+                FatVpnWidgetStore.trace("native set(true): already started, nothing to do")
+                return
+            }
             try await start(manager)
         } else {
-            guard started(manager.connection.status) else { return }
+            guard started(manager.connection.status) else {
+                FatVpnWidgetStore.trace("native set(false): already stopped, nothing to do")
+                return
+            }
             try await stop(manager)
         }
     }
@@ -159,10 +173,26 @@ enum FatVpnWidgetTunnel {
         // Asked twice before concluding there is no configuration: the first
         // read may happen in a process the system only just launched, and one
         // empty answer there would cost the press entirely.
-        if let manager = try? await NETunnelProviderManager.loadAllFromPreferences().first {
-            return manager
+        //
+        // do/catch rather than `try?` (2026-08-04): "no configuration exists"
+        // and "the load was DENIED" are opposite diagnoses — the first means
+        // consent was never given, the second would mean the entitlement-free
+        // widget assumption does not hold on this OS — and `try?` folded both
+        // into one silent nil. The NEVPNError in the trail is what tells a
+        // phone with a visible FatVPN profile in Settings apart from one
+        // without.
+        for attempt in 1...2 {
+            do {
+                let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+                if let manager = managers.first { return manager }
+                FatVpnWidgetStore.trace("native load #\(attempt): 0 configurations")
+            } catch {
+                FatVpnWidgetStore.trace(
+                    "native load #\(attempt) failed: \((error as NSError).domain)"
+                    + " \((error as NSError).code) \(error.localizedDescription)")
+            }
         }
-        return try? await NETunnelProviderManager.loadAllFromPreferences().first
+        return nil
     }
 
     private static func started(_ status: NEVPNStatus) -> Bool {

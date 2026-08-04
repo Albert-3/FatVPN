@@ -395,12 +395,31 @@ workflows:
             exit 1
           fi
           echo "The dead scheme's intent is absent."
+          # The gate parses the metadata the OS will actually read at a press.
+          # Rewritten 2026-08-04 after a review proved the old walk was too
+          # loose to be trusted: it credited ANY dict that merely mentioned the
+          # intent name anywhere in its serialized subtree and happened to
+          # carry a mangledTypeName of its own — every ancestor of the real
+          # descriptor qualifies, so a value belonging to a different type
+          # satisfied the check for ours, and the gate could pass on metadata
+          # the system cannot resolve. Now a node only counts when one of its
+          # OWN direct string fields names the intent; duplicates with
+          # conflicting mangled names fail (one type name resolving to two
+          # descriptors is the ambiguity nobody can debug from a device); and
+          # mangledTypeNameV2 — reported (unconfirmed) as what iOS 17+ actually
+          # resolves by — is required non-empty wherever the format carries the
+          # key at all. The raw metadata is published as a build artifact so a
+          # dead press on a device can be checked against the exact bytes it
+          # shipped with.
+          mkdir -p app/build/ios/appintents-metadata
           for BUNDLE in "$APP" "$APP/PlugIns/FatVpnWidget.appex"; do
             META="$BUNDLE/Metadata.appintents"
             if [ ! -d "$META" ]; then
               echo "No Metadata.appintents in $BUNDLE - App Intents were not extracted at all." >&2
               exit 1
             fi
+            cp "$META/extract.actionsdata" \
+              "app/build/ios/appintents-metadata/$(basename "$BUNDLE").actionsdata.json" 2>/dev/null || true
             python3 - "$META" <<'PY'
           import json, sys, pathlib
           meta = pathlib.Path(sys.argv[1])
@@ -409,33 +428,71 @@ workflows:
           if not path.exists():
               sys.exit(f"{meta}: no extract.actionsdata - metadata extraction produced nothing")
           data = json.loads(path.read_text())
-          found = {}
+
+          def names_intent(node, name):
+              # The node's own identity fields, not its subtree: a direct string
+              # value equal to the type name, or dotted-suffixed with it
+              # (module.FatVpnTunnelToggleIntent).
+              for value in node.values():
+                  if isinstance(value, str) and (value == name or value.endswith("." + name)):
+                      return True
+              return False
+
+          descriptors = {}
+          v2_key_seen = False
           def walk(node):
+              global v2_key_seen
               if isinstance(node, dict):
-                  blob = json.dumps(node)
+                  if "mangledTypeNameV2" in node:
+                      v2_key_seen = True
                   for name in wanted:
-                      if name in blob and "mangledTypeName" in node:
-                          found.setdefault(name, []).append(node.get("mangledTypeName") or "")
+                      if names_intent(node, name):
+                          descriptors.setdefault(name, []).append(node)
                   for value in node.values():
                       walk(value)
               elif isinstance(node, list):
                   for value in node:
                       walk(value)
           walk(data)
+
           for name in sorted(wanted):
-              mangled = [m for m in found.get(name, []) if m]
-              if not found.get(name):
-                  sys.exit(f"{meta}: {name} is absent - the iOS 18 button ships dead")
+              nodes = [n for n in descriptors.get(name, []) if "mangledTypeName" in n]
+              if not nodes:
+                  sys.exit(f"{meta}: {name} has no descriptor of its own - the iOS 18 "
+                           "button ships dead (the old gate would have passed on an "
+                           "ancestor's fields; this one does not)")
+              mangled = {n.get("mangledTypeName") or "" for n in nodes}
+              mangled.discard("")
               if not mangled:
                   sys.exit(f"{meta}: {name} has an EMPTY mangledTypeName - the "
                            "deployment-aware metadata bug is back (thread 751229); "
                            "check ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING=NO "
                            "survived in add_widget_target.rb")
-              print(f"{meta}: {name} present, mangledTypeName={mangled[0]}")
+              if len(mangled) > 1:
+                  sys.exit(f"{meta}: {name} resolves to {len(mangled)} different "
+                           f"mangled names {sorted(mangled)} - ambiguous metadata, "
+                           "most likely the two targets compiled differing copies")
+              if v2_key_seen:
+                  v2 = {n.get("mangledTypeNameV2") or "" for n in nodes}
+                  v2.discard("")
+                  if not v2:
+                      sys.exit(f"{meta}: {name} has an EMPTY mangledTypeNameV2 while "
+                               "the format carries the key - iOS 17+ is reported to "
+                               "resolve by V2, so this ships a dead button")
+              print(f"{meta}: {name} present, mangledTypeName={sorted(mangled)[0]}"
+                    + (", V2 ok" if v2_key_seen else ", no V2 key in this format"))
           PY
           done
+          # The toolchain that produced the metadata, for the post-mortem this
+          # gate exists to make possible: Codemagic's `xcode: latest` moves
+          # under us, and "which Xcode built the tile the tester pressed" must
+          # be answerable from the build log after the fact.
+          xcodebuild -version
     artifacts:
       - app/build/ios/ipa/*.ipa
+      # The App Intents metadata exactly as shipped, per bundle — what a dead
+      # press on a device gets checked against (see the metadata gate step).
+      - app/build/ios/appintents-metadata/*.json
       # Only produced when the step above had to rebuild the framework.
       # Download it, unzip over app/packages/singbox_mm/ios/Frameworks/ and
       # commit it (Git LFS) so later builds skip that ~20-30 minute step.

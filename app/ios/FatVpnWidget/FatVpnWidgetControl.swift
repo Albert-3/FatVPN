@@ -17,7 +17,7 @@ import WidgetKit
 /// controls are rendered by the system in contexts (Control Center grid,
 /// lock screen, Action button) where our app-language store may not have
 /// been read yet, and a wrong-language word is worse than a neutral icon.
-@available(iOSApplicationExtension 18.0, *)
+@available(iOS 18.0, iOSApplicationExtension 18.0, *)
 struct FatVpnWidgetControl: ControlWidget {
     static let kind = "FatVpnToggleControl"
 

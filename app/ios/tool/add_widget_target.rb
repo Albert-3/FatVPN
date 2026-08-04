@@ -144,8 +144,21 @@ ext_target.build_configurations.each do |config|
   config.build_settings['TARGETED_DEVICE_FAMILY'] = '1,2'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = DEPLOYMENT_TARGET
   config.build_settings['SKIP_INSTALL'] = 'YES'
+  # Explicit, not left to Xcodeproj's target-template defaults (2026-08-04).
+  # This flag is what puts the compiler in extension mode, and extension mode
+  # is what makes `#available(iOSApplicationExtension N, *)` clauses mean
+  # anything: compiled without it, the platform is plain iOS, the clause is
+  # ignored, and the `*` matches — every such gate in the widget reads as TRUE
+  # on every OS version, which would put the 18+ intent button on iOS 16–17
+  # tiles and silently kill the link path, the one press mechanism confirmed
+  # on a device. The views now use the two-platform form as well, so the
+  # semantics no longer hinge on this single line — but the API-misuse
+  # checking the flag enables is wanted regardless.
+  config.build_settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
   # See the header: Apple's own workaround for the metadata bug that produces
-  # resolvable-looking intents with an empty mangledTypeName.
+  # resolvable-looking intents with an empty mangledTypeName. Scope note: the
+  # bug's trigger is min deployment <= iOS 15, i.e. Runner (13.0); on this
+  # 16.0 target the setting is a harmless no-op kept for symmetry.
   config.build_settings['ENABLE_APPINTENTS_DEPLOYMENT_AWARE_PROCESSING'] = 'NO'
   # An app extension must not ship an embedded Frameworks/ directory — App Store
   # Connect rejects it (iris-code 90206) — and it does not need one: Swift's
