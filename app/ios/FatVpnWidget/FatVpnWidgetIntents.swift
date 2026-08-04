@@ -92,6 +92,10 @@ struct FatVpnTunnelToggleIntent: AppIntent {
         // the app's (the heuristic is documented as preferring the app).
         FatVpnWidgetStore.trace(
             "press → native toggle in \(Bundle.main.bundleIdentifier ?? "unknown bundle")")
+        // Second line, before the tunnel work: the buzz is the answer to the
+        // press, and a press answered three seconds late is not answered. It
+        // may not fire at all — see FatVpnWidgetHapticTap.
+        FatVpnWidgetHapticTap.play()
         try await FatVpnWidgetTunnel.toggle()
         return .result()
     }
@@ -110,6 +114,7 @@ struct FatVpnTunnelSetIntent: SetValueIntent {
     func perform() async throws -> some IntentResult {
         FatVpnWidgetStore.trace(
             "control → native set(\(value)) in \(Bundle.main.bundleIdentifier ?? "unknown bundle")")
+        FatVpnWidgetHapticTap.play()
         try await FatVpnWidgetTunnel.setStarted(value)
         return .result()
     }

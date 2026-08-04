@@ -1,3 +1,5 @@
+import AudioToolbox
+import CoreHaptics
 import Foundation
 import NetworkExtension
 
@@ -301,6 +303,73 @@ enum FatVpnWidgetTunnel {
         case .connecting, .connected, .reasserting:
             return true
         default:
+            return false
+        }
+    }
+}
+
+/// The press's answer in the hand, attempted from the widget's own process.
+///
+/// ⚠️ **Not a documented capability, and it may simply not fire.** Apple
+/// supports no haptic API for a widget's interactive controls: the standing
+/// report (Apple Developer Forums 731292) is "haptic feedback does not work in
+/// interactive widgets", with one shipping App Store app observed doing it
+/// anyway and no account of how. `UIImpactFeedbackGenerator` is not even a
+/// candidate here — it wants a view and a window scene, and a widget process
+/// has neither.
+///
+/// So two public paths are tried in order and the trail records which one ran,
+/// because a device is the only thing that can answer this:
+///
+///  1. **Core Haptics** — a single transient tap. Public API, no entitlement,
+///     the right feel for a button, and it talks to the haptic server rather
+///     than to UIKit, which is the reason it might work where UIKit cannot.
+///  2. **`AudioServicesPlaySystemSound(1519)`** — the "peek" actuation, the
+///     pre-Core-Haptics way to tap the Taptic Engine. Fires and forgets, with
+///     no engine to keep alive.
+///
+/// On the ≤18 branch none of this is used: there the press is a link, the app
+/// comes to the front, and Dart's own `HapticFeedback` buzzes — the path with
+/// device data behind it.
+enum FatVpnWidgetHapticTap {
+    /// Held for as long as the tap takes: an engine released at the end of this
+    /// function is an engine torn down before the haptic it was asked to play.
+    private static var engine: CHHapticEngine?
+
+    static func play() {
+        if playCoreHaptics() {
+            FatVpnWidgetStore.trace("press haptic: core haptics")
+            return
+        }
+        // 1519 is the "peek" actuation. Undocumented as a constant, public as a
+        // call, and shipped by apps for a decade.
+        AudioServicesPlaySystemSound(1519)
+        FatVpnWidgetStore.trace("press haptic: system sound fallback")
+    }
+
+    private static func playCoreHaptics() -> Bool {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return false }
+        do {
+            let engine = try CHHapticEngine()
+            // The engine is stopped by the system when the process goes away,
+            // which for a widget press is moments from now.
+            engine.isAutoShutdownEnabled = true
+            try engine.start()
+            let event = CHHapticEvent(
+                eventType: .hapticTransient,
+                parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.8),
+                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.6),
+                ],
+                relativeTime: 0)
+            let pattern = try CHHapticPattern(events: [event], parameters: [])
+            try engine.makePlayer(with: pattern).start(atTime: CHHapticTimeImmediate)
+            Self.engine = engine
+            return true
+        } catch {
+            // Deliberately swallowed: a press that cannot buzz must still
+            // toggle the VPN. The reason goes to the trail, not to the user.
+            FatVpnWidgetStore.trace("press haptic: core haptics failed (\(error.localizedDescription))")
             return false
         }
     }
