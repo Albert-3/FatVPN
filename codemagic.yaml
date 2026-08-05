@@ -934,6 +934,7 @@ workflows:
             --driver=test_driver/integration_test.dart \
             --target=integration_test/screenshots_test.dart \
             --dart-define=DEMO_KEY="$DEMO_KEY" \
+            --dart-define=SCREENSHOTS=true \
             -d "$UDID" --debug 2>&1 | while IFS= read -r line; do
               echo "$line"
               case "$line" in

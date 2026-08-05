@@ -104,9 +104,14 @@ void main() {
     t.state<NavigatorState>(find.byType(Navigator).last).pop();
     await _pumpFor(t, const Duration(seconds: 1));
 
-    // Settings, with the routing card (tracker protection) in view.
+    // Settings, scrolled past the account card. That card prints the key code
+    // in full, and the key here is the App Review demo key — a listing
+    // screenshot would publish working credentials. Below it sits the part
+    // worth showing anyway: DNS, network stack, tracker protection.
     await t.tap(find.byIcon(Icons.settings));
     await _pumpFor(t, const Duration(seconds: 2));
+    await t.drag(find.byType(Scrollable).first, const Offset(0, -420));
+    await _pumpFor(t, const Duration(seconds: 1));
     await _shot(t, '04-settings');
 
     // Split tunneling, opened from settings. The entry sits below the fold of
