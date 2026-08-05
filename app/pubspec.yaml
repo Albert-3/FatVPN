@@ -60,6 +60,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # Store-listing screenshots (integration_test/screenshots_test.dart), driven
+  # by the ios-screenshots workflow on a simulator. flutter_driver is what
+  # `flutter drive` uses to ferry the screenshots off the device side.
+  integration_test:
+    sdk: flutter
+  flutter_driver:
+    sdk: flutter
+
   # Only for ca_pinning_test.dart, which fingerprints the pinned roots against
   # the values letsencrypt.org publishes. Already in the lockfile as a
   # transitive dependency, so naming it here costs nothing.

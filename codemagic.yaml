@@ -845,3 +845,86 @@ workflows:
       # simulator. Codemagic zips it for download anyway.
       - app/build/ios/iphonesimulator/Runner.app
       - app/build/ios/iphonesimulator/simulator-home.png
+
+  ios-screenshots:
+    name: iOS store screenshots (simulator)
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    # Walks the real app through the screens the App Store listing shows and
+    # publishes the shots as artifacts (docs/app-store-submission.md §5). The
+    # scenario lives in app/integration_test/screenshots_test.dart; it signs in
+    # with the App Review demo key against the live BFF, so the server list in
+    # the shots is real. The tunnel cannot start here (no NetworkExtension in a
+    # simulator) — every shot is the signed-in, disconnected app.
+    environment:
+      flutter: 3.44.4
+      xcode: latest
+      cocoapods: default
+      vars:
+        # The App Review demo key (docs/app-store-submission.md §4). Grants the
+        # same access a reviewer gets; abuse is capped by the 3-device slot
+        # limit, which is also why rotating it is a panel-side deletion.
+        DEMO_KEY: FATVPN-REVIEW-K7M3Q9
+    scripts:
+      - name: Pull Git LFS files (Libbox.xcframework binaries)
+        script: |
+          git lfs install
+          git lfs pull
+      - name: Flutter pub get
+        script: |
+          cd app
+          flutter pub get
+      - name: Add PacketTunnel (Network Extension) target
+        script: |
+          gem install xcodeproj -v 1.27.0 --no-document
+          ruby app/ios/tool/add_packet_tunnel_target.rb
+      - name: Add FatVpnWidget (WidgetKit) target
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_widget_target.rb
+      - name: Attach the privacy manifests
+        script: |
+          # Order matters — see the same step in ios-release.
+          ruby app/ios/tool/add_privacy_manifests.rb
+      - name: Pod install
+        script: |
+          cd app/ios
+          pod install
+      - name: Boot a 6.9-inch simulator in Russian
+        script: |
+          set -e
+          # ASC's one mandatory screenshot size is the 6.9" class. Prefer the
+          # 16 Pro Max device type; fall back to any Pro Max the Xcode on the
+          # runner still ships.
+          DT="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPhone-1[6-9]-Pro-Max' | sort | tail -1)"
+          if [ -z "$DT" ]; then
+            echo "No Pro Max device type on this runner:" >&2
+            xcrun simctl list devicetypes >&2
+            exit 1
+          fi
+          RT="$(xcrun simctl list runtimes | grep -oE 'com.apple.CoreSimulator.SimRuntime.iOS-[0-9-]+' | tail -1)"
+          UDID="$(xcrun simctl create screenshots-device "$DT" "$RT")"
+          echo "$UDID" > /tmp/screenshot-sim-udid
+          echo "Device type: $DT  runtime: $RT  udid: $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          # RU is the primary listing locale; the EN set is a later run with
+          # this array flipped. Locale must be set before the app first runs.
+          xcrun simctl spawn "$UDID" defaults write .GlobalPreferences AppleLanguages -array ru en
+          xcrun simctl spawn "$UDID" defaults write .GlobalPreferences AppleLocale -string ru_RU
+          # The classic pristine status bar, so no shot ships a 3% battery.
+          xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --cellularMode active --cellularBars 4 --operatorName "" || true
+      - name: Drive the app and take the screenshots
+        script: |
+          set -e
+          cd app
+          UDID="$(cat /tmp/screenshot-sim-udid)"
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/screenshots_test.dart \
+            --dart-define=DEMO_KEY="$DEMO_KEY" \
+            -d "$UDID" --debug
+          echo "Shots taken:"
+          ls -l build/screenshots/
+    artifacts:
+      - app/build/screenshots/*.png
