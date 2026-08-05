@@ -920,6 +920,10 @@ workflows:
           cd app
           UDID="$(cat /tmp/screenshot-sim-udid)"
           mkdir -p build/screenshots
+          # Absolute: simctl resolves a relative path against something of
+          # its own and answers "the folder 02-home.png does not exist" -
+          # which is how run #4 passed every test and produced no files.
+          SHOTS="$PWD/build/screenshots"
           # The shots are taken here, not by the Dart side: integration_test's
           # takeScreenshot captures the Flutter surface alone, which comes back
           # with an empty status bar - no clock, no battery - and reads as a
@@ -937,7 +941,7 @@ workflows:
                   NAME="$(printf '%s' "${line##*SHOT:}" | tr -d '\r' | awk '{print $1}')"
                   # A beat for the announcing frame to reach the screen.
                   sleep 2
-                  xcrun simctl io "$UDID" screenshot "build/screenshots/$NAME.png" \
+                  xcrun simctl io "$UDID" screenshot "$SHOTS/$NAME.png" \
                     && echo ">>> captured $NAME"
                   ;;
               esac
