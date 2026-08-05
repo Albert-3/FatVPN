@@ -28,6 +28,14 @@ api.fatklyuchi.space {
 		file_server
 	}
 
+	# The App Store listing's Support URL. One bilingual page, so no /ru twin.
+	@support path /support /support/
+	handle @support {
+		root * /srv/legal
+		rewrite * /support.html
+		file_server
+	}
+
 	handle {
 		reverse_proxy bff:5030
 	}
