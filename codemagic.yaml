@@ -916,15 +916,36 @@ workflows:
           xcrun simctl status_bar "$UDID" override --time "9:41" --batteryState charged --batteryLevel 100 --cellularMode active --cellularBars 4 --operatorName "" || true
       - name: Drive the app and take the screenshots
         script: |
-          set -e
+          set -o pipefail
           cd app
           UDID="$(cat /tmp/screenshot-sim-udid)"
+          mkdir -p build/screenshots
+          # The shots are taken here, not by the Dart side: integration_test's
+          # takeScreenshot captures the Flutter surface alone, which comes back
+          # with an empty status bar - no clock, no battery - and reads as a
+          # broken mock-up on a listing. `simctl io screenshot` captures the
+          # whole device, status bar included. So the test announces each shot
+          # on stdout and holds still, and this loop takes it.
           flutter drive \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/screenshots_test.dart \
             --dart-define=DEMO_KEY="$DEMO_KEY" \
-            -d "$UDID" --debug
+            -d "$UDID" --debug 2>&1 | while IFS= read -r line; do
+              echo "$line"
+              case "$line" in
+                *SHOT:*)
+                  NAME="$(printf '%s' "${line##*SHOT:}" | tr -d '\r' | awk '{print $1}')"
+                  # A beat for the announcing frame to reach the screen.
+                  sleep 2
+                  xcrun simctl io "$UDID" screenshot "build/screenshots/$NAME.png" \
+                    && echo ">>> captured $NAME"
+                  ;;
+              esac
+            done
           echo "Shots taken:"
           ls -l build/screenshots/
+          # The pipeline's exit status is the loop's, so a failed test would go
+          # unnoticed - count the shots instead. Five screens, five files.
+          test "$(ls build/screenshots/*.png 2>/dev/null | wc -l)" -eq 5
     artifacts:
       - app/build/screenshots/*.png
