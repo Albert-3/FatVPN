@@ -48,7 +48,18 @@ class NotificationService {
     tz_data.initializeTimeZones();
 
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const ios = DarwinInitializationSettings();
+    // All three explicitly off: DarwinInitializationSettings defaults every
+    // one of them to true, so the bare constructor asked iOS for the
+    // notification permission during initialize() — on the splash screen,
+    // exactly the dialog the comment above and [requestPermission] exist to
+    // avoid. Found 2026-08-06 in the store-screenshot run, where the sheet
+    // covered every frame; on a phone it was simply an early dialog nobody
+    // connected to this line.
+    const ios = DarwinInitializationSettings(
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
+    );
     await _plugin.initialize(
       const InitializationSettings(android: android, iOS: ios),
     );
