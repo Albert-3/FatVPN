@@ -36,12 +36,12 @@ Future<void> _waitFor(WidgetTester t, Finder f, String what,
   fail('Timed out waiting for $what');
 }
 
-/// The visible widget carrying either locale's variant of a string.
-Finder _text(String Function(Strings) pick) {
-  final ru = find.text(pick(ruStrings));
-  if (ru.evaluate().isNotEmpty) return ru;
-  return find.text(pick(enStrings));
-}
+/// Matches a Text carrying either locale's variant of a string. A predicate
+/// rather than a resolved find.text, so the finder stays valid for
+/// scrollUntilVisible, which must re-evaluate it after every scroll.
+Finder _text(String Function(Strings) pick) => find.byWidgetPredicate(
+      (w) => w is Text && (w.data == pick(ruStrings) || w.data == pick(enStrings)),
+    );
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -86,9 +86,12 @@ void main() {
     await _pumpFor(t, const Duration(seconds: 2));
     await binding.takeScreenshot('04-settings');
 
-    // Split tunneling, opened from settings.
+    // Split tunneling, opened from settings. The entry sits below the fold of
+    // a ListView, whose off-screen children are never built — so it has to be
+    // scrolled to before it can be found, not merely ensured visible.
     final split = _text((s) => s.splitTunnelingSettings);
-    await t.ensureVisible(split.first);
+    await t.scrollUntilVisible(split, 200,
+        scrollable: find.byType(Scrollable).first);
     await _pumpFor(t, const Duration(milliseconds: 500));
     await t.tap(split.first);
     await _pumpFor(t, const Duration(seconds: 3));
