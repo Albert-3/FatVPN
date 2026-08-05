@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:singbox_mm/singbox_mm.dart';
 
+import '../config/screenshot_mode.dart';
 import '../l10n/app_localizations.dart';
 import '../l10n/strings.dart';
 import '../models/server_country.dart';
@@ -469,7 +470,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _publishWidgetSnapshot();
       // Right after a trial grant, bring the tunnel up automatically so the
       // user reaches Telegram (to buy a key) without a manual tap.
-      if (widget.auth.consumeAutoConnect()) {
+      if (widget.auth.consumeAutoConnect() && !kScreenshotMode) {
         unawaited(_autoConnect());
       }
       // A widget tap that cold-started the app has been waiting for this list.

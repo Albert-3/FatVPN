@@ -81,18 +81,12 @@ void main() {
     // Home is recognizable by its power button.
     final power = find.byIcon(Icons.power_settings_new);
     await _waitFor(t, power, 'the home screen');
-    // Signing in auto-connects, and a simulator has no NetworkExtension, so the
-    // attempt dies with "VPN permission denied by user" in red — which must not
-    // ship on a store listing. A fresh connect clears the message
-    // (VpnController._connect resets it on entry) and a second press asks to
-    // stop, landing back on a clean "Отключено". Let the failure happen first,
-    // or the tap races it and the error reappears afterwards.
-    await _pumpFor(t, const Duration(seconds: 8));
-    await t.tap(power);
-    await _pumpFor(t, const Duration(seconds: 2));
-    await t.tap(power);
-    // Long enough for the server list to land, so the card names a location.
-    await _pumpFor(t, const Duration(seconds: 8));
+    // No connect here, and none from the app either — kScreenshotMode skips the
+    // auto-connect after sign-in. A simulator has no NetworkExtension, so every
+    // attempt dies instantly with "VPN permission denied by user" in red, and
+    // pressing through it only reruns the failure. Long enough for the server
+    // list to land, so the card names a location rather than a spinner.
+    await _pumpFor(t, const Duration(seconds: 10));
     await _shot(t, '02-home');
 
     // Server list: the home card opens it; the chevron is its tap affordance.

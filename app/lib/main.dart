@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'config/api_config.dart';
+import 'config/screenshot_mode.dart';
 import 'l10n/app_localizations.dart';
 import 'screens/awaiting_auth_screen.dart';
 import 'screens/home_screen.dart';
@@ -217,17 +218,10 @@ class _FatVpnAppState extends State<FatVpnApp> with WidgetsBindingObserver {
     unawaited(_auth.handleExternalUri(uri));
   }
 
-  /// Set only by the store-screenshot build (`--dart-define=SCREENSHOTS=true`,
-  /// see the ios-screenshots workflow). The permission sheet is a system alert
-  /// no automated run can dismiss, and it lands over every screen the shoot
-  /// needs. Compile-time and false everywhere else, so a shipped build asks
-  /// exactly as it always has.
-  static const bool _screenshotMode = bool.fromEnvironment('SCREENSHOTS');
-
   void _syncNotifications() {
     // Ask for the notification permission only once there is a subscription to
     // remind the user about — see [NotificationService.requestPermission].
-    if (_auth.subscriptionActive && !_screenshotMode) {
+    if (_auth.subscriptionActive && !kScreenshotMode) {
       unawaited(_notifications.requestPermission());
     }
     _notifications.syncFor(
