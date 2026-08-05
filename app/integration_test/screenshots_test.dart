@@ -76,7 +76,9 @@ void main() {
     await t.tap(find.byIcon(Icons.chevron_right).first);
     await _pumpFor(t, const Duration(seconds: 8)); // pings settle
     await binding.takeScreenshot('03-servers');
-    await t.pageBack();
+    // Not pageBack(): the screen's back affordance is custom-drawn, and the
+    // finder behind pageBack() sees neither a Material nor a Cupertino button.
+    t.state<NavigatorState>(find.byType(Navigator).last).pop();
     await _pumpFor(t, const Duration(seconds: 1));
 
     // Settings, with the routing card (tracker protection) in view.
