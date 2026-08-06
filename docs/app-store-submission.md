@@ -83,6 +83,37 @@
    Вариант «оставляем и смотрим на первый отзыв ревью» — легитимный, но решение
    за заказчиком.
 
+### 0.1a Обращение в Apple о переводе аккаунта — готовый текст
+
+Отправлять здесь: developer.apple.com/contact → **Membership and Account** →
+Change account type. Пишет владелец аккаунта (Hakob Abgaryan) со своего Apple ID.
+
+> Subject: Change enrollment type from Individual to Organization
+>
+> Hello,
+>
+> My Apple Developer Program account (Team ID 62M26MCV38, enrolled as
+> Individual) is used to develop a VPN application. App Review Guideline 5.4
+> requires VPN apps to be offered by developers enrolled as an organization,
+> so I need to change my enrollment type from Individual to Organization.
+>
+> Please advise on the steps and the documents required. The legal entity and
+> its D-U-N-S Number are being prepared.
+>
+> Thank you,
+> Hakob Abgaryan
+
+Что понадобится параллельно и чего в приложении нет — это к заказчику:
+
+1. **Юридическое лицо** (в Армении или где удобно вести деятельность).
+2. **Номер D-U-N-S** на это юрлицо — бесплатно, запрашивается у Dun & Bradstreet
+   через Apple: developer.apple.com/enroll/duns-lookup. Обычно 5–30 дней.
+3. Право подписывать от имени юрлица (Apple проверяет полномочия).
+
+⚠️ Пока идёт перевод, **аккаунт остаётся рабочим**: TestFlight, сборки Codemagic
+и подпись продолжают действовать. Ломается только публикация в магазин.
+
+
 ---
 
 ## 1. Порядок подачи (когда §0 отвечен)
