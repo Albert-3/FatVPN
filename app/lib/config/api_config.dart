@@ -12,8 +12,18 @@ const bffBaseUrl = 'https://api.fatklyuchi.space';
 const deepLinkScheme = 'fatvpn';
 
 /// Telegram bot username (without `@`) the app opens for pairing.
-/// Test bot for now; switch to the prod bot when migrating environments.
-const telegramBotUsername = 'testfatvpnnbot';
+///
+/// The production bot since 2026-08-06. It was `testfatvpnnbot` until then —
+/// not as a leftover but because the production bot had no idea the app
+/// existed: pairing, the "Код для FatVPN App" and the calls that tell the BFF
+/// which key a user chose were all missing from it, so real users were served
+/// by the test bot. That integration was ported the same day
+/// (`docs/bot-prod-migration-brief.md` §5a), which is what makes this line
+/// safe to change.
+///
+/// Only a new build moves anyone: installs already on phones keep opening the
+/// test bot, so that bot has to stay alive until they are gone.
+const telegramBotUsername = 'Fat_VPN_bot';
 
 /// Builds the Telegram deep link that carries the pairing code into the bot's
 /// `/start` handler as `pair<code>`.
