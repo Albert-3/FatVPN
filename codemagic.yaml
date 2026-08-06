@@ -846,7 +846,7 @@ workflows:
       - app/build/ios/iphonesimulator/Runner.app
       - app/build/ios/iphonesimulator/simulator-home.png
 
-  ios-screenshots:
+  ios-screenshots: &ios-screenshots-workflow
     name: iOS store screenshots (simulator)
     instance_type: mac_mini_m2
     max_build_duration: 120
@@ -865,6 +865,10 @@ workflows:
         # same access a reviewer gets; abuse is capped by the 3-device slot
         # limit, which is also why rotating it is a panel-side deletion.
         DEMO_KEY: FATVPN-REVIEW-K7M3Q9
+        # Which simulator class to shoot on. ASC demands two sets — the 6.9"
+        # iPhone and the 13" iPad — and this is the whole difference between
+        # this workflow and ios-screenshots-ipad below.
+        SCREENSHOT_DEVICE: iphone
     scripts:
       - name: Pull Git LFS files (Libbox.xcframework binaries)
         script: |
@@ -890,15 +894,25 @@ workflows:
         script: |
           cd app/ios
           pod install
-      - name: Boot a 6.9-inch simulator in Russian
+      - name: Boot the store-screenshot simulator in Russian
         script: |
           set -e
-          # ASC's one mandatory screenshot size is the 6.9" class. Prefer the
-          # 16 Pro Max device type; fall back to any Pro Max the Xcode on the
-          # runner still ships.
-          DT="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPhone-1[6-9]-Pro-Max' | sort | tail -1)"
+          # ASC's mandatory screenshot sizes are the 6.9" iPhone class and,
+          # because the build declares iPad support, the 13" iPad class.
+          # SCREENSHOT_DEVICE picks the family; within it, prefer the newest
+          # device type and fall back to what the Xcode on the runner ships
+          # (a 12.9" iPad renders 2048×2732, which ASC accepts in the same
+          # 13-inch slot).
+          if [ "${SCREENSHOT_DEVICE:-iphone}" = "ipad" ]; then
+            DT="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch[A-Za-z0-9.-]*' | sort | tail -1)"
+            if [ -z "$DT" ]; then
+              DT="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro-12-9-inch[A-Za-z0-9.-]*' | sort | tail -1)"
+            fi
+          else
+            DT="$(xcrun simctl list devicetypes | grep -oE 'com.apple.CoreSimulator.SimDeviceType.iPhone-1[6-9]-Pro-Max' | sort | tail -1)"
+          fi
           if [ -z "$DT" ]; then
-            echo "No Pro Max device type on this runner:" >&2
+            echo "No matching device type for SCREENSHOT_DEVICE=$SCREENSHOT_DEVICE on this runner:" >&2
             xcrun simctl list devicetypes >&2
             exit 1
           fi
@@ -954,3 +968,18 @@ workflows:
           test "$(ls build/screenshots/*.png 2>/dev/null | wc -l)" -eq 5
     artifacts:
       - app/build/screenshots/*.png
+
+  # The same shoot on a 13" iPad simulator — ASC refuses to take a version
+  # for review without an iPad set as long as the build declares iPad
+  # support. Only the environment differs; the scenario, the checks and the
+  # artifact list ride in on the YAML anchor above.
+  ios-screenshots-ipad:
+    <<: *ios-screenshots-workflow
+    name: iOS store screenshots (iPad simulator)
+    environment:
+      flutter: 3.44.4
+      xcode: latest
+      cocoapods: default
+      vars:
+        DEMO_KEY: FATVPN-REVIEW-K7M3Q9
+        SCREENSHOT_DEVICE: ipad
