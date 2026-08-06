@@ -128,14 +128,43 @@ Every public endpoint is rate limited per IP (`RateLimiting:*` — 300/min globa
 - **Remnawave**: Base URL in `appsettings.json`; `ApiToken` via `dotnet user-secrets` (UserSecretsId: `3d5f08d5-dec7-4629-8e42-bc979ebe72cf`).
 - **JWT**: HS256 (algorithm pinned, `ClockSkew` 30 s), `FatVpn.Bff` issuer, `FatVpn.App` audience. Dev secret in `appsettings.Development.json` — **untracked**; copy `appsettings.Development.example.json` on a fresh clone.
 
-### Production Server (87.121.221.229)
+### Production Server (95.85.248.29) — the BFF moved here on 2026-08-06
 
 | Component | Path | Container |
 |---|---|---|
-| BFF | `/opt/fatvpn-bff/backend/` | `fatvpn-bff` (**public** `0.0.0.0:5030`, HTTP — see below) |
-| Caddy | same compose | `fatvpn-caddy` (`80`/`443`, TLS for `api.fatklyuchi.space`) |
-| Bot (Python) | `/opt/FatVPN/` | `fatvpn-bot` |
-| Postgres | — | `fatvpn-postgres` (`127.0.0.1:5433`, localhost-only) |
+| BFF | `/opt/fatvpn-bff/repo/backend/` (git clone, `backend` symlinks to it) | `fatvpn-bff` (`127.0.0.1:5030` — **not public here**) |
+| Postgres | same compose | `fatvpn-postgres` (`127.0.0.1:5433`) |
+| **nginx (host, not Docker)** | `/etc/nginx/sites-enabled/api.fatklyuchi.space` | — (`80`/`443`, TLS for `api.fatklyuchi.space`, also serves `/privacy`, `/privacy/ru`, `/support` from `backend/legal/`) |
+| Prod bot `@Fat_VPN_bot` (Python) | `/opt/FatVPN/` (only `bot/` executes) | `fatvpn-bot` (`0.0.0.0:4444`, payment webhook) |
+
+⚠️ **nginx owns 80/443 here and must keep them**: the same nginx serves the live
+payment domain `pay.fatvnv.space` (proxying to the bot's webhook on 4444), so the
+BFF stack's `caddy` service is deliberately never started on this machine — bring
+up `postgres` and `bff` only. `docker-compose.override.yml` (untracked, local to
+this host) pins the BFF port to `127.0.0.1`; the tracked compose publishes it
+publicly, which is right for the old server and wrong for this one.
+
+The certificate was carried over from the old server's Caddy volume rather than
+re-issued, so the switch had no TLS gap; it is a real Let's Encrypt cert valid to
+2026-10-27, and **renewal must stay with Let's Encrypt** — the app pins the ISRG
+roots. `certbot` is installed; set up `certbot certonly --nginx` before October.
+
+**The old server `87.121.221.229` is now a proxy, not a BFF.** Its `fatvpn-bff`
+and `fatvpn-caddy` containers are stopped and its Postgres holds a frozen copy of
+the database as the rollback point — do not start them, they would write to a
+stale database. `fatvpn-legacy-proxy` (Caddy, `/opt/fatvpn-legacy-proxy/`) listens
+on `:5030` and forwards to the new server over HTTPS, rewriting `Host` to
+`api.fatklyuchi.space` because `AllowedHosts` rejects anything else. It exists for
+one reason: builds already on people's phones have `http://87.121.221.229:5030`
+compiled in and cannot be updated remotely. The **test bot `@testfatvpnnbot`**
+still runs there — and the app still points users at it (`telegramBotUsername` in
+`app/lib/config/api_config.dart`), which is the next thing to fix; its
+`bot/api/fatvpn_bff_api.py` now calls the BFF over the domain instead of the
+docker network name (original kept as `.pre-migration-20260806`).
+
+Hourly backups and the mutual watchdogs moved with the BFF: `/opt/fatvpn-ops/` on
+95.85.248.29, and the panel's `check_bff_backup.sh` now watches that host. The
+migration record and rollback procedure: `docs/bff-migration-runbook.md`.
 
 > **HTTPS is live (2026-07-30): `https://api.fatklyuchi.space`.** Caddy runs beside the BFF in the same compose and holds a Let's Encrypt certificate; `http://` redirects to it. The domain is the customer's, in **their** Cloudflare account, delegated to Cloudflare nameservers — but every record is **`DNS only` (grey cloud), and must stay that way**: the free proxy passes only HTTP/HTTPS on its own port list and no UDP at all, so an orange cloud kills VLESS on a non-standard port and Hysteria2 (QUIC) outright. That is what took the nodes down the one time it was tried. `sub.fatklyuchi.space` is separately fronted by **Yandex Cloud CDN**, not Cloudflare.
 >
